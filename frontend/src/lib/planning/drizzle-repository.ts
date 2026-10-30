@@ -289,6 +289,8 @@ export class DrizzlePlanningRepository implements PlanningRepository {
     ownerPerson?: string | null;
     date?: string | null;
     weekStart?: string | null;
+    from?: string | null;
+    to?: string | null;
     limit?: number | null;
   }): Promise<PlanningWorkItemRecord[]> {
     const conditions = [
@@ -360,6 +362,13 @@ export class DrizzlePlanningRepository implements PlanningRepository {
       const weekEnd = addDaysIso(filters.weekStart, 4);
       conditions.push(
         sql`(${workItems.plannedDate} <= ${weekEnd} AND coalesce(${workItems.plannedDateTo}, ${workItems.plannedDate}) >= ${filters.weekStart})`
+      );
+    }
+
+    if (filters.from && filters.to && !filters.date && !filters.weekStart) {
+      // Vista Mensual: mismo criterio de solapamiento que Día/Semana, sobre [from, to].
+      conditions.push(
+        sql`(${workItems.plannedDate} <= ${filters.to} AND coalesce(${workItems.plannedDateTo}, ${workItems.plannedDate}) >= ${filters.from})`
       );
     }
 

@@ -85,6 +85,8 @@ export class MemoryPlanningRepository implements PlanningRepository {
     ownerPerson?: string | null;
     date?: string | null;
     weekStart?: string | null;
+    from?: string | null;
+    to?: string | null;
     limit?: number | null;
   }): Promise<PlanningWorkItemRecord[]> {
     const publishedWeekIds = new Set(
@@ -127,6 +129,14 @@ export class MemoryPlanningRepository implements PlanningRepository {
         if (!i.plannedDate) return false;
         const end = i.plannedDateTo ?? i.plannedDate;
         return i.plannedDate <= weekEnd && end >= weekStart;
+      });
+    }
+    if (filters.from && filters.to && !filters.date && !filters.weekStart) {
+      const { from, to } = { from: filters.from, to: filters.to };
+      list = list.filter((i) => {
+        if (!i.plannedDate) return false;
+        const end = i.plannedDateTo ?? i.plannedDate;
+        return i.plannedDate <= to && end >= from;
       });
     }
     list = list

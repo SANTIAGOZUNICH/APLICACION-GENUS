@@ -103,4 +103,47 @@ describe.skipIf(Boolean(PROBLEM))(`Trabajos sin fecha en Postgres real${PROBLEM 
     // los otros sin fecha siguen igual
     expect((await row("m")).planned_date).toBeNull();
   });
+
+  it("fecha de entrega OPCIONAL e independiente de la de planificación: se puede asignar con fecha y sin entrega, y viceversa", async () => {
+    const a = await assign({ sector: "ENVASADO_MASIVO", product: `Entrega A ${RUN}`, unit: "u", line: "Línea 1", plannedDate: "2026-12-10" });
+    const b = await assign({ sector: "ENVASADO_MASIVO", product: `Entrega B ${RUN}`, unit: "u", line: "Línea 1", deliveryDate: "2026-12-20" });
+    const rows = await q("select id, to_char(planned_date,'YYYY-MM-DD') pd, to_char(delivery_date,'YYYY-MM-DD') dd from work_items where id = any($1)", [[a.item.id, b.item.id]]);
+    const ra = rows.find((r) => r.id === a.item.id)!;
+    const rb = rows.find((r) => r.id === b.item.id)!;
+    expect([ra.pd, ra.dd]).toEqual(["2026-12-10", null]);
+    expect([rb.pd, rb.dd]).toEqual([null, "2026-12-20"]);
+  });
+
+  it("vista MENSUAL: el rango del mes trae los MISMOS trabajos del sector (con fecha), sin los sin fecha ni los de otros meses; reprogramar desde ahí sincroniza", async () => {
+    const { DrizzlePlanningRepository } = await import("@/lib/planning/drizzle-repository");
+    const { monthGridRange } = await import("@/lib/operational/month-grid");
+    const repo = new DrizzlePlanningRepository();
+    const nov = await assign({ sector: "ELABORACION", product: `Mes NOV ${RUN}`, plannedQuantity: "10", unit: "kg", branchOwner: "Cristian", plannedDate: "2027-05-12" });
+    const jun = await assign({ sector: "ELABORACION", product: `Mes JUN ${RUN}`, plannedQuantity: "10", unit: "kg", branchOwner: "Cristian", plannedDate: "2027-06-20" });
+    const sinFecha = await assign({ sector: "ELABORACION", product: `Mes SIN ${RUN}`, plannedQuantity: "10", unit: "kg", branchOwner: "Cristian" });
+    const otro = await assign({ sector: "ENVASADO_PREMIUM", product: `Mes OTRO SECTOR ${RUN}`, unit: "u", line: "Línea 2", plannedDate: "2027-05-13" });
+    const range = monthGridRange("2027-05-01");
+    const may = await repo.listPublishedItems({ sectors: ["ELABORACION"], from: range.from, to: range.to, limit: 500 });
+    const ids = may.map((i) => i.id);
+    expect(ids).toContain(nov.item.id);
+    expect(ids).not.toContain(jun.item.id);
+    expect(ids).not.toContain(sinFecha.item.id);
+    expect(ids).not.toContain(otro.item.id); // solo trabajos de su sector
+    // Mismos trabajos que ve la Semanal (misma fila, mismo id): la semana del 12/05 incluye el mismo registro.
+    const week = await repo.listPublishedItems({ sectors: ["ELABORACION"], weekStart: "2027-05-10", limit: 500 });
+    expect(week.find((i) => i.id === nov.item.id)).toMatchObject({ id: nov.item.id, product: `Mes NOV ${RUN}` });
+    // Reprogramar desde la Mensual (mismo servicio que la Semanal) → se refleja en ambas.
+    const { rescheduleWorkItemDurable } = await import("@/lib/planning/work-item-progress-repository");
+    await rescheduleWorkItemDurable(nov.item.id as string, { plannedDate: "2027-05-26", updatedBy: prod.email, updatedBySector: "PRODUCCION" } as never);
+    const weekOld = await repo.listPublishedItems({ sectors: ["ELABORACION"], weekStart: "2027-05-10", limit: 500 });
+    const weekNew = await repo.listPublishedItems({ sectors: ["ELABORACION"], weekStart: "2027-05-24", limit: 500 });
+    expect(weekOld.some((i) => i.id === nov.item.id)).toBe(false);
+    expect(weekNew.some((i) => i.id === nov.item.id)).toBe(true);
+    // Programar un «Sin fecha» desde la Mensual: pasa a verse en el mes y en la semana, sin duplicarse.
+    await rescheduleWorkItemDurable(sinFecha.item.id as string, { plannedDate: "2027-05-18", updatedBy: prod.email, updatedBySector: "PRODUCCION" } as never);
+    const may2 = await repo.listPublishedItems({ sectors: ["ELABORACION"], from: range.from, to: range.to, limit: 500 });
+    expect(may2.filter((i) => i.id === sinFecha.item.id)).toHaveLength(1);
+    const week2 = await repo.listPublishedItems({ sectors: ["ELABORACION"], weekStart: "2027-05-17", limit: 500 });
+    expect(week2.some((i) => i.id === sinFecha.item.id)).toBe(true);
+  });
 });

@@ -74,6 +74,9 @@ export async function fetchWorkItems(
     ownerPerson?: string | null;
     date?: string | null;
     weekStart?: string | null;
+    /** Rango [from, to] inclusive (vista Mensual). */
+    from?: string | null;
+    to?: string | null;
   }
 ): Promise<WorkItemsResponse> {
   const params = new URLSearchParams({ sector });
@@ -84,6 +87,9 @@ export async function fetchWorkItems(
     params.set("date", options.date.trim());
   } else if (options?.weekStart?.trim()) {
     params.set("weekStart", options.weekStart.trim());
+  } else if (options?.from?.trim() && options?.to?.trim()) {
+    params.set("from", options.from.trim());
+    params.set("to", options.to.trim());
   }
   const response = await fetch(`/api/v1/work-items?${params.toString()}`, {
     method: "GET",

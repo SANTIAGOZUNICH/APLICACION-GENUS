@@ -9,6 +9,8 @@ export interface LoadOperationalPlanOptions {
   ownerPerson?: string | null;
   date?: string | null;
   weekStart?: string | null;
+  from?: string | null;
+  to?: string | null;
 }
 
 function mergeCompletionsIntoSnapshot(
@@ -38,7 +40,7 @@ export async function loadOperationalPlan(
   const weekStart = options?.weekStart ?? null;
 
   try {
-    const response = await fetchWorkItems(sector, { ownerPerson, date, weekStart });
+    const response = await fetchWorkItems(sector, { ownerPerson, date, weekStart, from: options?.from ?? null, to: options?.to ?? null });
 
     return mergeCompletionsIntoSnapshot({
       sector,

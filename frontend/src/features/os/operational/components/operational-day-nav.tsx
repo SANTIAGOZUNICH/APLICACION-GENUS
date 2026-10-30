@@ -22,6 +22,11 @@ interface OperationalDayNavProps {
   onToday: () => void;
   /** "Hoy"/"Semana actual" en modo Semana — vuelve a la semana de hoy sin resetear a vista Día. Si se omite, cae a onToday (día). */
   onTodayWeek?: () => void;
+  /** Vista Mensual (opcional: sin estas props el selector no muestra «Mes»). */
+  monthTitle?: string;
+  onPrevMonth?: () => void;
+  onNextMonth?: () => void;
+  onTodayMonth?: () => void;
   onViewMode: (mode: TemporalViewMode) => void;
 }
 
@@ -42,13 +47,18 @@ export function OperationalDayNav({
   onNextWeek,
   onToday,
   onTodayWeek,
+  monthTitle,
+  onPrevMonth,
+  onNextMonth,
+  onTodayMonth,
   onViewMode,
 }: OperationalDayNavProps) {
-  const isWeek = viewMode === "week" && onPrevWeek && onNextWeek;
+  const isMonth = viewMode === "month" && Boolean(onPrevMonth && onNextMonth);
+  const isWeek = !isMonth && viewMode === "week" && onPrevWeek && onNextWeek;
   const prev = addDaysIso(selectedDate, -1);
   const next = addDaysIso(selectedDate, 1);
   const weekStart = weekStartMonday(selectedDate);
-  const isToday = isWeek ? weekStart === weekStartMonday(today) : selectedDate === today;
+  const isToday = isMonth ? selectedDate.slice(0, 7) === today.slice(0, 7) : isWeek ? weekStart === weekStartMonday(today) : selectedDate === today;
   const weekEnd = addDaysIso(weekStart, 6);
   const weekStartParts = parseIsoDate(weekStart);
   const weekEndParts = parseIsoDate(weekEnd);
@@ -79,42 +89,56 @@ export function OperationalDayNav({
         >
           Semana
         </button>
+        {onPrevMonth && onNextMonth ? (
+          <button
+            type="button"
+            onClick={() => onViewMode("month")}
+            data-testid="view-mode-month"
+            className={`rounded px-3 py-1.5 text-sm font-medium ${
+              viewMode === "month"
+                ? "bg-[var(--os-text)] text-[var(--os-bg)]"
+                : "text-[var(--os-text-muted)] hover:text-[var(--os-text)]"
+            }`}
+          >
+            Mes
+          </button>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <button
           type="button"
-          aria-label={isWeek ? "Semana anterior" : "Día anterior"}
-          onClick={isWeek ? onPrevWeek : onPrev}
+          aria-label={isMonth ? "Mes anterior" : isWeek ? "Semana anterior" : "Día anterior"}
+          onClick={isMonth ? onPrevMonth : isWeek ? onPrevWeek : onPrev}
           className="rounded border border-[var(--os-border)] px-2.5 py-1.5 text-[var(--os-text)] hover:bg-[var(--os-bg)]"
         >
           ←
         </button>
 
-        {!isWeek && <span className="text-[var(--os-text-muted)]">{shortLabel(prev)}</span>}
+        {!isWeek && !isMonth && <span className="text-[var(--os-text-muted)]">{shortLabel(prev)}</span>}
 
         <button
           type="button"
-          onClick={isWeek ? (onTodayWeek ?? onToday) : onToday}
+          onClick={isMonth ? (onTodayMonth ?? onToday) : isWeek ? (onTodayWeek ?? onToday) : onToday}
           className={`rounded px-3 py-1.5 font-semibold ${
             isToday
               ? "bg-emerald-700 text-white"
               : "border border-[var(--os-border)] text-[var(--os-text)] hover:bg-[var(--os-bg)]"
           }`}
         >
-          {isWeek ? "Semana actual" : "Hoy"}
+          {isMonth ? "Mes actual" : isWeek ? "Semana actual" : "Hoy"}
         </button>
 
         <span className="min-w-[10rem] text-center font-medium text-[var(--os-text)]">
-          {isWeek ? weekRangeLabel : formatOperationalLongDate(selectedDate)}
+          {isMonth ? <span data-testid="month-title" className="capitalize">{monthTitle}</span> : isWeek ? weekRangeLabel : formatOperationalLongDate(selectedDate)}
         </span>
 
-        {!isWeek && <span className="text-[var(--os-text-muted)]">{shortLabel(next)}</span>}
+        {!isWeek && !isMonth && <span className="text-[var(--os-text-muted)]">{shortLabel(next)}</span>}
 
         <button
           type="button"
-          aria-label={isWeek ? "Semana siguiente" : "Día siguiente"}
-          onClick={isWeek ? onNextWeek : onNext}
+          aria-label={isMonth ? "Mes siguiente" : isWeek ? "Semana siguiente" : "Día siguiente"}
+          onClick={isMonth ? onNextMonth : isWeek ? onNextWeek : onNext}
           className="rounded border border-[var(--os-border)] px-2.5 py-1.5 text-[var(--os-text)] hover:bg-[var(--os-bg)]"
         >
           →

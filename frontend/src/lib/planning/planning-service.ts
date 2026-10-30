@@ -174,6 +174,8 @@ export class PlanningService {
     ownerPerson?: string | null;
     date?: string | null;
     weekStart?: string | null;
+    from?: string | null;
+    to?: string | null;
     limit?: number | null;
   }) {
     return this.repo.listPublishedItems(filters);

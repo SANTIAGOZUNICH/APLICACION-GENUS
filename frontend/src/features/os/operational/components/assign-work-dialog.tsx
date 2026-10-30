@@ -137,7 +137,8 @@ export function AssignWorkDialog({
   // La fecha es OPCIONAL: sin fecha inicial el trabajo se asigna «Sin fecha asignada» (no se completa con la de hoy).
   const [plannedDate, setPlannedDate] = useState(initialPlannedDate || "");
   const [plannedDateTo, setPlannedDateTo] = useState(initialPlannedDate || "");
-  const [deliveryDate, setDeliveryDate] = useState(todayIso());
+  // La fecha de entrega es OPCIONAL e independiente de la de planificación: vacía hasta que se cargue (nunca se completa con hoy).
+  const [deliveryDate, setDeliveryDate] = useState("");
   const [quantity, setQuantity] = useState(initialValues?.quantity ?? "");
   const [orderRef, setOrderRef] = useState("");
   const [notes, setNotes] = useState(initialValues?.notes ?? "");
@@ -371,10 +372,6 @@ export function AssignWorkDialog({
       setErrorMsg("Hasta no puede ser anterior a Desde.");
       return;
     }
-    if (!deliveryDate) {
-      setErrorMsg("La fecha de entrega es obligatoria.");
-      return;
-    }
     if (!native) {
       setErrorMsg("La asignación durable requiere planificación nativa (Neon). No se simuló el guardado.");
       return;
@@ -392,7 +389,7 @@ export function AssignWorkDialog({
       product: product.trim(),
       plannedDate: plannedDate || null,
       plannedDateTo: plannedDate ? plannedDateTo || plannedDate : null,
-      deliveryDate,
+      deliveryDate: deliveryDate || null,
       plannedQuantity: quantity.trim(),
       unit,
       orderNumber: orderRef.trim() || null,
@@ -769,7 +766,7 @@ export function AssignWorkDialog({
 
           <div className="space-y-1.5">
             <label htmlFor="af-delivery" className="text-sm font-medium">
-              Fecha de entrega
+              Fecha de entrega (opcional)
             </label>
             <input
               id="af-delivery"
@@ -778,7 +775,6 @@ export function AssignWorkDialog({
               disabled={submitting}
               onChange={(e) => setDeliveryDate(e.target.value)}
               className={CONTROL_CLASS}
-              required
             />
           </div>
 

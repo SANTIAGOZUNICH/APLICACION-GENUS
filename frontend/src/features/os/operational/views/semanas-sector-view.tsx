@@ -12,6 +12,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { OperationalMonthBoard } from "@/features/os/operational/components/operational-month-board";
+import { addMonths, monthLabel, monthStartOf } from "@/lib/operational/month-grid";
 import { PlanTaskCard, PriorityTag } from "@/features/os/operational/components/plan-task-card";
 import { SemanasTvMode } from "@/features/os/operational/components/semanas-tv-mode";
 import { useSectorPlan } from "@/features/os/operational/hooks/use-sector-plan";
@@ -22,7 +24,7 @@ import { byPriority, coversDay, formatDay, pickDays, PLAN_SECTOR_LABEL, plannedD
 import { PRIORITIES, PRIORITY_META, type Priority } from "@/lib/semanas-sheet/priorities";
 import { SECTOR_LABELS, type SectorId } from "@/types/operational/sector";
 
-type Mode = "semana" | "dia";
+type Mode = "semana" | "dia" | "mes";
 const MODE_KEY = "genus_os_semanas_sector_mode";
 const DAY_SHORT = ["LUN", "MAR", "MIÉ", "JUE", "VIE"];
 
@@ -38,6 +40,7 @@ export function SemanasSectorView() {
   const [weekStart, setWeekStart] = useState<string | null>(null);
   const [dayIdx, setDayIdx] = useState<number | null>(null);
   const [tvOpen, setTvOpen] = useState(false);
+  const [monthAnchor, setMonthAnchor] = useState<string | null>(null);
   const plan = useSectorPlan(session, allowed.length > 0 ? sector : undefined);
   const data = plan.data;
 
@@ -45,7 +48,7 @@ export function SemanasSectorView() {
     try {
       const saved = window.localStorage.getItem(MODE_KEY);
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (saved === "semana" || saved === "dia") setModeState(saved);
+      if (saved === "semana" || saved === "dia" || saved === "mes") setModeState(saved);
     } catch {
       /* sin almacenamiento: modo por defecto */
     }
@@ -80,6 +83,21 @@ export function SemanasSectorView() {
   const dayPos = dayIdx ?? Math.max(0, days.findIndex((d) => d.date === auto.days[0]?.date));
   const day = days[dayPos];
 
+  // Mensual: los MISMOS trabajos de la planilla, agrupados por día del mes (una tarea de varios días aparece en cada día).
+  const monthStart = monthAnchor ?? monthStartOf(today);
+  const monthItems = useMemo(
+    () =>
+      visibleTasks.map((t) => ({
+        id: t.key,
+        product: t.products.join(" / ") || null,
+        client: t.client,
+        quantity: t.quantities.join(" / ") || null,
+        unit: null,
+        plannedDate: t.date,
+        plannedDateTo: t.endDate,
+      })),
+    [visibleTasks]
+  );
   const multi = (data?.sectors.length ?? 0) > 1;
   const sectorTitle = sector === "ALL" ? (allowed.length === 3 ? "Todos los sectores" : allowed.map((s) => PLAN_SECTOR_LABEL[s]).join(" + ")) : PLAN_SECTOR_LABEL[sector];
   const openTv = useCallback(() => {
@@ -126,7 +144,7 @@ export function SemanasSectorView() {
 
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex rounded-xl border border-[var(--os-border)] bg-[var(--os-surface)] p-1" role="tablist" aria-label="Vista">
-            {(["semana", "dia"] as const).map((m) => (
+            {(["semana", "dia", "mes"] as const).map((m) => (
               <button
                 key={m}
                 type="button"
@@ -136,7 +154,7 @@ export function SemanasSectorView() {
                 data-testid={`semanas-sector-mode-${m}`}
                 className={`rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors ${mode === m ? "bg-[var(--os-teal)] text-[#04201e]" : "text-[var(--os-text-muted)] hover:text-[var(--os-text)]"}`}
               >
-                {m === "semana" ? "Semanas" : "Día a día"}
+                {m === "semana" ? "Semanas" : m === "dia" ? "Día a día" : "Mensual"}
               </button>
             ))}
           </div>
@@ -206,6 +224,17 @@ export function SemanasSectorView() {
           </p>
         )}
 
+        {data && mode === "mes" && (
+          <section className="space-y-3 rounded-2xl border border-[var(--os-border)] bg-[var(--os-bg)] p-3 sm:p-4" data-testid="semanas-month">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" variant="secondary" onClick={() => setMonthAnchor(addMonths(monthStart, -1))} aria-label="Mes anterior" data-testid="semanas-month-prev"><ChevronLeft className="size-4" aria-hidden="true" /></Button>
+              <Button type="button" variant="secondary" onClick={() => setMonthAnchor(null)} data-testid="semanas-month-today">Mes actual</Button>
+              <Button type="button" variant="secondary" onClick={() => setMonthAnchor(addMonths(monthStart, 1))} aria-label="Mes siguiente" data-testid="semanas-month-next"><ChevronRight className="size-4" aria-hidden="true" /></Button>
+              <h3 className="text-lg font-semibold capitalize" data-testid="semanas-month-title">{monthLabel(monthStart)}</h3>
+            </div>
+            <OperationalMonthBoard monthStart={monthStart} today={today} items={monthItems} allItems={monthItems} canEdit={false} onSelectItem={() => undefined} />
+          </section>
+        )}
         {data && mode === "semana" && week && <WeekBoard tasks={visibleTasks.filter((t) => t.weekStart === week.start)} week={week} today={today} showSector={multi} />}
         {data && mode === "dia" && (
           <DayBoard

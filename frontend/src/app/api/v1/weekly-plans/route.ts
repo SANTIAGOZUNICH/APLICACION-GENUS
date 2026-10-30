@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { resolveAuthenticatedActor } from "@/lib/auth/resolve-authenticated-actor";
 import { authErrorResponse } from "@/lib/auth/http";
 import { isDatabaseConfigured } from "@/lib/db/client";
+import { monthGridRange, monthStartOf } from "@/lib/operational/month-grid";
 import { weekStartMonday } from "@/lib/operational/operational-calendar";
 import { getPlanningService } from "@/lib/planning/get-planning-service";
 import { toWeeklyPlanItemDtos } from "@/lib/planning/weekly-plan-dto";
@@ -39,6 +40,9 @@ export async function GET(request: Request) {
     const weekStartRaw = parseIsoDateParam(url.searchParams.get("weekStart"));
     const weekStart = weekStartRaw ? weekStartMonday(weekStartRaw) : weekStartMonday(new Date().toISOString().slice(0, 10));
     const planSector = url.searchParams.get("planSector");
+    // Vista Mensual (solo lectura): mismo plan, rango completo de la grilla del mes.
+    const monthRaw = parseIsoDateParam(url.searchParams.get("monthStart"));
+    const monthRange = monthRaw ? monthGridRange(monthStartOf(monthRaw)) : null;
 
     const sectors = resolveRequestedPlanSectors(actor.sector, planSector);
     if (!sectors) {
@@ -63,15 +67,14 @@ export async function GET(request: Request) {
       );
     }
 
-    const rows = await getPlanningService().listPublishedItems({
-      sectors,
-      weekStart,
-      limit: 500,
-    });
+    const rows = await getPlanningService().listPublishedItems(
+      monthRange ? { sectors, from: monthRange.from, to: monthRange.to, limit: 500 } : { sectors, weekStart, limit: 500 }
+    );
     const items = toWeeklyPlanItemDtos(rows);
 
     return NextResponse.json({
       weekStart,
+      ...(monthRange ? { monthStart: monthStartOf(monthRaw!) } : {}),
       allowedSectors: allowed,
       requestedSectors: sectors,
       items,

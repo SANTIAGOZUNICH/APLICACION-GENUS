@@ -29,6 +29,9 @@ export interface PlanningRepository {
     ownerPerson?: string | null;
     date?: string | null;
     weekStart?: string | null;
+    /** Rango [from, to] inclusive (vista Mensual). */
+    from?: string | null;
+    to?: string | null;
     limit?: number | null;
   }): Promise<PlanningWorkItemRecord[]>;
 
