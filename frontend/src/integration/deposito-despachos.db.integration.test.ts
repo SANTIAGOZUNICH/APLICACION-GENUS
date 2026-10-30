@@ -88,6 +88,27 @@ describe.skipIf(Boolean(PROBLEM))(`Entregas Producción en Postgres real${PROBLE
     expect((await s.listAudit(dep, record.id)).map((h) => h.action)).toEqual(["create", "delete"]);
   });
 
+  it("alta masiva: una sola operación, idempotente por clave, filas incompletas (sin fecha) y filas inválidas informadas", async () => {
+    const s = await svc();
+    const rows = [
+      { fecha: "2032-06-01", remito: "000900", cliente: base.cliente, producto: "A", bultos: 1, cantidadTotal: 10, idempotencyKey: `bulk-${RUN}-0` },
+      { fecha: "", remito: "000901", cliente: base.cliente, producto: "B", idempotencyKey: `bulk-${RUN}-1` }, // incompleta: sin fecha ni cantidades
+      { fecha: "no-es-fecha", remito: "x", cliente: base.cliente, idempotencyKey: `bulk-${RUN}-2` }, // inválida
+      { fecha: "2032-06-03", remito: "000902", cliente: base.cliente, producto: "C", bultos: 2, cantidadTotal: 20, idempotencyKey: `bulk-${RUN}-3` },
+    ];
+    const r1 = await s.createMany(dep, rows);
+    expect(r1.map((r) => r.ok)).toEqual([true, true, false, true]);
+    const r2 = await s.createMany(dep, rows); // reintento / doble pegado del mismo envío
+    expect(r2.filter((r) => r.ok && r.created)).toHaveLength(0);
+    const got = (await mine()).filter((r) => ["000900", "000901", "000902"].includes(r.remito));
+    expect(got).toHaveLength(3);
+    expect(got.find((r) => r.remito === "000901")?.fecha).toBeNull();
+    const audits = await q("select count(*)::int n from deposito_despachos_audit where action = 'create' and despacho_id in (select id::text from deposito_despachos where remito in ('000900','000901','000902') and cliente = $1)", [base.cliente]);
+    expect(Number(audits[0]!.n)).toBe(3);
+    const [ed] = await s.patchCells(dep, [{ id: got[0]!.id, field: "fecha", value: "", expectedVersion: got[0]!.updatedAt }]);
+    expect(ed.ok).toBe(true); // vaciar la fecha de una fila existente
+  });
+
   it("el CHECK de la base rechaza cantidades negativas", async () => {
     await expect(q("insert into deposito_despachos (fecha, bultos, created_by, created_by_sector) values ('2032-05-10', -1, $1, 'DEPOSITO')", [MARK])).rejects.toThrow();
   });

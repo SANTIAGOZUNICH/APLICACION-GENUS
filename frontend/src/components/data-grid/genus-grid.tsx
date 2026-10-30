@@ -358,7 +358,11 @@ function DraftInfo({
   const missingTitles = [...new Set(incomplete.flatMap((d) => missingRequired(d, requiredKeys)))].map(titleOf);
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--os-text-muted)]" data-testid={`${testId}-drafts-info`}>
-      <span>Filas en blanco al final: escribí directo y la fila se crea sola cuando tiene {requiredKeys.map(titleOf).join(", ")}.</span>
+      <span>
+        {requiredKeys.length === 0
+          ? "Filas en blanco al final: escribí o pegá directo; cada fila se guarda sola (se puede completar después)."
+          : `Filas en blanco al final: escribí directo y la fila se crea sola cuando tiene ${requiredKeys.map(titleOf).join(", ")}.`}
+      </span>
       {incomplete.length > 0 ? (
         <span className="rounded bg-amber-500/15 px-2 py-0.5 text-amber-800 dark:text-amber-300" data-testid={`${testId}-drafts-incomplete`}>
           {incomplete.length} fila{incomplete.length === 1 ? "" : "s"} nueva{incomplete.length === 1 ? "" : "s"} sin completar (falta {missingTitles.join(", ")}): no se guarda{incomplete.length === 1 ? "" : "n"} hasta completar{incomplete.length === 1 ? "la" : "las"}.
@@ -1441,7 +1445,7 @@ export function GenusGrid<T>({
       const { drafts: next, touchedIds } = applyPastedToDrafts(draftsRef.current, startIndex, records, makeDraftId);
       setDrafts(topUpDrafts(next, minBlank, makeDraftId));
       touchedIds.forEach((id) => scheduleDraftSubmit(id));
-      setNotice(`Pegado en filas nuevas: ${touchedIds.length} fila${touchedIds.length === 1 ? "" : "s"}. Se crean solas cuando tienen todos los datos obligatorios.`);
+      setNotice(`Pegado en filas nuevas: ${touchedIds.length} fila${touchedIds.length === 1 ? "" : "s"}. ${draftRows.requiredKeys.length === 0 ? "Se guardan solas." : "Se crean solas cuando tienen todos los datos obligatorios."}`);
       return true;
     },
     [draftRows, canEdit, columns, minBlank, scheduleDraftSubmit]

@@ -3,8 +3,8 @@ import type { SectorId } from "@/types/operational/sector";
 
 export interface DespachoRecord {
   id: string;
-  /** ISO yyyy-mm-dd (la UI lo muestra DD/MM/AAAA). */
-  fecha: string;
+  /** ISO yyyy-mm-dd (la UI lo muestra DD/MM/AAAA). null = todavía sin fecha (se puede completar después). */
+  fecha: string | null;
   /** TEXTO: conserva ceros a la izquierda y guiones (nunca se convierte a número). */
   remito: string;
   cliente: string;
@@ -39,7 +39,7 @@ export interface DespachoAuditEntry {
 export type DespachosActor = { email: string; sector: SectorId; displayName: string };
 
 export type CreateDespachoInput = {
-  fecha: string;
+  fecha?: string | null;
   remito?: string;
   cliente?: string;
   producto?: string;
