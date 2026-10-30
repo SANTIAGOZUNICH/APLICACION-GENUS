@@ -190,6 +190,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "inventario_me",
       "deposito_graneles",
       "entregas_produccion",
+      "pedidos_deposito",
       "entregas",
       "avisos",
       "semanas_produccion",

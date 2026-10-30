@@ -107,6 +107,14 @@ function enrichActor(actor: ProductionPedidosActor): ProductionPedidosActor {
   };
 }
 
+/** Fila de la consulta de Depósito: nada más que producto, cliente y cantidad pedida. */
+export type PedidoDepositoRow = { id: string; producto: string; cliente: string; cantidadTotal: number | null };
+
+/** Lectura de Pedidos: Producción/Superadmin (como siempre) y Depósito (solo consulta, vía `listForDeposito`). */
+function canReadPedidosDeposito(actor: ProductionPedidosActor): boolean {
+  return canAccessProductionPedidos(actor) || String(actor.sector ?? "").toUpperCase() === "DEPOSITO";
+}
+
 function assertAccess(actor: ProductionPedidosActor): ProductionPedidosActor {
   const a = enrichActor(actor);
   if (!canAccessProductionPedidos(a)) {
@@ -201,6 +209,28 @@ export class ProductionPedidosService {
     filters: ProductionPedidoListFilters = {}
   ): Promise<{ items: ProductionPedidoRecord[]; schemaPending: boolean }> {
     assertAccess(actor);
+    return this.listUnchecked(filters);
+  }
+
+  /**
+   * Consulta de SOLO LECTURA para Depósito: los mismos pedidos de Producción (misma tabla, sin duplicar), reducidos a lo mínimo
+   * —producto, cliente y la cantidad solicitada (Q)—, un renglón por producto. No expone fechas, estados, responsables ni
+   * sectores, y no existe ninguna escritura asociada: crear/editar/eliminar/asignar siguen exigiendo Producción (assertAccess).
+   */
+  async listForDeposito(actor: ProductionPedidosActor): Promise<{ items: PedidoDepositoRow[]; schemaPending: boolean }> {
+    if (!canReadPedidosDeposito(enrichActor(actor))) {
+      throw new OrdersForbiddenError("Solo Depósito y Producción pueden consultar Pedidos.");
+    }
+    const { items, schemaPending } = await this.listUnchecked({});
+    return {
+      schemaPending,
+      items: items.map((r) => ({ id: r.id, producto: r.producto ?? "", cliente: r.cliente ?? "", cantidadTotal: r.q })),
+    };
+  }
+
+  private async listUnchecked(
+    filters: ProductionPedidoListFilters
+  ): Promise<{ items: ProductionPedidoRecord[]; schemaPending: boolean }> {
     const ready = await isProductionPedidosSchemaReady();
     if (!ready) {
       if (useMemory()) {
