@@ -1810,6 +1810,54 @@ export const depositoGranelesAudit = pgTable(
 );
 
 
+/** Depósito «Entregas Producción» — despachos de producto terminado (migración 0073). Registro operativo: no mueve stock ni MP. */
+export const depositoDespachos = pgTable(
+  "deposito_despachos",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    fecha: date("fecha").notNull(),
+    remito: text("remito").notNull().default(""),
+    cliente: text("cliente").notNull().default(""),
+    producto: text("producto").notNull().default(""),
+    bultos: numeric("bultos").notNull().default("0"),
+    cantidadTotal: numeric("cantidad_total").notNull().default("0"),
+    pedidoOp: text("pedido_op").notNull().default(""),
+    idempotencyKey: text("idempotency_key"),
+    createdBy: text("created_by").notNull(),
+    createdBySector: text("created_by_sector").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedBy: text("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: text("deleted_by"),
+  },
+  (table) => [
+    uniqueIndex("deposito_despachos_idem_uidx")
+      .on(table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} is not null`),
+    index("deposito_despachos_fecha_idx").on(table.fecha),
+    index("deposito_despachos_remito_idx").on(table.remito),
+    index("deposito_despachos_pedido_idx").on(table.pedidoOp),
+  ]
+);
+
+export const depositoDespachosAudit = pgTable(
+  "deposito_despachos_audit",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    despachoId: text("despacho_id").notNull(),
+    action: text("action").notNull(),
+    field: text("field"),
+    beforeValue: text("before_value"),
+    afterValue: text("after_value"),
+    actorEmail: text("actor_email").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    actorName: text("actor_name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("deposito_despachos_audit_despacho_idx").on(table.despachoId)]
+);
+
 /** Control de facturación (0062): facturas emitidas FUERA del sistema, registradas por Administración. Sin importes. */
 export const billingInvoices = pgTable(
   "billing_invoices",
