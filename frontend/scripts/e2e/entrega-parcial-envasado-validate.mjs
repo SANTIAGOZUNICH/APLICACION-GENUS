@@ -84,7 +84,8 @@ try {
   // Validaciones en pantalla
   await dlg.locator("[data-testid=deliver-quantity]").fill("1500");
   await dlg.locator("[data-testid=confirm-deliver]").click();
-  check("entregar más de lo terminado se rechaza con mensaje claro y no registra nada", /terminadas/.test(await dlg.locator("[data-testid=deliver-error]").innerText()) && (await lines(ids.masivo)).length === 0);
+  const err1 = await dlg.locator("[data-testid=deliver-error]").innerText();
+  check("entregar más de lo terminado se rechaza con mensaje claro y no registra nada", /terminadas/.test(err1) && (await lines(ids.masivo)).length === 0, `${err1} | finished_qty=${(await q("select finished_qty from work_items where id = $1", [ids.masivo]))[0].finished_qty} | líneas=${(await lines(ids.masivo)).length}`);
   await dlg.locator("[data-testid=deliver-quantity]").fill("2500");
   await dlg.locator("[data-testid=confirm-deliver]").click();
   check("entregar más que el saldo se rechaza", /supera el saldo/.test(await dlg.locator("[data-testid=deliver-error]").innerText()));
@@ -92,7 +93,7 @@ try {
   // 1.ª parcial: 1.000, con DOBLE CLIC
   await dlg.locator("[data-testid=deliver-quantity]").fill("1000");
   await dlg.locator("[data-testid=confirm-deliver]").dblclick();
-  await dlg.waitFor({ state: "detached", timeout: 30_000 });
+  await dlg.waitFor({ state: "detached", timeout: 30_000 }).catch(async (e) => { console.log("DEBUG diálogo abierto:", (await dlg.innerText()).replace(/\s+/g, " ").slice(0, 500), "| líneas:", JSON.stringify(await lines(ids.masivo))); await p.screenshot({ path: `${OUT}/debug.png` }); throw e; });
   check("1.ª entrega parcial de 1.000: se registra UNA vez (doble clic sin duplicar)", await waitDb(async () => (await lines(ids.masivo)).length === 1));
   let ls = await lines(ids.masivo);
   check("renglón PARCIAL de 1.000, acumulado 1.000, saldo 1.000, con usuario y sector", ls[0].kind === "PARCIAL" && Number(ls[0].quantity) === 1000 && Number(ls[0].cumulative_after) === 1000 && Number(ls[0].pending_after) === 1000 && ls[0].delivered_by_sector === "ENVASADO_MASIVO" && /Envasado/.test(ls[0].delivered_by));
