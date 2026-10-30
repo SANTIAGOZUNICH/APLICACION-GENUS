@@ -24,7 +24,7 @@ interface WorkItemProgressTableProps {
   variant: "envasado" | "elaboracion";
   getFinishedQty: (itemId: string) => string;
   getObservation: (itemId: string) => string;
-  onSelectItem: (item: WorkItem) => void;
+  onSelectItem: (item: WorkItem, intent?: "partial") => void;
   emptyMessage?: string;
   /** Envasado: lista principal vs sub-pestaña Archivados. */
   listMode?: "active" | "archived";

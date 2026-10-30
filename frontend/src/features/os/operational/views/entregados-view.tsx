@@ -214,7 +214,7 @@ export function EntregadosView() {
   // Cajas REALES de cada entrega (renglones de entrega): se cargan junto con el listado y no dependen de Remitos.
   const [deliveryLines, setDeliveryLines] = useState<DeliveryLineLike[]>([]);
   const [detailLines, setDetailLines] = useState<
-    Array<{ id: string; sequence: number; quantity: number; unit: string | null; kind: string; status: string; actualDeliveredAt: string; remito: string | null; packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null }>
+    Array<{ id: string; sequence: number; quantity: number; unit: string | null; kind: string; status: string; actualDeliveredAt: string; remito: string | null; deliveredBy?: string | null; deliveredBySector?: string | null; cumulativeAfter?: number | null; pendingAfter?: number | null; packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null }>
   >([]);
   const [filesRef, setFilesRef] = useState<string | null>(null);
   const [deleteGuideTarget, setDeleteGuideTarget] = useState<DeliveryRecord | null>(null);
@@ -974,6 +974,9 @@ export function EntregadosView() {
                       <li key={l.id} className="font-mono text-xs">
                         #{l.sequence} · {formatDateTime(l.actualDeliveredAt)} · {l.quantity} {l.unit ?? ""}
                         {l.status === "ANULADA" ? " (anulada)" : l.kind === "FINAL" ? " (final)" : " (parcial)"}
+                        {l.cumulativeAfter != null ? ` · acumulado ${l.cumulativeAfter}` : ""}
+                        {l.pendingAfter != null ? ` · saldo ${l.pendingAfter}` : ""}
+                        {l.deliveredBy ? ` · ${l.deliveredBy}${l.deliveredBySector ? ` (${SECTOR_LABELS[l.deliveredBySector as keyof typeof SECTOR_LABELS] ?? l.deliveredBySector})` : ""}` : ""}
                         {l.remito ? ` · remito ${l.remito}` : ""}
                         <PackingSummary groups={l.packingGroups} detail testId="detail-line-packing" />
                         {l.packingGroups && l.packingGroups.length > 0 ? <span className="sr-only" data-testid="detail-line-boxes">{describeDeliveryPacking(l.packingGroups)}</span> : null}

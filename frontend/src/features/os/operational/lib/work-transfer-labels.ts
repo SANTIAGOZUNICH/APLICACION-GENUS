@@ -3,6 +3,8 @@
 export const WORK_TRANSFER = {
   /** Acción del operario de Envasado al cerrar su parte: registra la entrega final. */
   markFinishedAction: "Entregar",
+  /** Entrega parcial a Producción: el trabajo sigue pendiente en Envasado por el saldo. */
+  deliverPartialAction: "Entregar parcial",
   /** Avance parcial — el operario sigue trabajando. */
   saveProgressAction: "Guardar avance",
   /** Elaboración termina y envía DIRECTO al Envasado Masivo/Premium. */

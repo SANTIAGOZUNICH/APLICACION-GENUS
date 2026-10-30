@@ -85,8 +85,10 @@ export async function postSendToEnvasado(
 export interface CircuitDeliveryPayload {
   workItemId: string;
   actorSectorId: SectorId | string;
-  /** Unidades entregadas ahora. Omitido = todo el saldo. */
+  /** Unidades entregadas ahora. Omitido = todo el saldo (en parcial es obligatoria). */
   deliverQuantity?: number | null;
+  /** «Entregar parcial»: el servidor mide el saldo contra lo asignado y no cierra el trabajo hasta completarlo. */
+  partial?: boolean;
   idempotencyKey: string;
   actualDeliveredAt: string;
   remito?: string | null;

@@ -53,7 +53,7 @@ export interface WorkItemCardsProps {
   variant: "envasado" | "elaboracion";
   getFinishedQty: (itemId: string) => string;
   getObservation: (itemId: string) => string;
-  onSelectItem: (item: WorkItem) => void;
+  onSelectItem: (item: WorkItem, intent?: "partial") => void;
   listMode?: "active" | "archived";
   onArchiveFromView?: (item: WorkItem) => void;
   onRestoreToView?: (item: WorkItem) => void;
@@ -508,6 +508,9 @@ export function WorkItemCard(props: WorkItemCardsProps & { item: WorkItem }) {
 
       {!props.hideActions && <div className="mt-auto flex flex-wrap gap-1.5 border-t border-white/10 pt-2">
         <ActionButton label={archived || transferred ? "Ver detalle" : "Ver / Registrar avance"} variant="neutral" onClick={() => onSelectItem(item)} />
+        {variant === "envasado" && !archived && !transferred && !isProduccion && (
+          <ActionButton label="Entregar parcial" variant="approve" onClick={() => onSelectItem(item, "partial")} />
+        )}
         {/* Mismas condiciones que la lista clásica (solo Envasado archiva/restaura de su vista). */}
         {variant === "envasado" && listMode === "active" && transferred && onArchiveFromView && (
           <ActionButton label="Archivar de mi vista" variant="neutral" disabled={busy} title={VIEW_ARCHIVE_TOOLTIP} onClick={() => onArchiveFromView(item)} />

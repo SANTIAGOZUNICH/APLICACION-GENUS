@@ -116,6 +116,59 @@ export function planDeliveryStep(input: {
   return { ok: true, quantity, cumulative, pending: complete ? 0 : pending, complete };
 }
 
+export type PartialDeliveryResult =
+  | { ok: true; quantity: number; cumulative: number; pending: number; complete: boolean }
+  | { ok: false; code: "INVALID_QUANTITY" | "EXCEEDS_BALANCE" | "EXCEEDS_AVAILABLE" | "NOTHING_PENDING"; error: string };
+
+/**
+ * «Entregar parcial» (Envasado → Producción). A diferencia de la entrega final, el SALDO se mide contra la cantidad ASIGNADA al
+ * trabajo (no contra lo producido hasta ahora): `pendiente = asignada − entregado`. El trabajo solo se completa al llegar a la
+ * asignada. Además no se puede entregar más de lo terminado y todavía no entregado (`produced − entregado`) cuando ese dato existe.
+ */
+export function planPartialDelivery(input: {
+  assigned: number;
+  alreadyDelivered: number;
+  /** Unidades terminadas según los registros operativos (realizadas). null/0 = sin dato: no limita. */
+  produced: number | null | undefined;
+  requested: number | null | undefined;
+  unit: string | null | undefined;
+}): PartialDeliveryResult {
+  const { assigned, alreadyDelivered, unit } = input;
+  const balance = Math.max(0, assigned - alreadyDelivered);
+  if (balance <= DELIVERY_EPSILON) {
+    return { ok: false, code: "NOTHING_PENDING", error: "No queda saldo pendiente de entrega en este trabajo." };
+  }
+  const requested = input.requested == null ? NaN : Number(input.requested);
+  if (!Number.isFinite(requested) || requested <= 0) {
+    return { ok: false, code: "INVALID_QUANTITY", error: "La cantidad a entregar debe ser mayor que 0." };
+  }
+  if (isIntegerUnit(unit) && !Number.isInteger(requested)) {
+    return { ok: false, code: "INVALID_QUANTITY", error: "La cantidad a entregar debe ser un número entero de unidades." };
+  }
+  if (requested > balance + DELIVERY_EPSILON) {
+    return {
+      ok: false,
+      code: "EXCEEDS_BALANCE",
+      error: `La cantidad (${formatQty(requested)}) supera el saldo pendiente de entrega (${formatQty(balance)}).`,
+    };
+  }
+  const produced = input.produced != null && Number.isFinite(input.produced) && input.produced > 0 ? input.produced : null;
+  if (produced != null) {
+    const available = Math.max(0, produced - alreadyDelivered);
+    if (requested > available + DELIVERY_EPSILON) {
+      return {
+        ok: false,
+        code: "EXCEEDS_AVAILABLE",
+        error: `Solo hay ${formatQty(available)} unidades terminadas sin entregar (terminadas ${formatQty(produced)}, ya entregadas ${formatQty(alreadyDelivered)}). Registrá el avance antes de entregar más.`,
+      };
+    }
+  }
+  const cumulative = alreadyDelivered + requested;
+  const pending = Math.max(0, assigned - cumulative);
+  const complete = pending <= DELIVERY_EPSILON;
+  return { ok: true, quantity: requested, cumulative, pending: complete ? 0 : pending, complete };
+}
+
 /**
  * Clave de idempotencia por defecto para llamadores que no mandan una (la UI legacy de Entregados): determinística
  * por trabajo + acumulado actual + cantidad pedida, así un doble clic o un reintento del MISMO paso comparte clave
