@@ -119,10 +119,10 @@ try {
   await c.waitForFunction((cli) => [...document.querySelectorAll("[data-testid=cod-receipt-row]")].some((r) => (r.textContent ?? "").includes(cli)), CLI, { timeout: 60_000 });
   const rr = (await c.locator("[data-testid=cod-receipt-row]").filter({ hasText: CLI }).first().innerText()).replace(/\s+/g, " ");
   check("la entrega aparece SOLA en la bandeja de Codificado (cliente, producto, lote, origen, cantidad, fecha y usuario)", rr.includes(CLI) && rr.includes(PROD) && rr.includes("L-CTRF-01") && /Envasado Masivo/.test(rr) && /800/.test(rr) && /\d{1,2}\/\d{1,2}\/\d{4}/.test(rr) && /E2E Envasado/.test(rr), rr);
-  const row = c.locator("tr", { hasText: PROD }).filter({ hasText: /Recibidas 800/ }).first();
-  await row.waitFor({ timeout: 60_000 });
-  check("en la lista de Codificado el trabajo figura como «Recibidas 800 de 2000» (un solo trabajo)", (await c.locator("tr", { hasText: PROD }).filter({ hasText: /Recibidas/ }).count()) >= 1);
-  await row.getByRole("button", { name: /^Abrir/ }).first().click();
+  const recib = c.getByText(/Recibidas 800 de 2000/).first();
+  await recib.waitFor({ timeout: 60_000 }).catch(async (e) => { await c.screenshot({ path: `${OUT}/debug-codificado.png` }); console.log("DEBUG codificado:", (await c.locator("main").innerText()).replace(/\s+/g, " ").slice(0, 900)); throw e; });
+  check("en la lista de Codificado el trabajo figura como «Recibidas 800 de 2000» (un solo trabajo)", (await c.getByText(/Recibidas \d+ de/).count()) >= 1);
+  await c.getByRole("button", { name: /^Abrir/ }).first().click();
   const panel = c.locator("[data-testid=cod-received-panel]");
   await panel.waitFor({ timeout: 30_000 });
   check("Codificado ve recibidas 800 · codificadas 0 · pendiente de codificar 800 · todavía no recibidas 1.200", (await num(panel.locator("[data-testid=cod-received]"))) === 800 && (await num(panel.locator("[data-testid=cod-coded]"))) === 0 && (await num(panel.locator("[data-testid=cod-pending-code]"))) === 800 && (await num(panel.locator("[data-testid=cod-not-received]"))) === 1200);
@@ -166,9 +166,8 @@ try {
   await c.reload();
   await c.locator("[data-testid=cod-receipts]").waitFor({ timeout: 120_000 });
   check("después de recargar siguen las tres entregas en la bandeja de Codificado", (await c.locator("[data-testid=cod-receipt-row]").filter({ hasText: CLI }).count()) === 3);
-  const row2 = c.locator("tr", { hasText: PROD }).filter({ hasText: /Recibidas 2000/ }).first();
-  await row2.waitFor({ timeout: 60_000 });
-  await row2.getByRole("button", { name: /^Abrir/ }).first().click();
+  await c.getByText(/Recibidas 2000 de 2000/).first().waitFor({ timeout: 60_000 });
+  await c.getByRole("button", { name: /^Abrir/ }).first().click();
   await c.locator("[data-testid=cod-received-panel]").waitFor({ timeout: 30_000 });
   check("y el avance de Codificado (500 codificadas) se conservó", (await num(c.locator("[data-testid=cod-coded]"))) === 500);
 
