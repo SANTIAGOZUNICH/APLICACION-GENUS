@@ -705,6 +705,15 @@ describe("ME Stock — eliminar material (archivo lógico)", () => {
     expect(salida!.reverted).toBeFalsy();
   });
 
+  it("Producción no registra entradas ni salidas ME por el servicio (solo consulta); Depósito sí", () => {
+    expect(() => svc.upsertMeIngreso(produccion, { codigo: "PRO-RO-1", descripcionInsumo: "X", bultos: 1, cantidad: 5 })).toThrow(InventoryForbiddenError);
+    expect(() => svc.upsertMeSalida(produccion, { codigo: "PRO-RO-1", cantidad: 1, descuentaStock: true })).toThrow(InventoryForbiddenError);
+    expect(() => svc.createMeMaterial(produccion, { codigo: "PRO-RO-2", descripcion: "Y" } as never)).toThrow(InventoryForbiddenError);
+    const ing = svc.upsertMeIngreso(deposito, { codigo: "PRO-RO-1", descripcionInsumo: "X", bultos: 1, cantidad: 5 });
+    expect(ing.codigo).toBe("PRO-RO-1");
+    expect(svc.listMeMaterials(produccion).some((m) => m.codigo === "PRO-RO-1")).toBe(true); // pero SÍ lo consulta
+  });
+
   it("DEPOSITO elimina me_stock; PRODUCCION (solo consulta) y CODIFICADO no pueden", () => {
     const codificado = {
       email: "codificado@laboratoriogenus.com.ar",

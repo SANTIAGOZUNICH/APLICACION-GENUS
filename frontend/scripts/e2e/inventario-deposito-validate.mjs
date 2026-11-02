@@ -123,7 +123,8 @@ try {
     "editar celdas del inventario (PATCH /inventory/cells)": await api.patch("/api/v1/inventory/cells", { data: { resource: "me_inventario", changes: [{ id: matIds["E2E-INV-TAPA"], field: "stockMinimo", value: "9", expectedVersion: T }] } }),
     "modificar cantidad (PATCH cells stockTotal)": await api.patch("/api/v1/inventory/cells", { data: { resource: "me_inventario", changes: [{ id: matIds["E2E-INV-TAPA"], field: "stockTotal", value: "1", expectedVersion: T }] } }),
     "registrar entrada (PATCH cells me_ingresos)": await api.patch("/api/v1/inventory/cells", { data: { resource: "me_ingresos", changes: [{ id: randomUUID(), field: "cantidad", value: "5", expectedVersion: T }] } }),
-    "registrar salida (POST /inventory upsert me_salidas)": await api.post("/api/v1/inventory", { data: { action: "create", resource: "me_salidas", payload: { codigo: "E2E-INV-TAPA", cantidad: 1, descuentaStock: true } } }),
+    "registrar salida (POST /inventory upsert me_salidas)": await api.post("/api/v1/inventory", { data: { action: "upsert", resource: "me_salidas", payload: { codigo: "E2E-INV-TAPA", cantidad: 1, descuentaStock: true } } }),
+    "registrar entrada (POST /inventory upsert me_ingresos)": await api.post("/api/v1/inventory", { data: { action: "upsert", resource: "me_ingresos", payload: { codigo: "E2E-INV-TAPA", descripcionInsumo: "x", bultos: 1, cantidad: 50 } } }),
     "ajuste de stock (POST /inventory/me-ajustes)": await api.post("/api/v1/inventory/me-ajustes", { data: { materialId: matIds["E2E-INV-TAPA"], expectedStock: 300, newStock: 1, motivo: "E2E INV intento Producción", tipo: "OTRO" } }),
     "insertar/mover filas (POST /inventory/rows)": await api.post("/api/v1/inventory/rows", { data: { action: "insert", resource: "me_inventario", beforeId: null } }),
   };
