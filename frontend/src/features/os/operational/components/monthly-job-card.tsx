@@ -22,8 +22,9 @@ export function formatJobDates(from: string, to: string): string {
 }
 
 /**
- * Tarjeta flotante de un trabajo en la Vista mensual: SOLO información (sin botones de asignar, editar, eliminar ni reprogramar).
- * Principal: cliente, producto y cantidad. Secundario: fecha, sector, estado y lote (solo si está asignado). Sin campos vacíos.
+ * Contenido de la tarjeta flotante de un trabajo en la Vista mensual: SOLO información (sin acciones de asignar, editar, eliminar ni
+ * reprogramar). Título = producto; luego Cliente y Cantidad; debajo, en menor jerarquía: fecha, sector, estado y lote (si existe).
+ * Sin campos vacíos. El fondo opaco y el borde los pone el contenedor (`.os-floating-card`).
  */
 export function MonthlyJobCard({ job }: { job: WeeklyPlanItemDto }) {
   const secondary: Array<[string, string, string]> = [
@@ -33,28 +34,25 @@ export function MonthlyJobCard({ job }: { job: WeeklyPlanItemDto }) {
     ["Lote", job.lote ?? "", "lote"],
   ];
   return (
-    <div className="space-y-3 pr-6" data-testid="job-card" data-job-id={job.workItemId}>
-      <dl className="space-y-2">
-        <div>
-          <dt className="text-[11px] font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">Cliente</dt>
-          <dd className="text-base font-semibold leading-snug" data-testid="job-card-client">{job.client}</dd>
+    <div data-testid="job-card" data-job-id={job.workItemId}>
+      <h3 className="pr-8 text-lg font-bold leading-snug text-[#eaf3f6]" data-testid="job-card-product">{job.product}</h3>
+      <dl className="mt-3 space-y-1.5 text-[15px]">
+        <div className="flex flex-wrap gap-x-2">
+          <dt className="font-medium text-[#9fb4c0]">Cliente:</dt>
+          <dd className="font-semibold text-[#eaf3f6]" data-testid="job-card-client">{job.client}</dd>
         </div>
-        <div>
-          <dt className="text-[11px] font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">Producto</dt>
-          <dd className="text-base font-semibold leading-snug" data-testid="job-card-product">{job.product}</dd>
-        </div>
-        <div>
-          <dt className="text-[11px] font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">Cantidad</dt>
-          <dd className="text-base font-semibold leading-snug tabular-nums" data-testid="job-card-quantity">{formatJobQuantity(job.quantity, job.unit)}</dd>
+        <div className="flex flex-wrap gap-x-2">
+          <dt className="font-medium text-[#9fb4c0]">Cantidad:</dt>
+          <dd className="font-semibold tabular-nums text-[#eaf3f6]" data-testid="job-card-quantity">{formatJobQuantity(job.quantity, job.unit)}</dd>
         </div>
       </dl>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-t border-[var(--os-border)] pt-2 text-sm">
+      <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-t border-white/15 pt-3 text-[13px]">
         {secondary
           .filter(([, v]) => v.trim() !== "")
           .map(([label, value, key]) => (
             <div key={key} className="contents">
-              <dt className="text-[var(--os-text-muted)]">{label}</dt>
-              <dd data-testid={`job-card-${key}`}>{value}</dd>
+              <dt className="text-[#9fb4c0]">{label}</dt>
+              <dd className="text-[#d6e4ea]" data-testid={`job-card-${key}`}>{value}</dd>
             </div>
           ))}
       </dl>

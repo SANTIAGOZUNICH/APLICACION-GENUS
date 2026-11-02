@@ -3,6 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { X } from "lucide-react";
+import { useDesignPreviewPortalContainer } from "@/lib/utils/use-design-preview-portal-container";
 import { buildMonthGrid, groupItemsByMonthDay, undatedItems, type MonthItem } from "@/lib/operational/month-grid";
 
 const DOW = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"] as const;
@@ -43,6 +44,8 @@ function chipLabel(it: MonthItem): string {
  * la sección «Sin fecha asignada». Es una perspectiva más amplia de la MISMA planificación (no duplica trabajos).
  */
 export function OperationalMonthBoard<T extends MonthItem>({ monthStart, today, items, allItems, canEdit, onSelectItem, onCreateSlot, onRequestDate, onSelectDay, showUndated = true, renderDetail }: Props<T>) {
+  // La tarjeta se monta DENTRO del tema (.design-preview-root), no en document.body: ahí no existen las variables --os-*.
+  const portalContainer = useDesignPreviewPortalContainer();
   const grid = useMemo(() => buildMonthGrid(monthStart), [monthStart]);
   const byDay = useMemo(() => groupItemsByMonthDay(items, grid), [items, grid]);
   const sinFecha = useMemo(() => undatedItems(allItems), [allItems]);
@@ -110,19 +113,20 @@ export function OperationalMonthBoard<T extends MonthItem>({ monthStart, today, 
                                     {chipLabel(it)}
                                   </button>
                                 </Popover.Trigger>
-                                <Popover.Portal>
+                                <Popover.Portal container={portalContainer}>
                                   <Popover.Content
                                     side="bottom"
                                     align="start"
-                                    sideOffset={6}
-                                    collisionPadding={8}
+                                    sideOffset={10}
+                                    collisionPadding={12}
                                     avoidCollisions
-                                    className="z-50 w-[min(20rem,calc(100vw-16px))] max-h-[min(24rem,calc(100vh-16px))] overflow-y-auto rounded-xl border border-[var(--os-border)] bg-[var(--os-surface)] p-3 text-[var(--os-text)] shadow-lg outline-none"
+                                    sticky="always"
+                                    className="os-floating-card"
                                     data-testid="month-job-card"
                                     aria-label="Detalle del trabajo"
                                   >
                                     {renderDetail(it)}
-                                    <Popover.Close className="absolute right-2 top-2 rounded p-1 text-[var(--os-text-muted)] hover:bg-[var(--os-teal)]/15" aria-label="Cerrar" data-testid="month-job-card-close">
+                                    <Popover.Close className="absolute right-2.5 top-2.5 rounded-md p-1.5 text-[var(--os-text-muted)] hover:bg-white/10 hover:text-[var(--os-text)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--os-teal)]" aria-label="Cerrar" data-testid="month-job-card-close">
                                       <X className="size-4" aria-hidden="true" />
                                     </Popover.Close>
                                   </Popover.Content>
