@@ -151,10 +151,10 @@ describe.skipIf(Boolean(PROBLEM))(`Depósito ME: planillas editables en Postgres
   it("ajuste de inventario: stock esperado (409 si cambió), motivo obligatorio, historial; dos ajustes simultáneos → uno gana", async () => {
     const { adjustMeStockDb, meStockByCodigoDb, meMovementsDb } = await mod();
     const current = await meStockByCodigoDb(COD);
-    await expect(adjustMeStockDb(produccion, { materialId: ids.mat, expectedStock: current, newStock: 10, motivo: "corto", tipo: "CONTEO_FISICO" })).rejects.toThrow(/motivo/);
-    await expect(adjustMeStockDb(produccion, { materialId: ids.mat, expectedStock: current + 1, newStock: 10, motivo: "IT conteo físico", tipo: "CONTEO_FISICO" })).rejects.toMatchObject({ status: 409 });
+    await expect(adjustMeStockDb(deposito, { materialId: ids.mat, expectedStock: current, newStock: 10, motivo: "corto", tipo: "CONTEO_FISICO" })).rejects.toThrow(/motivo/);
+    await expect(adjustMeStockDb(deposito, { materialId: ids.mat, expectedStock: current + 1, newStock: 10, motivo: "IT conteo físico", tipo: "CONTEO_FISICO" })).rejects.toMatchObject({ status: 409 });
     const res = await Promise.allSettled([
-      adjustMeStockDb(produccion, { materialId: ids.mat, expectedStock: current, newStock: current - 3, motivo: "IT conteo físico A", tipo: "CONTEO_FISICO" }),
+      adjustMeStockDb(deposito, { materialId: ids.mat, expectedStock: current, newStock: current - 3, motivo: "IT conteo físico A", tipo: "CONTEO_FISICO" }),
       adjustMeStockDb(deposito, { materialId: ids.mat, expectedStock: current, newStock: current - 7, motivo: "IT conteo físico B", tipo: "CONTEO_FISICO" }),
     ]);
     expect(res.filter((r) => r.status === "fulfilled")).toHaveLength(1);
@@ -168,13 +168,16 @@ describe.skipIf(Boolean(PROBLEM))(`Depósito ME: planillas editables en Postgres
     expect(await meStockByCodigoDb(COD)).toBe(after + 2);
   });
 
-  it("permisos: Producción no edita ingresos; Envasado no ajusta ni edita; Producción sí edita umbrales del inventario", async () => {
+  it("permisos: Producción solo CONSULTA el inventario ME (ni ingresos, ni umbrales, ni ajustes); Envasado tampoco; Depósito sí", async () => {
     const { patchMeSheetCells, adjustMeStockDb } = await mod();
     const i2 = await payload("inv_me_ingresos", ids.ing2);
     await expect(patchMeSheetCells(produccion, "me_ingresos", [{ id: ids.ing2, field: "cantidad", value: "1", expectedVersion: String(i2.updatedAt) }])).rejects.toMatchObject({ status: 403 });
     await expect(adjustMeStockDb(envasado, { materialId: ids.mat, expectedStock: 0, newStock: 1, motivo: "IT intento envasado", tipo: "OTRO" })).rejects.toMatchObject({ status: 403 });
     const m = await payload("inv_me_materials", ids.mat);
-    await patchMeSheetCells(produccion, "me_inventario", [{ id: ids.mat, field: "stockMinimo", value: "30", expectedVersion: String(m.updatedAt) }]);
+    await expect(patchMeSheetCells(produccion, "me_inventario", [{ id: ids.mat, field: "stockMinimo", value: "30", expectedVersion: String(m.updatedAt) }])).rejects.toMatchObject({ status: 403 });
+    await expect(adjustMeStockDb(produccion, { materialId: ids.mat, expectedStock: 0, newStock: 1, motivo: "IT intento producción", tipo: "OTRO" })).rejects.toMatchObject({ status: 403 });
+    expect((await payload("inv_me_materials", ids.mat)).stockMinimo).not.toBe(30);
+    await patchMeSheetCells(deposito, "me_inventario", [{ id: ids.mat, field: "stockMinimo", value: "30", expectedVersion: String(m.updatedAt) }]);
     expect((await payload("inv_me_materials", ids.mat)).stockMinimo).toBe(30);
   });
 

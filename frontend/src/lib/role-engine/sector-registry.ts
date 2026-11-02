@@ -299,6 +299,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "entregas",
       "entregas_produccion",
       "asignacion_lotes",
+      "inventario_deposito",
       "portal_clientes",
       "ver_elaboracion",
       "ver_envasado_masivo",

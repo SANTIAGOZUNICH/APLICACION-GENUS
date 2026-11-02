@@ -25,6 +25,7 @@ import { HistorialView } from "@/features/os/operational/views/historial-view";
 import { MeIngresosView } from "@/features/os/operational/views/me-ingresos-view";
 import { MeSalidasView } from "@/features/os/operational/views/me-salidas-view";
 import { MeInventarioView } from "@/features/os/operational/views/me-inventario-view";
+import { InventarioDepositoView } from "@/features/os/operational/views/inventario-deposito-view";
 import { ControlMeView } from "@/features/os/operational/views/control-me-view";
 import { PedidosDepositoView } from "@/features/os/operational/views/pedidos-deposito-view";
 import { EntregasProduccionView } from "@/features/os/operational/views/entregas-produccion-view";
@@ -123,6 +124,8 @@ export function TwinRouter() {
       return <DepositoGranelesView />;
     case "entregas-produccion":
       return <EntregasProduccionView />;
+    case "inventario-deposito":
+      return <InventarioDepositoView />;
     case "control-me":
       return <ControlMeView />;
     case "pedidos-deposito":

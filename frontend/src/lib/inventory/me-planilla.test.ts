@@ -84,7 +84,7 @@ describe("protección y validación de celdas", () => {
     expect(meSheetProtection("me_ingresos", {}, "total", "DEPOSITO")).toBeNull();
     for (const f of ["codigo", "stockTotal", "bultosStock"]) expect(meSheetProtection("me_inventario", {}, f, "DEPOSITO")).toBeNull();
     expect(meSheetProtection("me_inventario", {}, "stockActual", "DEPOSITO")).toMatch(/calculada/);
-    expect(meSheetProtection("me_inventario", {}, "stockMinimo", "PRODUCCION")).toBeNull();
+    expect(meSheetProtection("me_inventario", {}, "stockMinimo", "PRODUCCION")).toMatch(/no puede editar/); // Producción solo consulta el inventario
   });
   it("tipos: números, fechas, Sí/No, motivos", () => {
     expect(validateMeSheetValue("me_ingresos", "cantidad", "1.500,5")).toEqual({ ok: true, value: 1500.5 });
