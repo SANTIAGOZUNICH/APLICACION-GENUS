@@ -106,7 +106,7 @@ try {
   check("Depósito conserva su permiso de ajuste (200)", adj.ok(), String(adj.status()));
   console.log("   visibilidad de la pestaña de Producción:", await p.evaluate(() => document.visibilityState));
   await p.bringToFront(); // la persona vuelve a la pestaña de Producción (dispara la actualización inmediata)
-  await p.waitForFunction(() => [...document.querySelectorAll("[data-testid=invdep-row]")].some((r) => /E2E-INV-FRASCO/.test(r.textContent ?? "") && /(^|\s)1\.000(\s|$)/.test(r.textContent ?? "")), null, { timeout: 90_000 });
+  await p.waitForFunction(() => [...document.querySelectorAll("[data-testid=invdep-row]")].some((r) => /E2E-INV-FRASCO/.test(r.innerText) && /(^|\s)1\.000(\s|$)/.test(r.innerText)), null, { timeout: 90_000 });
   check("el ajuste de Depósito aparece en Producción sin recargar (stock 1.000)", true);
   console.log("   fila:", (await rows(p)).find((r) => /FRASCO/.test(r)));
   await dp.page.goto("/mi-trabajo");
