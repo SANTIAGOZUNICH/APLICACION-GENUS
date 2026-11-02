@@ -119,6 +119,7 @@ try {
   await c.waitForFunction((cli) => [...document.querySelectorAll("[data-testid=cod-receipt-row]")].some((r) => (r.textContent ?? "").includes(cli)), CLI, { timeout: 60_000 });
   const rr = (await c.locator("[data-testid=cod-receipt-row]").filter({ hasText: CLI }).first().innerText()).replace(/\s+/g, " ");
   check("la entrega aparece SOLA en la bandeja de Codificado (cliente, producto, lote, origen, cantidad, fecha y usuario)", rr.includes(CLI) && rr.includes(PROD) && rr.includes("L-CTRF-01") && /Envasado Masivo/.test(rr) && /800/.test(rr) && /\d{1,2}\/\d{1,2}\/\d{4}/.test(rr) && /E2E Envasado/.test(rr), rr);
+  await c.getByRole("button", { name: /Ver como lista/ }).click({ timeout: 30_000 }).catch(() => undefined); // la grilla Excel no expone el texto de las celdas
   const recib = c.getByText(/Recibidas 800 de 2000/).first();
   await recib.waitFor({ timeout: 60_000 }).catch(async (e) => { await c.screenshot({ path: `${OUT}/debug-codificado.png` }); console.log("DEBUG codificado:", (await c.locator("main").innerText()).replace(/\s+/g, " ").slice(0, 900)); throw e; });
   check("en la lista de Codificado el trabajo figura como «Recibidas 800 de 2000» (un solo trabajo)", (await c.getByText(/Recibidas \d+ de/).count()) >= 1);
