@@ -238,6 +238,8 @@ export const workItems = pgTable(
     reworkReason: text("rework_reason"),
     /** 0061 — programación de la MISMA OE/OA en otro día: apunta a la programación original. null = original/única. */
     scheduleRootId: uuid("schedule_root_id"),
+    /** 0077 — trabajo de Codificado que recibe entregas parciales de este otro trabajo (de Envasado). NULL = trabajo normal. */
+    parentWorkItemId: uuid("parent_work_item_id"),
     /** 0061 — solo en la original: cantidad total de la orden a repartir entre sus programaciones. */
     scheduleTotal: text("schedule_total"),
   },
@@ -2097,5 +2099,35 @@ export const meControlAlerts = pgTable(
   (table) => [
     uniqueIndex("me_control_alerts_key_uq").on(table.alertKey),
     index("me_control_alerts_status_idx").on(table.status, table.weekStart),
+  ]
+);
+
+
+/** Entregas parciales de Envasado a Codificado (0077): un movimiento interno por entrega. No es una entrega al cliente ni mueve stock. */
+export const workItemCodificadoTransfers = pgTable(
+  "work_item_codificado_transfers",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workItemId: uuid("work_item_id").notNull(),
+    codificadoItemId: uuid("codificado_item_id").notNull(),
+    seq: integer("seq").notNull(),
+    quantity: doublePrecision("quantity").notNull(),
+    cumulative: doublePrecision("cumulative").notNull(),
+    pending: doublePrecision("pending").notNull(),
+    originSector: text("origin_sector").notNull(),
+    lote: text("lote"),
+    vto: text("vto"),
+    deliveredBy: text("delivered_by").notNull(),
+    deliveredByName: text("delivered_by_name"),
+    deliveredBySector: text("delivered_by_sector").notNull(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }).notNull().defaultNow(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    status: text("status").notNull().default("ACTIVA"),
+    note: text("note"),
+  },
+  (table) => [
+    uniqueIndex("work_item_codificado_transfers_idem_uq").on(table.idempotencyKey),
+    uniqueIndex("work_item_codificado_transfers_seq_uq").on(table.workItemId, table.seq),
+    index("work_item_codificado_transfers_dest_idx").on(table.codificadoItemId),
   ]
 );

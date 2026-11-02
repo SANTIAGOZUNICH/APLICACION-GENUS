@@ -31,6 +31,9 @@ import { WorkItemPlanEditor } from "./work-item-plan-editor";
 import { WorkFormulaPanel } from "./work-formula-panel";
 import { isNativeWorkItemId } from "@/lib/planning/work-item-cell-edit";
 import { SendToCodificadoDialog } from "./send-to-codificado-dialog";
+import { DeliverToCodificadoDialog } from "./deliver-to-codificado-dialog";
+import { EnvasadoCodificadoSummary } from "@/features/os/codificado-transfer/codificado-transfer-panel";
+import { useTransferView } from "@/features/os/codificado-transfer/use-transfer-view";
 import { SendToEnvasadoDialog, type SendToEnvasadoPayload } from "./send-to-envasado-dialog";
 import { DeliverWorkDialog, type DeliverWorkPayload } from "./deliver-work-dialog";
 import { WorkSchedulesPanel } from "./work-schedules-panel";
@@ -120,6 +123,7 @@ export function WorkItemDrawer({
   const [deliverMode, setDeliverMode] = useState<"final" | "partial">("final");
   const [packagingDraft, setPackagingDraft] = useState<PackagingDraft | null>(null);
   const [confirmCodificado, setConfirmCodificado] = useState(false);
+  const [confirmTransfer, setConfirmTransfer] = useState(false);
   const [confirmCancelCodificado, setConfirmCancelCodificado] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelBusy, setCancelBusy] = useState(false);
@@ -127,6 +131,8 @@ export function WorkItemDrawer({
   const packagingRef = useRef<HTMLDivElement>(null);
   const finishedQtyRef = useRef<HTMLInputElement>(null);
   const canDeliverHere = variant !== "elaboracion" && Boolean(onDeliver);
+  // Entregas parciales a Codificado de este trabajo (Envasado): asignada / terminada / entregada / pendiente + cada entrega.
+  const { view: transferView, refresh: refreshTransfer } = useTransferView(item?.id, open && variant !== "elaboracion" && !isInCodificadoStatus(item?.status ?? ""));
   const initialItemId = item?.id ?? null;
   useEffect(() => {
     if (!open || initialAction !== "partial" || !initialItemId || !canDeliverHere) return;
@@ -382,6 +388,7 @@ export function WorkItemDrawer({
               </p>
             ) : null}
           </div>
+          {transferView && !isElaboracion && !inCodificado && (transferView.transfers.length > 0 || String(sectorId).toUpperCase().startsWith("ENVASADO")) ? <EnvasadoCodificadoSummary view={transferView} /> : null}
           {/* Último sector del recorrido: confirmación explícita de disponibilidad (Envasado sin Codificado). */}
           {!isElaboracion && !inCodificado ? <MarkReadyPanel workItemId={item.id} orderFallback={item.oaRef ?? null} /> : null}
         </DrawerBody>
@@ -390,7 +397,17 @@ export function WorkItemDrawer({
           <Button variant="secondary" disabled={transferred} onClick={() => onSaveProgress(item.id, { finishedQty, observation })}>
             Guardar avance
           </Button>
-          {showCodificado && !inCodificado ? (
+          {showCodificado && !inCodificado && !item.viaCodificado && !item.codificadoCancelledAt && String(sectorId).toUpperCase().startsWith("ENVASADO") ? (
+            <Button
+              variant="primary"
+              disabled={transferred}
+              onClick={() => setConfirmTransfer(true)}
+              data-testid="deliver-to-codificado-btn"
+            >
+              Entregar a Codificado
+            </Button>
+          ) : null}
+          {showCodificado && !inCodificado && (item.viaCodificado || item.codificadoCancelledAt || (transferView?.transfers.length ?? 0) === 0) ? (
             <Button
               variant="secondary"
               disabled={transferred}
@@ -399,7 +416,9 @@ export function WorkItemDrawer({
             >
               {item.viaCodificado || item.codificadoCancelledAt
                 ? "Editar y reenviar"
-                : WORK_TRANSFER.sendToCodificadoAction}
+                : String(sectorId).toUpperCase().startsWith("ENVASADO")
+                  ? "Enviar todo a Codificado"
+                  : WORK_TRANSFER.sendToCodificadoAction}
             </Button>
           ) : null}
           {showCodificado && inCodificado && onCancelCodificado ? (
@@ -504,6 +523,19 @@ export function WorkItemDrawer({
                   },
             });
             onOpenChange(false);
+          }}
+        />
+      ) : null}
+
+      {showCodificado ? (
+        <DeliverToCodificadoDialog
+          open={confirmTransfer}
+          onOpenChange={setConfirmTransfer}
+          item={item}
+          finishedDraft={finishedQty}
+          onDone={() => {
+            refreshTransfer();
+            onPlanningChanged?.();
           }}
         />
       ) : null}
