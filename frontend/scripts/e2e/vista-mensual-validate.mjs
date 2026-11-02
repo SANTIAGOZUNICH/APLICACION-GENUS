@@ -101,6 +101,7 @@ try {
   // ============ Detalle: Depósito ============
   const d = depositoPage.page;
   await pickTab(d, "ENVASADO_MASIVO");
+  await waitDay(d, J.mas.day, /VM MASIVO SHAMPOO/);
   const multi = [nmDay(6), nmDay(7), nmDay(8)];
   const mtexts = await Promise.all(multi.map((x) => dayText(d, x)));
   check("un trabajo de varios días aparece en cada día del rango y no se duplica (1 trabajo)", mtexts.every((t) => t.includes(J.mas.product)) && /1 trabajo\b/.test(await d.locator("[data-testid=vm-count]").innerText()) && !(await dayText(d, nmDay(9))).includes(J.mas.product));
