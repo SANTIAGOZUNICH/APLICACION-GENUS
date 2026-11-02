@@ -1,5 +1,6 @@
 import "server-only";
 
+import { triggerMeControlSync } from "@/lib/me-control/trigger";
 import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import {
@@ -45,7 +46,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * Todo ocurre en UNA transacción con las filas bloqueadas (FOR UPDATE) y un candado por batchKey: o se
  * aplican todas las elegibles y la auditoría, o nada. Los bloqueados quedan intactos y se informan.
  */
-export async function bulkDeleteWorkItemsDurable(input: BulkDeleteWorksInput): Promise<BulkDeleteResult> {
+async function bulkDeleteWorkItemsDurableImpl(input: BulkDeleteWorksInput): Promise<BulkDeleteResult> {
   const reason = input.reason?.trim() ?? "";
   const dryRun = Boolean(input.dryRun);
   if (!dryRun && !reason) {
@@ -227,4 +228,13 @@ export async function bulkDeleteWorkItemsDurable(input: BulkDeleteWorksInput): P
     });
     return result;
   });
+}
+
+
+export async function bulkDeleteWorkItemsDurable(...args: Parameters<typeof bulkDeleteWorkItemsDurableImpl>): ReturnType<typeof bulkDeleteWorkItemsDurableImpl> {
+  try {
+    return await bulkDeleteWorkItemsDurableImpl(...args);
+  } finally {
+    triggerMeControlSync();
+  }
 }

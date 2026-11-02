@@ -103,6 +103,7 @@ export const SIDEBAR_ITEM_IDS = [
   "deposito_graneles",
   "entregas_produccion",
   "pedidos_deposito",
+  "control_me",
   "avisos",
   "avisos_me",
   "semanas_produccion",

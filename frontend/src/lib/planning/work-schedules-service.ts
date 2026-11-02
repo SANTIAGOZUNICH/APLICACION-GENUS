@@ -1,5 +1,6 @@
 import "server-only";
 
+import { triggerMeControlSync } from "@/lib/me-control/trigger";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { operationalEvents, planningWeeks, workItemDeliveryLines, workItems } from "@/lib/db/schema";
@@ -62,7 +63,7 @@ async function summarize(tx: Tx, rootId: string): Promise<ScheduleSummary[]> {
  * original; NO crea órdenes, NO toca pedidos, consumos de MP, movimientos de stock ni entregas. Sin motivo obligatorio;
  * queda auditado. Idempotente por clave (un doble clic no duplica).
  */
-export async function addSchedulesDurable(input: AddSchedulesInput, actor: PlanningActor): Promise<AddSchedulesResult> {
+async function addSchedulesDurableImpl(input: AddSchedulesInput, actor: PlanningActor): Promise<AddSchedulesResult> {
   assertCanSchedule(actor);
   const key = input.idempotencyKey?.trim();
   if (!key || key.length < 8 || key.length > 100) throw new PlanningValidationError("idempotencyKey inválida (8–100 caracteres).");
@@ -172,7 +173,7 @@ export async function listSchedulesDurable(workItemId: string): Promise<{ rootId
  * y el resto de las programaciones no se tocan. No se puede quitar la original mientras existan otras, ni una programación con
  * avance o entregas.
  */
-export async function removeScheduleDurable(workItemId: string, actor: PlanningActor): Promise<{ removed: string }> {
+async function removeScheduleDurableImpl(workItemId: string, actor: PlanningActor): Promise<{ removed: string }> {
   assertCanSchedule(actor);
   return getDb().transaction(async (tx: Tx) => {
     const [w] = await tx.select().from(workItems).where(eq(workItems.id, workItemId)).for("update").limit(1);
@@ -191,3 +192,21 @@ export async function removeScheduleDurable(workItemId: string, actor: PlanningA
   });
 }
 
+
+
+export async function addSchedulesDurable(...args: Parameters<typeof addSchedulesDurableImpl>): ReturnType<typeof addSchedulesDurableImpl> {
+  try {
+    return await addSchedulesDurableImpl(...args);
+  } finally {
+    triggerMeControlSync();
+  }
+}
+
+
+export async function removeScheduleDurable(...args: Parameters<typeof removeScheduleDurableImpl>): ReturnType<typeof removeScheduleDurableImpl> {
+  try {
+    return await removeScheduleDurableImpl(...args);
+  } finally {
+    triggerMeControlSync();
+  }
+}

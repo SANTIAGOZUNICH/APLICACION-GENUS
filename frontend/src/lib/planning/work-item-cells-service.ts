@@ -4,6 +4,7 @@
  * del trabajo queda intacta. Se valida TODO antes de escribir; luego cada celda se persiste y se
  * informa su resultado real (nunca éxito sin confirmación de la base).
  */
+import { triggerMeControlSync } from "@/lib/me-control/trigger";
 import "server-only";
 
 import { inArray } from "drizzle-orm";
@@ -75,7 +76,7 @@ function classify(err: unknown): { code: "CONFLICT" | "INVALID" | "ERROR"; messa
   return { code: "ERROR", message };
 }
 
-export async function applyWorkItemCellChanges(
+async function applyWorkItemCellChangesImpl(
   actor: { email: string; sector: string; displayName: string },
   changes: WorkItemCellChange[],
   today = todayIso()
@@ -162,4 +163,13 @@ export async function applyWorkItemCellChanges(
     }
   }
   return { results, ok: results.every((r) => r?.ok) };
+}
+
+
+export async function applyWorkItemCellChanges(...args: Parameters<typeof applyWorkItemCellChangesImpl>): ReturnType<typeof applyWorkItemCellChangesImpl> {
+  try {
+    return await applyWorkItemCellChangesImpl(...args);
+  } finally {
+    triggerMeControlSync();
+  }
 }

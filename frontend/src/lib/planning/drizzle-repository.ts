@@ -1,5 +1,6 @@
 import "server-only";
 
+import { triggerMeControlSync } from "@/lib/me-control/trigger";
 import { ensureClientIdentitySafe } from "@/lib/portal/client-identity";
 import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb, type GenusDb } from "@/lib/db/client";
@@ -457,6 +458,7 @@ export class DrizzlePlanningRepository implements PlanningRepository {
       })
       .returning();
     await ensureClientIdentitySafe(input.client, "planificacion", actor.email);
+    triggerMeControlSync();
     return mapItem(row);
   }
 
@@ -497,7 +499,10 @@ export class DrizzlePlanningRepository implements PlanningRepository {
       .where(and(eq(workItems.id, id), eq(workItems.version, expectedVersion)))
       .returning();
 
-    if (updated) return mapItem(updated);
+    if (updated) {
+      triggerMeControlSync();
+      return mapItem(updated);
+    }
 
     const current = await this.getItem(id);
     if (!current) return null;
@@ -512,6 +517,7 @@ export class DrizzlePlanningRepository implements PlanningRepository {
       .delete(workItems)
       .where(eq(workItems.id, id))
       .returning({ id: workItems.id });
+    if (deleted.length > 0) triggerMeControlSync();
     return deleted.length > 0;
   }
 
