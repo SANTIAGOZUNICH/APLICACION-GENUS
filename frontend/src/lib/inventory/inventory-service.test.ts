@@ -354,7 +354,7 @@ describe("InventoryService ME/MP", () => {
     expect(notifications.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("ajuste inventario ME solo DEPOSITO/PRODUCCION", () => {
+  it("ajuste inventario ME solo DEPOSITO (Producción solo consulta)", () => {
     const ing = svc.upsertMeIngreso(deposito, {
       codigo: "AJ-01",
       descripcionInsumo: "X",
@@ -362,7 +362,8 @@ describe("InventoryService ME/MP", () => {
       cantidad: 10,
     });
     expect(() => svc.adjustMeStock(mp, ing.materialId!, 5, "no")).toThrow(InventoryForbiddenError);
-    svc.adjustMeStock(produccion, ing.materialId!, 5, "conteo");
+    expect(() => svc.adjustMeStock(produccion, ing.materialId!, 5, "conteo")).toThrow(InventoryForbiddenError);
+    svc.adjustMeStock(deposito, ing.materialId!, 5, "conteo");
     expect(svc.listMeMaterials(deposito)[0]?.stockActual).toBe(5);
   });
 
@@ -533,6 +534,12 @@ describe("InventoryService ME/MP", () => {
     expect(canReadInventory("PRODUCCION", "me_ingresos")).toBe(true);
     expect(canWriteInventory("PRODUCCION", "me_ingresos")).toBe(false);
     expect(canWriteInventory("PRODUCCION", "me_avisos")).toBe(true);
+    // Producción → Inventario de Depósito es SOLO lectura: ni materiales, ni cantidades, ni ajustes, ni movimientos.
+    for (const m of ["me_stock", "me_ajustes", "me_ingresos", "me_salidas"] as const) {
+      expect(canReadInventory("PRODUCCION", m)).toBe(true);
+      expect(canWriteInventory("PRODUCCION", m)).toBe(false);
+      expect(canWriteInventory("DEPOSITO", m)).toBe(true);
+    }
   });
 });
 
@@ -698,7 +705,16 @@ describe("ME Stock — eliminar material (archivo lógico)", () => {
     expect(salida!.reverted).toBeFalsy();
   });
 
-  it("PRODUCCION y DEPOSITO pueden eliminar me_stock; CODIFICADO no puede", () => {
+  it("Producción no registra entradas ni salidas ME por el servicio (solo consulta); Depósito sí", () => {
+    expect(() => svc.upsertMeIngreso(produccion, { codigo: "PRO-RO-1", descripcionInsumo: "X", bultos: 1, cantidad: 5 })).toThrow(InventoryForbiddenError);
+    expect(() => svc.upsertMeSalida(produccion, { codigo: "PRO-RO-1", cantidad: 1, descuentaStock: true })).toThrow(InventoryForbiddenError);
+    expect(() => svc.createMeMaterial(produccion, { codigo: "PRO-RO-2", descripcion: "Y" } as never)).toThrow(InventoryForbiddenError);
+    const ing = svc.upsertMeIngreso(deposito, { codigo: "PRO-RO-1", descripcionInsumo: "X", bultos: 1, cantidad: 5 });
+    expect(ing.codigo).toBe("PRO-RO-1");
+    expect(svc.listMeMaterials(produccion).some((m) => m.codigo === "PRO-RO-1")).toBe(true); // pero SÍ lo consulta
+  });
+
+  it("DEPOSITO elimina me_stock; PRODUCCION (solo consulta) y CODIFICADO no pueden", () => {
     const codificado = {
       email: "codificado@laboratoriogenus.com.ar",
       sector: "CODIFICADO" as SectorId,
@@ -713,8 +729,8 @@ describe("ME Stock — eliminar material (archivo lógico)", () => {
     expect(() => svc.deleteMeMaterial(codificado, ing1.materialId!, "no autorizado")).toThrow(
       InventoryForbiddenError
     );
-    const archived1 = svc.deleteMeMaterial(produccion, ing1.materialId!, "produccion elimina");
-    expect(archived1.archived).toBe(true);
+    expect(() => svc.deleteMeMaterial(produccion, ing1.materialId!, "produccion no elimina")).toThrow(InventoryForbiddenError);
+    expect(svc.listMeMaterials(deposito).some((m) => m.id === ing1.materialId)).toBe(true);
 
     const ing2 = svc.upsertMeIngreso(deposito, {
       codigo: "DEL-PERM-2",

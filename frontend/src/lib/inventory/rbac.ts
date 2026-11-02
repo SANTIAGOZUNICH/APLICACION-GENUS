@@ -73,8 +73,10 @@ export function canWriteInventory(sector: SectorId | undefined, module: Inventor
   if (module === "me_ingresos" || module === "me_salidas") {
     return sector === "DEPOSITO";
   }
+  // Inventario ME (materiales, cantidades, ajustes): lo administra Depósito. Producción lo CONSULTA (Producción → Inventario de Depósito)
+  // pero no crea, edita, elimina ni ajusta nada; el servidor lo rechaza aunque se llame a la API directo.
   if (module === "me_ajustes" || module === "me_stock") {
-    return sector === "DEPOSITO" || sector === "PRODUCCION";
+    return sector === "DEPOSITO";
   }
   if (module === "me_avisos") {
     return sector === "DEPOSITO" || sector === "PRODUCCION";
@@ -87,7 +89,7 @@ export function canWriteInventory(sector: SectorId | undefined, module: Inventor
 }
 
 export function canAdjustMeStock(sector: SectorId | undefined): boolean {
-  return sector === "DEPOSITO" || sector === "PRODUCCION";
+  return sector === "DEPOSITO";
 }
 
 export function assertInventoryActor(
