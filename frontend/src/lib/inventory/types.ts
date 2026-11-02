@@ -21,6 +21,8 @@ export type MeIngresoRow = {
   total: number | null;
   ubicacion: string;
   materialId: string | null;
+  /** Solo lectura: unidad de medida del material (la calcula el servidor al listar el historial; no se guarda en el ingreso). */
+  unidad?: string;
   /** Soft-anulado: conserva fila y revierte stock. */
   anulado?: boolean;
   anuladoAt?: string | null;

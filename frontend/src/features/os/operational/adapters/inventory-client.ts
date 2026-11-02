@@ -34,12 +34,12 @@ export class InventoryClientError extends Error {
   }
 }
 
-export async function fetchInventory<T>(resource: InventoryResource): Promise<{
+export async function fetchInventory<T>(resource: InventoryResource, options: { includeAnulado?: boolean } = {}): Promise<{
   data: T[];
   persistence: boolean;
   message?: string;
 }> {
-  const res = await fetch(`/api/v1/inventory?resource=${resource}`, {
+  const res = await fetch(`/api/v1/inventory?resource=${resource}${options.includeAnulado ? "&includeAnulado=1" : ""}`, {
     headers: actorHeaders(),
     cache: "no-store",
   });

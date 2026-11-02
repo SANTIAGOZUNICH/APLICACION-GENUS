@@ -49,7 +49,7 @@ export const ME_INVENTARIO_SORT_OPTIONS: SortOption<MeInventarioViewRow>[] = [
 const ME_INVENTARIO_SORT_KEYS = ME_INVENTARIO_SORT_OPTIONS.map((o) => o.key);
 
 const DELETE_DESCRIPTION =
-  "Se eliminará el material del inventario operativo. Si había ingresos asociados se anulan y el stock se recalcula. Motivo (opcional).";
+  "Se da de baja el material del inventario y su stock se pone en 0. Sus ingresos NO se borran: quedan en Ingresos, marcados como anulados, con el motivo de la baja. Motivo (opcional).";
 
 /**
  * Inventario ME consolidado.

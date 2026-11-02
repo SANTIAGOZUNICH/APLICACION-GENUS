@@ -658,6 +658,18 @@ describe("ME Stock — eliminar material (archivo lógico)", () => {
     ).toBeTruthy();
   });
 
+  it("historial de ingresos: incluye anulados (con motivo de la baja y unidad) y la lista clásica no", () => {
+    const mat = svc.createMeMaterial(deposito, { codigo: "HIST-1", descripcion: "Frascos", unidad: "un." });
+    const ing = svc.upsertMeIngreso(deposito, { codigo: "HIST-1", descripcionInsumo: "Frascos", bultos: 1, cantidad: 2000, materialId: mat.id });
+    expect(svc.listMeIngresosHistorial(deposito).find((r) => r.id === ing.id)).toMatchObject({ total: 2000, anulado: false, unidad: "un." });
+    svc.deleteMeMaterial(deposito, mat.id, "discontinuado");
+    expect(svc.listMeIngresos(deposito).find((r) => r.id === ing.id)).toBeUndefined();
+    const h = svc.listMeIngresosHistorial(deposito).find((r) => r.id === ing.id)!;
+    expect(h).toMatchObject({ anulado: true, total: 2000 });
+    expect(h.anuladoReason).toMatch(/dado de baja.*discontinuado/i);
+    expect(() => svc.listMeIngresosHistorial({ email: "x@y.z", sector: "CODIFICADO" as SectorId })).toThrow();
+  });
+
   it("elimina material con ingreso activo: anula el ingreso, stock queda en 0, archivado; idempotente", () => {
     const ing = svc.upsertMeIngreso(deposito, {
       codigo: "DEL-ING-1",
