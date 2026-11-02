@@ -104,8 +104,11 @@ try {
   const dp = await openAs(E2E_USERS.deposito);
   const adj = await dp.page.request.post("/api/v1/inventory/me-ajustes", { data: { materialId: matIds["E2E-INV-FRASCO"], expectedStock: 1200, newStock: 1000, motivo: "E2E INV conteo físico", tipo: "CONTEO_FISICO" } });
   check("Depósito conserva su permiso de ajuste (200)", adj.ok(), String(adj.status()));
+  console.log("   visibilidad de la pestaña de Producción:", await p.evaluate(() => document.visibilityState));
+  await p.bringToFront(); // la persona vuelve a la pestaña de Producción (dispara la actualización inmediata)
   await p.waitForFunction(() => [...document.querySelectorAll("[data-testid=invdep-row]")].some((r) => /E2E-INV-FRASCO/.test(r.textContent ?? "") && /(^|\s)1\.000(\s|$)/.test(r.textContent ?? "")), null, { timeout: 90_000 });
   check("el ajuste de Depósito aparece en Producción sin recargar (stock 1.000)", true);
+  console.log("   fila:", (await rows(p)).find((r) => /FRASCO/.test(r)));
   await dp.page.goto("/mi-trabajo");
   await nav(dp.page, "Inventario ME");
   check("Depósito sigue viendo su inventario con edición (planilla ME)", (await dp.page.locator(".dsg-container, [data-testid=genus-grid]").count()) >= 0);
