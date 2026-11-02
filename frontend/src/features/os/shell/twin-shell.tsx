@@ -12,6 +12,7 @@ import {
 } from "@/features/os/session/preview-context";
 import { viewTitle } from "@/features/os/navigation/twin-nav";
 import { ConfirmDialog } from "@/components/ui/dialog";
+import { MeControlAlertBanner } from "@/features/os/me-control/me-control-alert-banner";
 
 interface TwinShellProps {
   title?: string;
@@ -152,6 +153,7 @@ export function TwinShell({
               pageEnter ? "os-page-enter" : ""
             } ${contentClassName ?? ""}`}
           >
+            <MeControlAlertBanner />
             {children}
           </main>
         </div>

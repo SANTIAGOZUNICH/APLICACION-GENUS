@@ -2029,3 +2029,73 @@ export const emailOrderDrafts = pgTable(
     index("email_order_drafts_thread_idx").on(t.gmailThreadId),
   ]
 );
+
+
+// ───────────────────────── Control inteligente de ME (migración 0076) ─────────────────────────
+
+/** Materiales de empaque por producto (cliente + producto). `materialCodigo` NULL = rol pendiente de identificar. */
+export const meProductMaterials = pgTable(
+  "me_product_materials",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clientKey: text("client_key").notNull(),
+    productKey: text("product_key").notNull(),
+    client: text("client").notNull().default(""),
+    product: text("product").notNull().default(""),
+    materialCodigo: text("material_codigo"),
+    role: text("role").notNull().default("OTRO"),
+    qtyPerUnit: doublePrecision("qty_per_unit").notNull().default(1),
+    required: boolean("required").notNull().default(true),
+    status: text("status").notNull().default("SUGERIDO"),
+    source: text("source").notNull().default("MANUAL"),
+    reason: text("reason").notNull().default(""),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedBy: text("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    confirmedBy: text("confirmed_by"),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+  },
+  (table) => [index("me_product_materials_product_idx").on(table.clientKey, table.productKey)]
+);
+
+/** Compatibilidades envase ↔ cierre/dispensador registradas por una persona. */
+export const meMaterialCompat = pgTable(
+  "me_material_compat",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    baseCodigo: text("base_codigo").notNull(),
+    accessoryCodigo: text("accessory_codigo").notNull(),
+    status: text("status").notNull().default("COMPATIBLE"),
+    note: text("note").notNull().default(""),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("me_material_compat_uq").on(table.baseCodigo, table.accessoryCodigo)]
+);
+
+/** Alertas persistentes del control de ME. Una por (semana, cliente, producto). */
+export const meControlAlerts = pgTable(
+  "me_control_alerts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    alertKey: text("alert_key").notNull(),
+    weekStart: text("week_start").notNull(),
+    client: text("client").notNull().default(""),
+    product: text("product").notNull().default(""),
+    status: text("status").notNull().default("ABIERTA"),
+    versionHash: text("version_hash").notNull().default(""),
+    payload: jsonb("payload").notNull().default({}),
+    reopenCount: integer("reopen_count").notNull().default(0),
+    closedBy: text("closed_by"),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    closedVersionHash: text("closed_version_hash"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("me_control_alerts_key_uq").on(table.alertKey),
+    index("me_control_alerts_status_idx").on(table.status, table.weekStart),
+  ]
+);

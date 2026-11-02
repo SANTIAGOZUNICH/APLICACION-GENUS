@@ -1,5 +1,6 @@
 import "server-only";
 
+import { triggerMeControlSync } from "@/lib/me-control/trigger";
 import { ensureClientIdentitySafe } from "@/lib/portal/client-identity";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
@@ -234,7 +235,7 @@ async function touchPedidoOnAssign(
  * número de OA y no existe, la crea automáticamente con ese mismo número
  * dentro de la misma transacción.
  */
-export async function assignWorkItemDurable(
+async function assignWorkItemDurableImpl(
   input: WorkAssignmentInput,
   actor: PlanningActor,
   operationId: string = randomUUID(),
@@ -858,5 +859,14 @@ export async function assignWorkItemDurable(
   } catch (err) {
     logSanitizedError(operationId, "work-assignment", err);
     throw err;
+  }
+}
+
+
+export async function assignWorkItemDurable(...args: Parameters<typeof assignWorkItemDurableImpl>): ReturnType<typeof assignWorkItemDurableImpl> {
+  try {
+    return await assignWorkItemDurableImpl(...args);
+  } finally {
+    triggerMeControlSync();
   }
 }

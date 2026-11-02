@@ -12,6 +12,7 @@
  * El stock NO se guarda como dato editable: se calcula con `computeMeStock` (ingresos − salidas que descuentan +
  * ajustes). Se corrige con un AJUSTE (motivo, historial, stock esperado) o corrigiendo el movimiento de origen.
  */
+import { triggerMeControlSync } from "@/lib/me-control/trigger";
 import "server-only";
 
 import { randomUUID } from "node:crypto";
@@ -130,7 +131,7 @@ async function ensureMaterialForCodigo(tx: Tx, codigo: string, hint: { descripci
  * Edición por celda de Ingresos / Salidas / Inventario ME. Todo-o-nada; devuelve las filas confirmadas por la base.
  * Lanza MeSheetPatchError con el resultado por celda si alguna se rechaza (nada se escribe).
  */
-export async function patchMeSheetCells(actor: InventoryActor, resource: MeSheetResource, changes: MeSheetChange[]): Promise<{ items: AnyRow[] }> {
+async function patchMeSheetCellsImpl(actor: InventoryActor, resource: MeSheetResource, changes: MeSheetChange[]): Promise<{ items: AnyRow[] }> {
   assertWrite(actor, meSheetModule(resource));
   if (!Array.isArray(changes) || changes.length === 0 || changes.length > MAX_ME_SHEET_CHANGES) {
     throw new InventoryValidationError(`Entre 1 y ${MAX_ME_SHEET_CHANGES} celdas por operación.`);
@@ -337,7 +338,7 @@ async function adjustInTx(
 }
 
 /** Ajuste de inventario ME auditado: crea un movimiento AJUSTE (diferencia) — el stock sigue siendo calculado. */
-export async function adjustMeStockDb(actor: InventoryActor, input: MeAjusteInput): Promise<{ stockAnterior: number; stockActual: number; ajuste: StockAjuste }> {
+async function adjustMeStockDbImpl(actor: InventoryActor, input: MeAjusteInput): Promise<{ stockAnterior: number; stockActual: number; ajuste: StockAjuste }> {
   assertWrite(actor, "me_ajustes");
   const motivo = String(input.motivo ?? "").trim();
   if (motivo.length < MIN_AJUSTE_MOTIVO) throw new InventoryValidationError(`El ajuste requiere un motivo (mín. ${MIN_AJUSTE_MOTIVO} caracteres).`);
@@ -401,4 +402,22 @@ export async function meDeletionHistoryDb(actor: InventoryActor, module: "me_ing
 /** Stock calculado por código directamente desde la base (para verificación y para la UI tras un ajuste). */
 export async function meStockByCodigoDb(codigo: string): Promise<number> {
   return stockOf(codigo, await loadLedgerInputs(getDb())).stock;
+}
+
+
+export async function patchMeSheetCells(...args: Parameters<typeof patchMeSheetCellsImpl>): ReturnType<typeof patchMeSheetCellsImpl> {
+  try {
+    return await patchMeSheetCellsImpl(...args);
+  } finally {
+    triggerMeControlSync();
+  }
+}
+
+
+export async function adjustMeStockDb(...args: Parameters<typeof adjustMeStockDbImpl>): ReturnType<typeof adjustMeStockDbImpl> {
+  try {
+    return await adjustMeStockDbImpl(...args);
+  } finally {
+    triggerMeControlSync();
+  }
 }
