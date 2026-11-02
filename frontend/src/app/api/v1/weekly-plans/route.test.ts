@@ -24,40 +24,27 @@ describe("GET /api/v1/weekly-plans", () => {
     listPublishedItems.mockResolvedValue([]);
   });
 
-  it("returns 403 for Elaboracion actor", async () => {
-    const res = await GET(req("elaboracion@laboratoriogenus.com.ar"));
-    expect(res.status).toBe(403);
+  it("Vista mensual: Codificado, Elaboración y MP consultan Premium, Masivo y Elaboración (solo lectura)", async () => {
+    for (const email of ["codificado", "elaboracion", "mp", "deposito"]) {
+      for (const sector of ["ENVASADO_PREMIUM", "ENVASADO_MASIVO", "ELABORACION"]) {
+        listPublishedItems.mockClear();
+        const ok = await GET(req(`${email}@laboratoriogenus.com.ar`, `?weekStart=2026-08-03&monthStart=2026-08-01&planSector=${sector}`));
+        expect(ok.status).toBe(200);
+        expect(listPublishedItems).toHaveBeenCalledWith(expect.objectContaining({ sectors: [sector] }));
+        expect((await ok.json()).readOnly).toBe(true);
+      }
+    }
   });
 
-  it("allows Codificado Masivo+Premium and rejects Elaboracion filter", async () => {
-    const ok = await GET(
-      req("codificado@laboratoriogenus.com.ar", "?weekStart=2026-08-03&planSector=ENVASADO_MASIVO")
-    );
-    expect(ok.status).toBe(200);
-    expect(listPublishedItems).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sectors: ["ENVASADO_MASIVO"],
-        weekStart: "2026-08-03",
-      })
-    );
-
-    const forbidden = await GET(
-      req("codificado@laboratoriogenus.com.ar", "?weekStart=2026-08-03&planSector=ELABORACION")
-    );
+  it("un sector que no es de piso se rechaza (403) aunque el actor pueda consultar", async () => {
+    const forbidden = await GET(req("codificado@laboratoriogenus.com.ar", "?weekStart=2026-08-03&planSector=CODIFICADO"));
     expect(forbidden.status).toBe(403);
   });
 
-  it("allows Materia Prima only Elaboracion", async () => {
+  it("sin sector pedido conserva el comportamiento histórico de cada vista compartida (MP: Elaboración)", async () => {
     const ok = await GET(req("mp@laboratoriogenus.com.ar", "?weekStart=2026-08-03"));
     expect(ok.status).toBe(200);
-    expect(listPublishedItems).toHaveBeenCalledWith(
-      expect.objectContaining({ sectors: ["ELABORACION"] })
-    );
-
-    const forbidden = await GET(
-      req("mp@laboratoriogenus.com.ar", "?weekStart=2026-08-03&planSector=ENVASADO_PREMIUM")
-    );
-    expect(forbidden.status).toBe(403);
+    expect(listPublishedItems).toHaveBeenCalledWith(expect.objectContaining({ sectors: ["ELABORACION"] }));
   });
 
   it("allows Deposito combined plans", async () => {

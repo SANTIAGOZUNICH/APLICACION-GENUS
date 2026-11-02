@@ -5,42 +5,35 @@ import {
   resolveRequestedPlanSectors,
 } from "./weekly-plans-rbac";
 
-describe("weekly-plans-rbac", () => {
-  it("allowlists Codificado and Deposito to Masivo+Premium only", () => {
-    expect(getAllowedPlanSectors("CODIFICADO")).toEqual([
-      "ENVASADO_MASIVO",
-      "ENVASADO_PREMIUM",
-    ]);
-    expect(getAllowedPlanSectors("DEPOSITO")).toEqual([
-      "ENVASADO_MASIVO",
-      "ENVASADO_PREMIUM",
-    ]);
+const THREE = ["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM"];
+const VIEWERS = ["PRODUCCION", "DIRECCION", "COMERCIAL", "ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO", "DEPOSITO", "MATERIA_PRIMA", "CALIDAD"];
+
+describe("weekly-plans-rbac (consulta de la planificación de piso)", () => {
+  it("todo sector con bandeja operativa puede consultar Premium, Masivo y Elaboración (solo lectura)", () => {
+    for (const s of VIEWERS) {
+      expect(getAllowedPlanSectors(s).slice().sort()).toEqual([...THREE].sort());
+      for (const t of THREE) expect(resolveRequestedPlanSectors(s, t)).toEqual([t]);
+      expect(canAccessSharedWeeklyPlans(s)).toBe(true);
+    }
   });
 
-  it("allowlists Materia Prima to Elaboracion only", () => {
-    expect(getAllowedPlanSectors("MATERIA_PRIMA")).toEqual(["ELABORACION"]);
+  it("Administración y sectores desconocidos no consultan", () => {
+    expect(getAllowedPlanSectors("ADMINISTRACION")).toEqual([]);
+    expect(canAccessSharedWeeklyPlans("ADMINISTRACION")).toBe(false);
+    expect(resolveRequestedPlanSectors("ADMINISTRACION", "ELABORACION")).toBeNull();
+    expect(resolveRequestedPlanSectors("XYZ", null)).toBeNull();
   });
 
-  it("denies other sectors", () => {
-    expect(getAllowedPlanSectors("ELABORACION")).toEqual([]);
-    expect(getAllowedPlanSectors("PRODUCCION")).toEqual([]);
-    expect(canAccessSharedWeeklyPlans("CALIDAD")).toBe(false);
+  it("rechaza sectores que no son de piso", () => {
+    expect(resolveRequestedPlanSectors("DEPOSITO", "CODIFICADO")).toBeNull();
+    expect(resolveRequestedPlanSectors("CALIDAD", "PRODUCCION")).toBeNull();
+    expect(resolveRequestedPlanSectors("DEPOSITO", "'; drop")).toBeNull();
   });
 
-  it("rejects unauthorized planSector requests", () => {
-    expect(resolveRequestedPlanSectors("CODIFICADO", "ELABORACION")).toBeNull();
-    expect(resolveRequestedPlanSectors("MATERIA_PRIMA", "ENVASADO_MASIVO")).toBeNull();
-    expect(resolveRequestedPlanSectors("ELABORACION", "ELABORACION")).toBeNull();
-  });
-
-  it("accepts allowed filters and ALL", () => {
-    expect(resolveRequestedPlanSectors("CODIFICADO", "ENVASADO_MASIVO")).toEqual([
-      "ENVASADO_MASIVO",
-    ]);
-    expect(resolveRequestedPlanSectors("DEPOSITO", "ALL")).toEqual([
-      "ENVASADO_MASIVO",
-      "ENVASADO_PREMIUM",
-    ]);
+  it("sin sector pedido / ALL conserva el comportamiento histórico de las vistas compartidas existentes", () => {
+    expect(resolveRequestedPlanSectors("CODIFICADO", "ALL")).toEqual(["ENVASADO_MASIVO", "ENVASADO_PREMIUM"]);
+    expect(resolveRequestedPlanSectors("DEPOSITO", "ALL")).toEqual(["ENVASADO_MASIVO", "ENVASADO_PREMIUM"]);
     expect(resolveRequestedPlanSectors("MATERIA_PRIMA", null)).toEqual(["ELABORACION"]);
+    expect(resolveRequestedPlanSectors("CALIDAD", "ALL")).toEqual(getAllowedPlanSectors("CALIDAD"));
   });
 });

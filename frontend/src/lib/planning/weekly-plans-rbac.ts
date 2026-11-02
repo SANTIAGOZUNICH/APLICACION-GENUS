@@ -7,22 +7,40 @@ const FLOOR_PLAN_SECTORS: PlanningSector[] = [
   "ENVASADO_PREMIUM",
 ];
 
-/** Sectores de sesión que pueden consultar planes compartidos RO. */
-export type WeeklyPlanViewerSector = "CODIFICADO" | "DEPOSITO" | "MATERIA_PRIMA";
+/**
+ * Sectores de sesión que pueden CONSULTAR la planificación de piso (Vista mensual y planes compartidos). Es SOLO LECTURA:
+ * esta ruta no escribe nada, así que consultar no otorga ningún permiso de asignación ni de edición.
+ * Todos los sectores con una bandeja operativa ven Premium, Masivo y Elaboración; Administración/Facturación no.
+ */
+const VIEWER_SECTORS: readonly string[] = [
+  "PRODUCCION",
+  "DIRECCION",
+  "COMERCIAL",
+  "ELABORACION",
+  "ENVASADO_MASIVO",
+  "ENVASADO_PREMIUM",
+  "CODIFICADO",
+  "DEPOSITO",
+  "MATERIA_PRIMA",
+  "CALIDAD",
+];
 
-const ALLOWLIST: Record<WeeklyPlanViewerSector, PlanningSector[]> = {
+/** Qué trae el plan compartido SEMANAL cuando no se pide un sector (comportamiento histórico de cada vista). */
+const LEGACY_DEFAULT: Record<string, PlanningSector[]> = {
   CODIFICADO: ["ENVASADO_MASIVO", "ENVASADO_PREMIUM"],
   DEPOSITO: ["ENVASADO_MASIVO", "ENVASADO_PREMIUM"],
   MATERIA_PRIMA: ["ELABORACION"],
 };
 
-export function isWeeklyPlanViewerSector(sector: string): sector is WeeklyPlanViewerSector {
-  return sector === "CODIFICADO" || sector === "DEPOSITO" || sector === "MATERIA_PRIMA";
+export type WeeklyPlanViewerSector = string;
+
+export function isWeeklyPlanViewerSector(sector: string): boolean {
+  return VIEWER_SECTORS.includes(sector);
 }
 
+/** Sectores de piso que el actor PUEDE consultar (pidiéndolos explícitamente). */
 export function getAllowedPlanSectors(actorSector: string): PlanningSector[] {
-  if (!isWeeklyPlanViewerSector(actorSector)) return [];
-  return [...ALLOWLIST[actorSector]];
+  return isWeeklyPlanViewerSector(actorSector) ? [...FLOOR_PLAN_SECTORS] : [];
 }
 
 export function isFloorPlanSector(value: string): value is PlanningSector {
@@ -31,8 +49,8 @@ export function isFloorPlanSector(value: string): value is PlanningSector {
 
 /**
  * Resuelve sectores SQL a consultar.
- * - planSector omitido → todos los permitidos para el actor.
- * - planSector pedido fuera de allowlist → null (caller responde 403).
+ * - planSector omitido / ALL → el conjunto histórico de cada vista (Codificado y Depósito: Envasado; MP: Elaboración; el resto: los tres).
+ * - planSector pedido fuera de los sectores de piso o de un actor sin acceso → null (el llamador responde 403).
  */
 export function resolveRequestedPlanSectors(
   actorSector: string,
@@ -42,7 +60,7 @@ export function resolveRequestedPlanSectors(
   if (allowed.length === 0) return null;
 
   if (!planSector || planSector === "ALL" || planSector === "TODOS") {
-    return allowed;
+    return [...(LEGACY_DEFAULT[actorSector] ?? allowed)];
   }
 
   const normalized = planSector.trim().toUpperCase();
