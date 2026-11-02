@@ -61,7 +61,11 @@ export async function GET(request: Request) {
     const actor = await resolveInventoryActor(request);
     const { searchParams } = new URL(request.url);
     const resource = searchParams.get("resource") ?? "me_ingresos";
-    let data = await listResource(ready.service, actor, resource);
+    // Ingresos: el historial permanente (incluye anulados, marcados) se pide explícitamente; el listado clásico no cambia.
+    let data =
+      resource === "me_ingresos" && searchParams.get("includeAnulado") === "1"
+        ? ready.service.listMeIngresosHistorial(actor)
+        : await listResource(ready.service, actor, resource);
     if (resource === "mp_stock") data = await withLedgerStock(data as MpStockRow[]);
     return NextResponse.json({ data, persistence: true });
   } catch (err) {

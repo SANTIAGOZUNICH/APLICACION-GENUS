@@ -65,6 +65,8 @@ const ALIASES: Record<string, string[]> = {
 
 type FormState = {
   id?: string;
+  /** Alta nueva: identificador estable de ESTA carga. Un doble clic o un reintento reenvía el mismo id y no suma el ingreso dos veces. */
+  requestId: string;
   fecha: string;
   ingresoNro: string;
   proveedor: string;
@@ -79,6 +81,7 @@ type FormState = {
 
 function emptyForm(): FormState {
   return {
+    requestId: crypto.randomUUID(),
     fecha: new Date().toISOString().slice(0, 10),
     ingresoNro: "",
     proveedor: "",
@@ -115,9 +118,12 @@ export function MeIngresosView() {
   const [form, setForm] = useState<FormState | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ id: string; label: string } | null>(null);
   const [pasteOpen, setPasteOpen] = useState(false);
+  // Historial permanente: por defecto se ven TODOS los ingresos, también los anulados (marcados). Nada se oculta solo.
+  const [showAnulados, setShowAnulados] = useState(true);
+  const savingRef = useRef(false);
 
   const reload = useCallback(async () => {
-    const res = await fetchInventory<MeIngresoRow>("me_ingresos");
+    const res = await fetchInventory<MeIngresoRow>("me_ingresos", { includeAnulado: true });
     setRows(res.data);
     setPersistence(res.persistence);
     setBanner(res.message ?? null);
@@ -176,7 +182,7 @@ export function MeIngresosView() {
     queueMicrotask(() => {
       void (async () => {
         try {
-          const res = await fetchInventory<MeIngresoRow>("me_ingresos");
+          const res = await fetchInventory<MeIngresoRow>("me_ingresos", { includeAnulado: true });
           if (cancelled) return;
           setRows(res.data);
           setPersistence(res.persistence);
@@ -197,15 +203,16 @@ export function MeIngresosView() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const base = rows.filter((r) => {
-      if (r.anulado) return false;
+      if (r.anulado && !showAnulados) return false;
       if (!q) return true;
-      return [r.ingresoNro, r.proveedor, r.cliente, r.remitoNro, r.codigo, r.descripcionInsumo]
+      const dmy = /^\d{4}-\d{2}-\d{2}$/.test(r.fecha) ? `${r.fecha.slice(8, 10)}/${r.fecha.slice(5, 7)}/${r.fecha.slice(0, 4)}` : "";
+      return [r.ingresoNro, r.proveedor, r.cliente, r.producto ?? "", r.remitoNro, r.codigo, r.descripcionInsumo, r.fecha, dmy, r.createdBy]
         .join(" ")
         .toLowerCase()
         .includes(q);
     });
     return applySort(base, ME_INGRESO_SORT_OPTIONS, sort);
-  }, [rows, search, sort]);
+  }, [rows, search, sort, showAnulados]);
 
   const visibleIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
   const del = useDepositoDelete({
@@ -243,6 +250,7 @@ export function MeIngresosView() {
       hideOnMobile: ME_INGRESO_PRIMARY.has(label) ? false : ("xl" as const),
       render: (row) => displayCell(row[key]),
       text: (row) => (row[key] == null ? "" : String(row[key])),
+      cellClassName: (row: MeIngresoRow) => (row.anulado ? "line-through opacity-60" : undefined),
       // Planilla editable (Depósito): todas las columnas se corrigen en la celda (TOTAL corrige la cantidad por bulto).
       edit: sheet.edit(label),
       readOnlyReason: readOnlyReason("me_ingresos", label),
@@ -261,11 +269,48 @@ export function MeIngresosView() {
   } as OperationalTableColumn<MeIngresoRow>);
   // Junto a la cantidad (después de TOTAL): al final de la fila quedaba fuera de pantalla en tablet.
   columns.splice(columns.findIndex((c) => c.key === "TOTAL") + 1, 0, columns.pop()!);
+  // Historial: unidad de medida (del material), estado del ingreso y quién lo registró. SOLO LECTURA: no son datos editables del ingreso.
+  columns.splice(columns.findIndex((c) => c.key === "TOTAL") + 1, 0, {
+    key: "UNIDAD",
+    header: "UNIDAD",
+    hideOnMobile: "xl" as const,
+    text: (row: MeIngresoRow) => row.unidad ?? "",
+    render: (row: MeIngresoRow) => (row.unidad ? row.unidad : "—"),
+    cellClassName: (row: MeIngresoRow) => (row.anulado ? "line-through opacity-60" : undefined),
+  } as OperationalTableColumn<MeIngresoRow>);
+  const fmtWhen = (iso?: string | null) => (iso ? new Date(iso).toLocaleDateString("es-AR") : "");
+  columns.push(
+    {
+      key: "ESTADO",
+      header: "ESTADO",
+      minWidth: 150,
+      hideOnMobile: false,
+      text: (row: MeIngresoRow) => (row.anulado ? `ANULADO${row.anuladoReason ? ` · ${row.anuladoReason}` : ""}` : "Registrado"),
+      render: (row: MeIngresoRow) =>
+        row.anulado ? (
+          <span className="text-xs font-semibold text-rose-700 dark:text-rose-300" data-testid="ingreso-anulado" title={row.anuladoReason ?? ""}>
+            ANULADO{row.anuladoAt ? ` ${fmtWhen(row.anuladoAt)}` : ""}{row.anuladoReason ? ` · ${row.anuladoReason}` : ""}
+          </span>
+        ) : (
+          <span className="text-xs text-[var(--os-text-muted)]" data-testid="ingreso-registrado">Registrado</span>
+        ),
+    } as OperationalTableColumn<MeIngresoRow>,
+    {
+      key: "REGISTRO",
+      header: "REGISTRÓ",
+      hideOnMobile: "xl" as const,
+      text: (row: MeIngresoRow) => row.createdBy ?? "",
+      render: (row: MeIngresoRow) => (row.createdBy ? row.createdBy.split("@")[0] : "—"),
+      cellClassName: (row: MeIngresoRow) => (row.anulado ? "line-through opacity-60" : undefined),
+    } as OperationalTableColumn<MeIngresoRow>
+  );
 
   async function saveForm() {
-    if (!form || !canWrite) return;
+    if (!form || !canWrite || savingRef.current) return;
+    savingRef.current = true;
     if (!form.codigo.trim()) {
       setBanner("El código es obligatorio. Cada producto se identifica solo por su código.");
+      savingRef.current = false;
       return;
     }
     try {
@@ -282,7 +327,7 @@ export function MeIngresosView() {
         action: "upsert",
         resource: "me_ingresos",
         payload: {
-          id: form.id,
+          id: form.id ?? form.requestId,
           fecha: form.fecha,
           ingresoNro: form.ingresoNro,
           proveedor: form.proveedor,
@@ -315,6 +360,8 @@ export function MeIngresosView() {
       }
     } catch (e) {
       setBanner(e instanceof InventoryClientError ? e.message : "No se pudo guardar");
+    } finally {
+      savingRef.current = false;
     }
   }
 
@@ -358,6 +405,10 @@ export function MeIngresosView() {
           options={ME_INGRESO_SORT_OPTIONS}
           testId="me-ingresos-sort"
         />
+        <label className="inline-flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={showAnulados} onChange={(e) => setShowAnulados(e.target.checked)} data-testid="me-ingresos-show-anulados" />
+          Mostrar anulados{rows.some((r) => r.anulado) ? ` (${rows.filter((r) => r.anulado).length})` : ""}
+        </label>
       </div>
 
       {del.bar}
@@ -397,6 +448,7 @@ export function MeIngresosView() {
                         onClick={() =>
                           setForm({
                             id: row.id,
+                            requestId: row.id,
                             fecha: row.fecha,
                             ingresoNro: row.ingresoNro,
                             proveedor: row.proveedor,

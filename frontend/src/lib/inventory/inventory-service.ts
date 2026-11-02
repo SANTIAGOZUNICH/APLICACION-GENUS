@@ -261,6 +261,18 @@ export class InventoryService {
     return rows.filter((row) => !row.anulado);
   }
 
+  /**
+   * HISTORIAL PERMANENTE de recepciones (Depósito → Ingresos): TODOS los ingresos registrados, también los ya incorporados al stock
+   * y los anulados (se muestran marcados; no suman). Cada fila trae la unidad del material (solo lectura). No modifica nada.
+   */
+  listMeIngresosHistorial(actor: InventoryActor): Array<MeIngresoRow & { unidad: string }> {
+    this.guard(actor, "me_ingresos", false);
+    return this.repo.listMeIngresos().map((row) => {
+      const mat = (row.materialId ? this.repo.getMeMaterial(row.materialId) : null) ?? this.repo.findMeMaterialByCodigo(normalizeMeCodigo(row.codigo));
+      return { ...row, unidad: mat?.unidad ?? "" };
+    });
+  }
+
   upsertMeIngreso(
     actor: InventoryActor,
     input: Partial<MeIngresoRow> & { id?: string; permitirDuplicado?: boolean }
@@ -927,8 +939,10 @@ export class InventoryService {
     const activeIngresos = this.repo
       .listMeIngresos()
       .filter((r) => r.materialId === id && !r.anulado);
+    // Los ingresos NO se borran: quedan en el historial de Ingresos como ANULADOS, con el motivo explícito de la baja del material.
+    const bajaReason = `Material dado de baja del inventario${trimmed ? `: ${trimmed}` : ""}`;
     for (const ingreso of activeIngresos) {
-      this.anularMeIngresoInternal(actor, ingreso.id, trimmed);
+      this.anularMeIngresoInternal(actor, ingreso.id, bajaReason);
     }
 
     const recalculated = this.recalculateMeStock(id);
