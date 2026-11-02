@@ -151,6 +151,7 @@ try {
   await p.waitForTimeout(2500);
   check("cerrada, no vuelve al recargar", (await alertOf(p).count()) === 0);
   await nav(p, "Control de ME");
+  await p.locator("[data-testid=me-week-input]").fill(WEEK);
   await p.locator("[data-testid=me-table]").waitFor({ timeout: 60_000 });
   const afterClose = (await p.locator("[data-testid=me-line]").allInnerTexts()).map((t) => t.replace(/\s+/g, " ")).join(" | ");
   check("cerrar NO borra el faltante: el control sigue mostrando 800 y 2.000", /E2E-MC-FRASCO.*800/.test(afterClose) && /E2E-MC-DROP.*2\.000/.test(afterClose));

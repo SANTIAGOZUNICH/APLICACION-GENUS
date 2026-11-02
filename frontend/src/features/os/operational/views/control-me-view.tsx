@@ -34,10 +34,11 @@ export function ControlMeView() {
   const { email, sectorId } = usePreviewSession();
   const canManage = String(sectorId).toUpperCase() === "DEPOSITO";
   const headers = useMemo(() => actorHeaders(email, sectorId), [email, sectorId]);
-  const [week, setWeek] = useState(todayIso());
+  const [initialFocus] = useState<MeControlFocus | null>(() => (typeof window === "undefined" ? null : takeFocus()));
+  const [week, setWeek] = useState(initialFocus?.week ?? todayIso());
   const [report, setReport] = useState<WeekReport | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [focus, setFocusState] = useState<MeControlFocus | null>(null);
+  const [focus, setFocusState] = useState<MeControlFocus | null>(initialFocus);
   const [panel, setPanel] = useState<{ client: string; product: string; role?: string } | null>(null);
 
   const load = useCallback(
@@ -54,11 +55,6 @@ export function ControlMeView() {
   );
 
   useEffect(() => {
-    const f = takeFocus();
-    if (f) {
-      setFocusState(f);
-      setWeek(f.week);
-    }
     const onFocus = (e: Event) => {
       const d = (e as CustomEvent<MeControlFocus>).detail;
       setFocusState(d);
