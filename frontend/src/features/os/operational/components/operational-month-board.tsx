@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import * as Popover from "@radix-ui/react-popover";
+import { X } from "lucide-react";
 import { buildMonthGrid, groupItemsByMonthDay, undatedItems, type MonthItem } from "@/lib/operational/month-grid";
 
 const DOW = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"] as const;
@@ -24,6 +26,11 @@ interface Props<T extends MonthItem> {
   onSelectDay?: (day: string) => void;
   /** false = oculta «Sin fecha asignada» (planes de solo lectura que no traen trabajos sin fecha). */
   showUndated?: boolean;
+  /**
+   * Tarjeta flotante informativa: al tocar un trabajo se abre junto a él (no navega ni abre formularios). Un solo trabajo abierto a la
+   * vez; se cierra con la X, tocando afuera o con Esc. Si se pasa, reemplaza al `onSelectItem` en los trabajos del calendario.
+   */
+  renderDetail?: (item: T) => ReactNode;
 }
 
 function chipLabel(it: MonthItem): string {
@@ -35,11 +42,13 @@ function chipLabel(it: MonthItem): string {
  * Vista MENSUAL de la planificación: calendario completo del mes con los trabajos de cada día, «+» para asignar, reprogramación y
  * la sección «Sin fecha asignada». Es una perspectiva más amplia de la MISMA planificación (no duplica trabajos).
  */
-export function OperationalMonthBoard<T extends MonthItem>({ monthStart, today, items, allItems, canEdit, onSelectItem, onCreateSlot, onRequestDate, onSelectDay, showUndated = true }: Props<T>) {
+export function OperationalMonthBoard<T extends MonthItem>({ monthStart, today, items, allItems, canEdit, onSelectItem, onCreateSlot, onRequestDate, onSelectDay, showUndated = true, renderDetail }: Props<T>) {
   const grid = useMemo(() => buildMonthGrid(monthStart), [monthStart]);
   const byDay = useMemo(() => groupItemsByMonthDay(items, grid), [items, grid]);
   const sinFecha = useMemo(() => undatedItems(allItems), [allItems]);
   const [expanded, setExpanded] = useState<string | null>(null);
+  /** Chip con la tarjeta abierta: `<día>|<id>` (un trabajo de varios días se ancla al día que se tocó). */
+  const [openChip, setOpenChip] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const byId = useMemo(() => new Map<string, T>([...items, ...allItems].map((i) => [i.id, i])), [items, allItems]);
 
@@ -88,6 +97,38 @@ export function OperationalMonthBoard<T extends MonthItem>({ monthStart, today, 
                       <ul className="space-y-0.5">
                         {shown.map((it) => (
                           <li key={`${cell.date}-${it.id}`}>
+                            {renderDetail ? (
+                              <Popover.Root open={openChip === `${cell.date}|${it.id}`} onOpenChange={(o) => setOpenChip(o ? `${cell.date}|${it.id}` : null)}>
+                                <Popover.Trigger asChild>
+                                  <button
+                                    type="button"
+                                    title={chipLabel(it)}
+                                    className="block w-full truncate rounded bg-[var(--os-teal)]/15 px-1 py-0.5 text-left text-[11px] hover:bg-[var(--os-teal)]/30"
+                                    data-testid="month-chip"
+                                    data-id={it.id}
+                                  >
+                                    {chipLabel(it)}
+                                  </button>
+                                </Popover.Trigger>
+                                <Popover.Portal>
+                                  <Popover.Content
+                                    side="bottom"
+                                    align="start"
+                                    sideOffset={6}
+                                    collisionPadding={8}
+                                    avoidCollisions
+                                    className="z-50 w-[min(20rem,calc(100vw-16px))] max-h-[min(24rem,calc(100vh-16px))] overflow-y-auto rounded-xl border border-[var(--os-border)] bg-[var(--os-surface)] p-3 text-[var(--os-text)] shadow-lg outline-none"
+                                    data-testid="month-job-card"
+                                    aria-label="Detalle del trabajo"
+                                  >
+                                    {renderDetail(it)}
+                                    <Popover.Close className="absolute right-2 top-2 rounded p-1 text-[var(--os-text-muted)] hover:bg-[var(--os-teal)]/15" aria-label="Cerrar" data-testid="month-job-card-close">
+                                      <X className="size-4" aria-hidden="true" />
+                                    </Popover.Close>
+                                  </Popover.Content>
+                                </Popover.Portal>
+                              </Popover.Root>
+                            ) : (
                             <button
                               type="button"
                               draggable={canEdit && Boolean(onRequestDate)}
@@ -103,6 +144,7 @@ export function OperationalMonthBoard<T extends MonthItem>({ monthStart, today, 
                             >
                               {chipLabel(it)}
                             </button>
+                            )}
                           </li>
                         ))}
                       </ul>
