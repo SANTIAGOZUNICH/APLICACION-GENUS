@@ -1,4 +1,5 @@
 import { resolveWorkItemDeliveryPacking, validateDeliveryPacking } from "@/lib/remitos/delivery-packing";
+import { sumActiveCodificadoTransfers } from "./codificado-transfers-sum";
 import "server-only";
 
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -400,14 +401,23 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
     if (assigned == null || !(assigned > 0)) {
       throw new PlanningValidationError("Este trabajo no tiene una cantidad asignada numérica: no admite entrega parcial.");
     }
-    const step = planPartialDelivery({ assigned, alreadyDelivered, produced: finishedNum, requested, unit });
+    // Lo que el trabajo ya entregó a CODIFICADO (movimiento interno) también salió de lo asignado/terminado: no se cuenta dos veces.
+    const toCodificado = await sumActiveCodificadoTransfers(tx, params.workItemId);
+    const step = planPartialDelivery({
+      assigned: assigned - toCodificado,
+      alreadyDelivered,
+      produced: finishedNum != null && finishedNum > 0 ? Math.max(finishedNum - toCodificado, 1e-9) : finishedNum,
+      requested,
+      unit,
+    });
     if (!step.ok) throw new PlanningValidationError(step.error);
     stepQuantity = step.quantity;
     cumulative = step.cumulative;
     pending = step.pending;
     complete = step.complete;
   } else if (target != null) {
-    const step = planDeliveryStep({ target, alreadyDelivered, requested, unit });
+    const toCodificado = await sumActiveCodificadoTransfers(tx, params.workItemId);
+    const step = planDeliveryStep({ target: target - toCodificado, alreadyDelivered, requested, unit });
     if (!step.ok) throw new PlanningValidationError(step.error);
     stepQuantity = step.quantity;
     cumulative = step.cumulative;

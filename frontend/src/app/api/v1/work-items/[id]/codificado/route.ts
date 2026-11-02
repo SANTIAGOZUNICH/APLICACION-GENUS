@@ -12,12 +12,13 @@ import {
   planningErrorResponse,
 } from "@/lib/planning/http";
 import { projectNativeWorkItem } from "@/lib/planning/native-projector";
+import { getCodificadoTransferView, recordCodificadoProgressDurable, transferToCodificadoDurable } from "@/lib/planning/codificado-transfer-service";
 import { PlanningValidationError } from "@/lib/planning/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Action = "send" | "cancel" | "deliver" | "resend" | "reopen_delivery";
+type Action = "send" | "cancel" | "deliver" | "resend" | "reopen_delivery" | "transfer" | "progress";
 
 export async function POST(
   request: Request,
@@ -42,6 +43,28 @@ export async function POST(
       body.expectedVersion != null && Number.isFinite(Number(body.expectedVersion))
         ? Number(body.expectedVersion)
         : null;
+
+    // Entrega PARCIAL de Envasado a Codificado (movimiento interno; el trabajo de Envasado sigue abierto).
+    if (action === "transfer") {
+      const qty = Number(String(body.quantity ?? "").replace(",", "."));
+      const result = await transferToCodificadoDurable(
+        {
+          workItemId: id,
+          quantity: qty,
+          finishedQty: body.finishedQty != null && String(body.finishedQty).trim() !== "" ? Number(String(body.finishedQty).replace(",", ".")) : null,
+          observation: body.observation != null ? String(body.observation) : null,
+          idempotencyKey,
+        },
+        actor
+      );
+      return NextResponse.json({ ok: true, replayed: result.replayed, complete: result.complete, transfer: result.transfer, view: result.view });
+    }
+
+    // Avance de Codificado: unidades ya codificadas de lo recibido.
+    if (action === "progress") {
+      const view = await recordCodificadoProgressDurable({ workItemId: id, codedUnits: Number(String(body.codedUnits ?? "").replace(",", ".")) }, actor);
+      return NextResponse.json({ ok: true, view });
+    }
 
     if (action === "send" || action === "resend") {
       const totalUnits = Number(body.totalUnits ?? body.packagingTotalUnits);
@@ -168,8 +191,21 @@ export async function POST(
     }
 
     throw new PlanningValidationError(
-      "action inválida (send|resend|cancel|deliver|reopen_delivery)."
+      "action inválida (send|resend|cancel|deliver|reopen_delivery|transfer|progress)."
     );
+  } catch (err) {
+    return planningErrorResponse(err);
+  }
+}
+
+/** Estado de las entregas de un trabajo a Codificado: asignada, terminada, entregada, recibida, codificada y entregas una por una. */
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const blocked = ensureNativePlanningReady();
+  if (blocked) return blocked;
+  try {
+    const actor = await resolvePlanningActor(request);
+    const { id } = await ctx.params;
+    return NextResponse.json({ ok: true, view: await getCodificadoTransferView(id, actor) }, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
     return planningErrorResponse(err);
   }

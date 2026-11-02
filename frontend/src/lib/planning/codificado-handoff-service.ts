@@ -16,6 +16,7 @@ import { parseQuantity } from "@/lib/planning/circuit/delivery-math";
 import { closeForCodificadoTransfer } from "@/lib/planning/circuit/packaging-close";
 import { emitBillingForDelivery } from "@/lib/notifications/billing-notifications";
 import { recordDeliveryInTx, sumActiveDeliveredUnits } from "@/lib/planning/circuit/delivery-core";
+import { sumActiveCodificadoTransfers } from "@/lib/planning/circuit/codificado-transfers-sum";
 import { emitCircuitNotification } from "@/lib/planning/circuit/circuit-notifications";
 import type { CircuitMovement } from "@/lib/planning/circuit/movements";
 import type { PlanningActor, PlanningSector, PlanningWorkItemRecord } from "@/lib/planning/types";
@@ -275,6 +276,13 @@ export async function handoffToCodificadoInTx(
   if (row.deliveredFromCodificadoAt) {
     throw new PlanningValidationError(
       "Este trabajo ya fue entregado desde Codificado."
+    );
+  }
+  // Con entregas parciales ya hechas a Codificado, el trabajo NO se mueve entero (Codificado ya recibe un trabajo vinculado):
+  // lo que falta se entrega con «Entregar a Codificado», sin crear un segundo circuito ni duplicar cantidades.
+  if (!row.parentWorkItemId && (await sumActiveCodificadoTransfers(tx, id)) > 0) {
+    throw new PlanningValidationError(
+      "Este trabajo ya tiene entregas parciales a Codificado: entregá el resto con «Entregar a Codificado»."
     );
   }
   if (
@@ -733,11 +741,33 @@ export async function deliverFromCodificadoDurable(
 
     const nextObservation = input.observation?.trim() || row.codificadoObservation || null;
 
+    // Trabajo de Codificado que recibe entregas parciales: solo se puede entregar lo ya recibido (y no entregado).
+    let deliverQuantity = input.deliverQuantity ?? null;
+    if (row.parentWorkItemId) {
+      const [replay] = await tx
+        .select({ id: operationalEvents.id })
+        .from(operationalEvents)
+        .where(and(eq(operationalEvents.type, "DELIVERED_FROM_CODIFICADO"), eq(operationalEvents.note, idemRef)))
+        .limit(1);
+      if (!replay) {
+        const received = await sumActiveCodificadoTransfers(tx, row.parentWorkItemId);
+        const outSoFar = await sumActiveDeliveredUnits(tx, id);
+        const available = received - outSoFar;
+        if (available <= 1e-6) {
+          throw new PlanningValidationError("Codificado no tiene unidades recibidas pendientes de entregar: esperá una nueva entrega de Envasado.");
+        }
+        if (deliverQuantity == null) deliverQuantity = available;
+        else if (deliverQuantity > available + 1e-6) {
+          throw new PlanningValidationError(`Solo hay ${available} unidades recibidas sin entregar (recibidas ${received}, ya entregadas ${outSoFar}).`);
+        }
+      }
+    }
+
     const result = await recordDeliveryInTx(tx, {
       workItemId: id,
       actor: { email: actor.email, sector: actor.sector, displayName: actor.displayName },
       idempotencyKey: `codificado:${key}`,
-      quantity: input.deliverQuantity ?? null,
+      quantity: deliverQuantity,
       deliveryPackingGroups: input.deliveryPackingGroups ?? null,
       codigo: null,
       plannedDeliveryDate: input.plannedDeliveryDate ?? null,
