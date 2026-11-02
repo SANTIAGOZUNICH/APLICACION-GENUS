@@ -307,7 +307,7 @@ export type CodedProgressInput = { workItemId: string; codedUnits: number };
 
 /** Avance de Codificado: cuántas de las unidades recibidas ya están codificadas (nunca más que las recibidas). */
 export async function recordCodificadoProgressDurable(input: CodedProgressInput, actor: PlanningActor): Promise<CodificadoTransferView> {
-  if (!canWorkReceivedCodificado(sectorOf(actor))) throw new PlanningForbiddenError("Solo Codificado registra el avance de lo recibido.");
+  if (sectorOf(actor) !== "CODIFICADO") throw new PlanningForbiddenError("Solo Codificado registra el avance de lo recibido.");
   const id = norm(input.workItemId);
   const coded = Number(input.codedUnits);
   if (!Number.isFinite(coded) || coded < 0) throw new PlanningValidationError("Las unidades codificadas deben ser un número válido (0 o más).");

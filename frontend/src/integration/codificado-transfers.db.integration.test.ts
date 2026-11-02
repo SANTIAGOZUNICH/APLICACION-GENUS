@@ -39,7 +39,7 @@ describe.skipIf(Boolean(PROBLEM))(`Entregas parciales de Envasado a Codificado${
     const r = await assignWorkItemDurable({ sector, client: CLIENT, product, plannedQuantity: qty, unit: "un.", plannedDate: "2031-06-10", line: "Línea 1", orderNumber: `OA-2026-${String(800000 + Math.floor(Math.random() * 99999)).padStart(6, "0")}`, packagingLote: "L-IT-CT", idempotencyKey: randomUUID() } as never, prod, randomUUID());
     return r.item.id as string;
   };
-  const transfer = async (actor: typeof masivo | typeof prod | typeof premium | typeof codif, id: string, quantity: number, finishedQty: number | null = null, key = randomUUID()) =>
+  const transfer = async (actor: typeof masivo | typeof prod | typeof premium | typeof codif, id: string, quantity: number, finishedQty: number | null = null, key: string = randomUUID()) =>
     (await svc()).transferToCodificadoDurable({ workItemId: id, quantity, finishedQty, idempotencyKey: key }, actor as never);
   const row = async (id: string) => (await q("select sector, operational_status, planned_quantity, finished_qty, packaging_total_units, completed_at, via_codificado, parent_work_item_id from work_items where id = $1", [id]))[0]!;
   const children = (id: string) => q("select id, sector, planned_quantity, packaging_total_units, finished_qty, via_codificado, codificado_origin_sector, packaging_lote from work_items where parent_work_item_id = $1 and deleted_at is null", [id]);
@@ -179,6 +179,7 @@ describe.skipIf(Boolean(PROBLEM))(`Entregas parciales de Envasado a Codificado${
     const childId = String((await children(id))[0]!.id);
     await expect(s.recordCodificadoProgressDurable({ workItemId: childId, codedUnits: 10 }, masivo as never)).rejects.toThrow(/Solo Codificado/);
     await expect(s.recordCodificadoProgressDurable({ workItemId: childId, codedUnits: 10 }, calidad as never)).rejects.toThrow(/Solo Codificado/);
+    await expect(s.recordCodificadoProgressDurable({ workItemId: childId, codedUnits: 10 }, prod as never)).rejects.toThrow(/Solo Codificado/); // Producción consulta, no registra el avance
     await expect(s.listCodificadoReceipts(masivo as never)).rejects.toThrow(/Solo Codificado/);
     const inbox = (await s.listCodificadoReceipts(codif as never)).filter((r) => r.client === CLIENT);
     expect(inbox.length).toBeGreaterThan(0);

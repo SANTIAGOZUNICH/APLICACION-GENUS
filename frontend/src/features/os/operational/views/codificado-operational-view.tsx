@@ -30,6 +30,9 @@ import { AssignWorkDialog } from "../components/assign-work-dialog";
 import { WorkItemWarningBadge } from "../components/work-item-warning-badge";
 import { WorkItemPlanEditor } from "../components/work-item-plan-editor";
 import { WorkItemEditDeleteActions } from "../components/work-item-edit-delete-actions";
+import { CodificadoReceiptsSection, useCodificadoReceipts } from "@/features/os/codificado-transfer/codificado-receipts-section";
+import { CodificadoReceivedPanel } from "@/features/os/codificado-transfer/codificado-transfer-panel";
+import { useTransferView } from "@/features/os/codificado-transfer/use-transfer-view";
 
 type TabId = "pendientes" | "entregados";
 
@@ -66,6 +69,12 @@ export function CodificadoOperationalView() {
     refreshPremium();
     refreshCodificado();
   }, [refreshMasivo, refreshPremium, refreshCodificado]);
+
+  const receipts = useCodificadoReceipts();
+  const refreshAll = useCallback(() => {
+    refresh();
+    void receipts.refresh();
+  }, [refresh, receipts]);
 
   const [tab, setTab] = useState<TabId>("pendientes");
   const [selected, setSelected] = useState<WorkItem | null>(null);
@@ -143,6 +152,10 @@ export function CodificadoOperationalView() {
       sector: selected?.sector,
       deliveredFromCodificadoAt: selectedDeliveredAt,
     }).ok;
+
+  // Si el trabajo abierto recibe entregas parciales de Envasado: recibidas / codificadas / pendientes / aún no recibidas.
+  const transfer = useTransferView(selected?.id, Boolean(selected));
+  const receivedView = transfer.view && transfer.view.childId && selected && transfer.view.childId === selected.id.replace(/^native:/, "") ? transfer.view : null;
 
   const enrichSelected = useCallback(
     (item: WorkItem): WorkItem => {
@@ -373,6 +386,8 @@ export function CodificadoOperationalView() {
         />
       ) : null}
 
+      <CodificadoReceiptsSection items={receipts.items} />
+
       <OperationalTabs
         tabs={[
           { id: "pendientes", label: "Pendientes", count: pendientes.length },
@@ -399,7 +414,7 @@ export function CodificadoOperationalView() {
           columns={[
             excelCol("producto", "Producto", (i: (typeof list)[number]) => displayField(i.product)),
             excelCol("cliente", "Cliente", (i: (typeof list)[number]) => displayField(i.client)),
-            excelCol("cantidad", "Cant.", (i: (typeof list)[number]) => String(progressMap[i.id]?.packagingTotalUnits ?? i.packagingTotalUnits ?? (Number.parseFloat(getFinishedQty(i.id) || i.quantity || "") || "—"))),
+            excelCol("cantidad", "Cant.", (i: (typeof list)[number]) => (receipts.receivedByItem.has(i.id) ? `Recibidas ${receipts.receivedByItem.get(i.id)} de ${progressMap[i.id]?.packagingTotalUnits ?? i.packagingTotalUnits ?? "—"}` : String(progressMap[i.id]?.packagingTotalUnits ?? i.packagingTotalUnits ?? (Number.parseFloat(getFinishedQty(i.id) || i.quantity || "") || "—")))),
             excelCol("origen", "Origen", (i: (typeof list)[number]) => codificadoOriginLabel(i)),
             excelCol("estado", "Estado", (i: (typeof list)[number]) => i.status.replace(/_/g, " ")),
             {
@@ -448,7 +463,7 @@ export function CodificadoOperationalView() {
                     <td className="hidden py-2 pr-2 md:table-cell">
                       <span className="line-clamp-2">{displayField(item.client)}</span>
                     </td>
-                    <td className="py-2 tabular-nums">{total}</td>
+                    <td className="py-2 tabular-nums">{receipts.receivedByItem.has(item.id) ? `Recibidas ${receipts.receivedByItem.get(item.id)} de ${total}` : total}</td>
                     <td className="hidden py-2 text-xs lg:table-cell">
                       {codificadoOriginLabel(item)}
                     </td>
@@ -531,6 +546,16 @@ export function CodificadoOperationalView() {
                       Los datos de abajo son los que se entregaron — de solo lectura.
                     </p>
                   </div>
+                ) : null}
+
+                {receivedView ? (
+                  <CodificadoReceivedPanel
+                    view={receivedView}
+                    onChanged={() => {
+                      void transfer.refresh();
+                      refreshAll();
+                    }}
+                  />
                 ) : null}
 
                 <PackagingQuantitiesBlock
