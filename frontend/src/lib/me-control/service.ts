@@ -45,11 +45,12 @@ export type MeControlActor = { email: string; sector: string; roleId?: string | 
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
-const isSuper = (a: MeControlActor) => Boolean(a.isSuperadmin) || String(a.roleId ?? "").toUpperCase() === "ROL-SU";
+/** Solo el flag explícito de superadmin: el rol «supervisor» (ROL-SU) de Producción/Dirección NO escribe en este módulo. */
+const isSuper = (a: MeControlActor) => Boolean(a.isSuperadmin);
 const sectorOf = (a: MeControlActor) => String(a.sector ?? "").toUpperCase();
 /** Ver el control y las alertas: Depósito, Producción, Dirección (y superusuario). Solo lectura salvo Depósito. */
 export const canViewMeControl = (a: MeControlActor) => isSuper(a) || ["DEPOSITO", "PRODUCCION", "DIRECCION"].includes(sectorOf(a));
-/** Confirmar/corregir asociaciones de ME y cerrar alertas: Depósito (y superusuario). Producción y Dirección NO. */
+/** Confirmar/corregir asociaciones de ME y cerrar alertas: Depósito (y superadmin explícito). Producción y Dirección NO, aunque tengan rol supervisor. */
 export const canManageMeControl = (a: MeControlActor) => isSuper(a) || sectorOf(a) === "DEPOSITO";
 
 function assertView(a: MeControlActor) {
