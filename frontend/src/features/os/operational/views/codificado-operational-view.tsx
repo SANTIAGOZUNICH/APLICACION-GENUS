@@ -1,7 +1,7 @@
 "use client";
 
 import { ExcelOrList, excelCol } from "../components/operational-ui";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WorkItem } from "@/types/operational/work-item";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
@@ -75,6 +75,14 @@ export function CodificadoOperationalView() {
     refresh();
     void receipts.refresh();
   }, [refresh, receipts]);
+
+  // Llega (o cambia) una entrega desde Envasado: la lista de Codificado se actualiza sola, sin esperar otra señal de sincronización.
+  const receiptsSignature = receipts.items.map((r) => `${r.id}:${r.quantity}`).join("|");
+  const lastReceiptsSignature = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastReceiptsSignature.current !== null && lastReceiptsSignature.current !== receiptsSignature) refresh();
+    lastReceiptsSignature.current = receiptsSignature;
+  }, [receiptsSignature, refresh]);
 
   const [tab, setTab] = useState<TabId>("pendientes");
   const [selected, setSelected] = useState<WorkItem | null>(null);
