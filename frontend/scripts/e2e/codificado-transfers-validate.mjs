@@ -138,25 +138,25 @@ try {
   check("Codificado registra 500 codificadas: pendientes de codificar 300", (await num(panel.locator("[data-testid=cod-coded]"))) === 500);
 
   // 2ª y 3ª entrega desde la UI de Envasado
-  const deliver = async (finished, qty) => {
+  const deliver = async (finished, qty, alreadyTransferred) => {
     await p.keyboard.press("Escape").catch(() => undefined);
     await card(p, PROD).waitFor({ timeout: 60_000 });
     await card(p, PROD).getByRole("button", { name: /Ver \/ Registrar avance/ }).click();
     await p.locator("[data-testid=deliver-to-codificado-btn]").click();
     const d = p.locator("[data-testid=deliver-to-codificado-dialog]");
     await d.waitFor({ timeout: 30_000 });
-    await d.locator("[data-testid=dtc-pending]").waitFor();
+    await d.locator("[data-testid=dtc-transferred]").filter({ hasText: new RegExp(`^${String(alreadyTransferred).replace(/(\d)(?=(\d{3})+$)/g, "$1\\.")}$`) }).waitFor({ timeout: 30_000 });
     await d.locator("[data-testid=dtc-finished]").fill(String(finished));
     await d.locator("[data-testid=dtc-qty]").fill(String(qty));
     await d.locator("[data-testid=dtc-confirm]").click();
     await d.waitFor({ state: "detached", timeout: 30_000 });
   };
-  await deliver(1500, 700);
+  await deliver(1500, 700, 800);
   t = await transfers(ids.main);
   check("segunda entrega de 700: acumulado 1.500 y no se crea otro trabajo en Codificado", t.length === 2 && Number(t[1].cumulative) === 1500 && Number(t[1].pending) === 500 && (await q("select count(*)::int n from work_items where parent_work_item_id = $1 and deleted_at is null", [ids.main]))[0].n === 1);
   await c.waitForFunction(() => /^1\.500$/.test((document.querySelector("[data-testid=cod-received]")?.textContent ?? "").trim()), null, { timeout: 60_000 });
   check("Codificado ve ahora recibidas 1.500 (las 700 se suman a las 800) sin recargar", (await num(panel.locator("[data-testid=cod-received]"))) === 1500 && (await num(panel.locator("[data-testid=cod-pending-code]"))) === 1000 && (await num(panel.locator("[data-testid=cod-not-received]"))) === 500);
-  await deliver(2000, 500);
+  await deliver(2000, 500, 1500);
   t = await transfers(ids.main);
   check("entrega final de 500: total 2.000 en tres movimientos independientes", t.length === 3 && t.map((x) => Number(x.quantity)).join(",") === "800,700,500" && Number(t[2].cumulative) === 2000 && Number(t[2].pending) === 0);
   check("recién ahora el trabajo de Envasado queda completo", (await q("select operational_status from work_items where id = $1", [ids.main]))[0].operational_status === "completo");

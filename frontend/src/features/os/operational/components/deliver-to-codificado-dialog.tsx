@@ -30,10 +30,13 @@ export function DeliverToCodificadoDialog({ open, onOpenChange, item, finishedDr
   const [busy, setBusy] = useState(false);
   // Una clave por intento: un doble clic o un reintento tras un corte de red devuelve la MISMA entrega (no duplica).
   const keyRef = useRef<string>("");
+  // Si la persona ya escribió, los valores sugeridos que llegan después del pedido al servidor NO pisan lo suyo.
+  const edited = useRef(false);
 
   useEffect(() => {
     if (!open) return;
     keyRef.current = crypto.randomUUID();
+    edited.current = false;
     let off = false;
     void fetchTransferView({ email, sector: sectorId }, item.id)
       .then((v) => {
@@ -41,6 +44,7 @@ export function DeliverToCodificadoDialog({ open, onOpenChange, item, finishedDr
         setError(null);
         setObs("");
         setView(v);
+        if (edited.current) return;
         const draft = Number(String(finishedDraft).replace(",", "."));
         const s = v.summary;
         const known = s.produced ?? 0;
@@ -98,12 +102,12 @@ export function DeliverToCodificadoDialog({ open, onOpenChange, item, finishedDr
           </dl>
           <label className="block">
             <span className="text-sm font-medium">Unidades terminadas (total, incluye las ya entregadas)</span>
-            <input className="mt-1 w-full rounded border border-[var(--os-border)] px-3 py-2 tabular-nums" inputMode="numeric" value={finished} onChange={(e) => setFinished(e.target.value)} data-testid="dtc-finished" />
+            <input className="mt-1 w-full rounded border border-[var(--os-border)] px-3 py-2 tabular-nums" inputMode="numeric" value={finished} onChange={(e) => { edited.current = true; setFinished(e.target.value); }} data-testid="dtc-finished" />
             <span className="mt-1 block text-xs text-[var(--os-text-muted)]">Si todavía no las registraste, cargalas acá: se guardan al confirmar.</span>
           </label>
           <label className="block">
             <span className="text-sm font-medium">Cantidad a entregar ahora *</span>
-            <input className="mt-1 w-full rounded border border-[var(--os-border)] px-3 py-2 tabular-nums" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} data-testid="dtc-qty" />
+            <input className="mt-1 w-full rounded border border-[var(--os-border)] px-3 py-2 tabular-nums" inputMode="numeric" value={qty} onChange={(e) => { edited.current = true; setQty(e.target.value); }} data-testid="dtc-qty" />
           </label>
           <label className="block">
             <span className="text-sm font-medium">Observaciones (opcional)</span>
