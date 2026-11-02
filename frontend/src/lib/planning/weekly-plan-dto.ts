@@ -18,6 +18,8 @@ export interface WeeklyPlanItemDto {
   lote: string | null;
   notes: string | null;
   progressLabel: string;
+  /** Estado ACTUAL del trabajo para personas (avance operativo; cae al estado de planificación). Para la tarjeta de la Vista mensual. */
+  stateLabel: string;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -58,6 +60,24 @@ function progressFromStatus(status: string): string {
   }
 }
 
+const OPERATIONAL_LABELS: Record<string, string> = {
+  pendiente: "Pendiente",
+  en_curso: "En curso",
+  bloqueado: "Bloqueado",
+  completo: "Completo",
+  revision: "Terminado · pendiente de definir",
+  entregado: "Entregado",
+  cancelado: "Cancelado",
+};
+
+/** Estado actual: lo que declaró el sector ejecutor (avance operativo); si no hay, el estado de la planificación. */
+export function currentStateLabel(item: Pick<PlanningWorkItemRecord, "status" | "operationalStatus">): string {
+  if (item.status === "CANCELADO") return "Cancelado";
+  const op = (item.operationalStatus ?? "").trim();
+  if (op && OPERATIONAL_LABELS[op]) return OPERATIONAL_LABELS[op]!;
+  return progressFromStatus(item.status);
+}
+
 /** Proyecta filas nativas al DTO de consulta (sin localStorage, sin duplicar ids). */
 export function toWeeklyPlanItemDto(item: PlanningWorkItemRecord): WeeklyPlanItemDto {
   const plannedDateTo = item.plannedDateTo ?? item.plannedDate ?? "";
@@ -76,9 +96,10 @@ export function toWeeklyPlanItemDto(item: PlanningWorkItemRecord): WeeklyPlanIte
     deliveryDate: null,
     status: item.status,
     statusLabel: STATUS_LABELS[item.status] ?? item.status,
-    lote: null,
+    lote: item.packagingLote?.trim() || null,
     notes: item.notes,
     progressLabel: progressFromStatus(item.status),
+    stateLabel: currentStateLabel(item),
   };
 }
 

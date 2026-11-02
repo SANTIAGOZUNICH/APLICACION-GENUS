@@ -79,6 +79,18 @@ try {
     check(`${label}: pestaña ${tabSector} muestra SOLO sus trabajos en el día correcto`, ok && (await dayText(page, J[tag].day)).includes(J[tag].product));
   };
 
+  const cardOf = (page) => page.locator("[data-testid=month-job-card]");
+  const cardText = async (page) => (await cardOf(page).innerText()).replace(/\s+/g, " ");
+  const closeCard = async (page) => { await page.keyboard.press("Escape"); await cardOf(page).waitFor({ state: "detached", timeout: 10_000 }); };
+  const cardCheck = async (page, label) => {
+    await page.locator("[data-testid=month-chip]").filter({ hasText: J.prem.product }).first().click();
+    await cardOf(page).waitFor({ timeout: 15_000 });
+    const t = await cardText(page);
+    const btns = await cardOf(page).getByRole("button").evaluateAll((els) => els.map((e) => e.getAttribute("aria-label") || e.textContent || ""));
+    check(`${label}: al tocar un trabajo se abre la tarjeta con cliente, producto y cantidad, solo informativa`, t.includes(CLI) && t.includes(J.prem.product) && /300 unidades/.test(t) && btns.length === 1 && /Cerrar/i.test(btns[0]), `${t.slice(0, 120)} | botones: ${btns.join(",")}`);
+    await closeCard(page);
+  };
+
   // ============ Todos los sectores ============
   const sectors = [
     ["Depósito", E2E_USERS.deposito], ["Codificado", E2E_USERS.codificado], ["Materias Primas", E2E_USERS.materiaPrima], ["Calidad", E2E_USERS.calidad],
@@ -93,6 +105,7 @@ try {
     await s.page.locator("[data-testid=vm-next]").click();
     await s.page.waitForFunction((t) => new RegExp(t, "i").test(document.querySelector("[data-testid=vm-title]")?.textContent ?? ""), nmLabel.split(" ")[0]);
     await expectTab(s.page, "prem", "ENVASADO_PREMIUM", label);
+    await cardCheck(s.page, label);
     await expectTab(s.page, "mas", "ENVASADO_MASIVO", label);
     await expectTab(s.page, "elab", "ELABORACION", label);
     if (label === "Depósito") depositoPage = s; else await s.ctx.close();
@@ -143,6 +156,60 @@ try {
   await waitDay(d, nmDay(12), /VM MASIVO NUEVO/, 90_000);
   check("un trabajo asignado después aparece en la vista (una sola vez)", Boolean(asg2) && (await d.locator("[data-testid=month-board]").innerText()).split("VM MASIVO NUEVO").length === 2);
 
+  // ============ Tarjeta flotante: apertura, cierre y datos ============
+  J.prem2 = { product: "VM PREMIUM DOS", day: nmDay(11), qty: "1500" };
+  ids.prem2 = await assign("ENVASADO_PREMIUM", J.prem2);
+  await q("update work_items set packaging_lote = 'L-VM-01' where id = $1", [ids.prem]);
+  await pickTab(d, "ENVASADO_PREMIUM");
+  await d.locator("[data-testid=vm-refresh]").click();
+  await waitDay(d, J.prem2.day, /VM PREMIUM DOS/);
+  const urlBefore = d.url();
+  const chipOf = (prod) => d.locator("[data-testid=month-chip]").filter({ hasText: prod }).first();
+  await chipOf(J.prem.product).click();
+  await cardOf(d).waitFor({ timeout: 15_000 });
+  const ct = async (id) => (await d.locator(`[data-testid=month-job-card] [data-testid=${id}]`).innerText()).trim();
+  const dmy = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+  check("la tarjeta muestra CLIENTE, PRODUCTO y CANTIDAD programada con su unidad", (await ct("job-card-client")) === CLI && (await ct("job-card-product")) === J.prem.product && (await ct("job-card-quantity")) === "450 unidades");
+  check("y como información secundaria: fecha, sector, estado y el lote (porque está asignado)", (await ct("job-card-date")) === dmy(newDay) && (await ct("job-card-sector")) === "Envasado Premium" && (await ct("job-card-state")) === "Pendiente" && (await ct("job-card-lote")) === "L-VM-01");
+  await d.screenshot({ path: `${OUT}/3-tarjeta.png` });
+  check("no navega a otra pantalla ni abre formularios: sigue en la Vista mensual y la tarjeta no tiene acciones de edición", d.url() === urlBefore && (await d.locator("[data-testid=vista-mensual]").isVisible()) && (await cardOf(d).getByRole("button").count()) === 1 && !/asignar|editar|eliminar|reprogramar|guardar/i.test(await cardText(d)));
+  // cerrar con la X
+  await d.locator("[data-testid=month-job-card-close]").click();
+  await cardOf(d).waitFor({ state: "detached", timeout: 10_000 });
+  check("se cierra con la X y el calendario sigue usable", (await d.locator("[data-testid=month-board]").isVisible()));
+  // cerrar tocando afuera
+  await chipOf(J.prem.product).click();
+  await cardOf(d).waitFor({ timeout: 10_000 });
+  await d.locator("[data-testid=vm-title]").click();
+  await cardOf(d).waitFor({ state: "detached", timeout: 10_000 });
+  check("se cierra tocando afuera", true);
+  // tocar otro trabajo muestra los datos del nuevo (una sola tarjeta)
+  await chipOf(J.prem.product).click();
+  await cardOf(d).waitFor({ timeout: 10_000 });
+  await chipOf(J.prem2.product).click();
+  await d.waitForFunction(() => /VM PREMIUM DOS/.test(document.querySelector("[data-testid=month-job-card]")?.textContent ?? ""), null, { timeout: 10_000 });
+  check("al tocar otro trabajo se muestran los datos del nuevo (una sola tarjeta, 1.500 unidades, sin lote)", (await cardOf(d).count()) === 1 && (await ct("job-card-quantity")) === "1.500 unidades" && (await ct("job-card-date")) === dmy(J.prem2.day) && (await d.locator("[data-testid=job-card-lote]").count()) === 0);
+  // cambiar de mes con la tarjeta abierta: se cierra y se conserva la pestaña
+  await d.locator("[data-testid=vm-next]").click();
+  await cardOf(d).waitFor({ state: "detached", timeout: 10_000 });
+  check("navegar entre meses con la tarjeta abierta la cierra y conserva el sector", (await d.locator("[data-testid=vista-mensual]").getAttribute("data-tab")) === "ENVASADO_PREMIUM");
+  await d.locator("[data-testid=vm-prev]").click();
+  await waitDay(d, J.prem2.day, /VM PREMIUM DOS/);
+  // Elaboración: sector y unidad kg
+  await pickTab(d, "ELABORACION");
+  await waitDay(d, J.elab.day, /VM ELAB CREMA/);
+  await chipOf(J.elab.product).click();
+  await cardOf(d).waitFor({ timeout: 10_000 });
+  check("Elaboración: la tarjeta muestra sector Elaboración y la cantidad en kg", (await ct("job-card-sector")) === "Elaboración" && (await ct("job-card-quantity")) === "200 kg");
+  await closeCard(d);
+  // Masivo
+  await pickTab(d, "ENVASADO_MASIVO");
+  await waitDay(d, nmDay(12), /VM MASIVO NUEVO/);
+  await chipOf("VM MASIVO NUEVO").click();
+  await cardOf(d).waitFor({ timeout: 10_000 });
+  check("Envasado Masivo: la tarjeta muestra sector Envasado Masivo y 800 unidades", (await ct("job-card-sector")) === "Envasado Masivo" && (await ct("job-card-quantity")) === "800 unidades");
+  await closeCard(d);
+
   // ============ Permisos: ningún sector gana escritura ============
   const writeTargets = { cells: [{ id: `native:${ids.elab}`, field: "plannedQuantity", value: "1", expectedVersion: await ver(ids.elab) }] };
   let allDenied = true;
@@ -174,6 +241,14 @@ try {
   const overflow = await mob.page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   check("en el celular la pantalla no se rompe (sin scroll horizontal de la página; el calendario se desplaza dentro de su contenedor)", overflow <= 2 && (await mob.page.locator("[data-testid=vm-tab-ELABORACION]").isVisible()), `overflow ${overflow}px`);
   await mob.page.screenshot({ path: `${OUT}/2-movil.png` });
+  await mob.page.locator("[data-testid=month-chip]").filter({ hasText: J.prem.product }).first().click();
+  await mob.page.locator("[data-testid=month-job-card]").waitFor({ timeout: 15_000 });
+  const box = await mob.page.locator("[data-testid=month-job-card]").boundingBox();
+  const vp = mob.page.viewportSize();
+  check("en el celular la tarjeta se ve completa (no queda cortada por los bordes)", Boolean(box) && box.x >= 0 && box.y >= 0 && box.x + box.width <= vp.width + 0.5 && box.y + box.height <= vp.height + 0.5, JSON.stringify(box));
+  await mob.page.screenshot({ path: `${OUT}/4-movil-tarjeta.png` });
+  await mob.page.locator("[data-testid=month-job-card-close]").click();
+  await mob.page.locator("[data-testid=month-job-card]").waitFor({ state: "detached", timeout: 10_000 });
   await mob.ctx.close();
   await depositoPage.ctx.close();
   await api.dispose();

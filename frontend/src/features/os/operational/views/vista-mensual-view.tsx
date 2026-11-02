@@ -7,6 +7,7 @@ import { usePreviewSession } from "@/features/os/session/preview-context";
 import { addMonths, monthLabel, monthStartOf } from "@/lib/operational/month-grid";
 import { todayInBuenosAires, weekStartMonday } from "@/lib/operational/operational-calendar";
 import { OperationalMonthBoard } from "../components/operational-month-board";
+import { MonthlyJobCard } from "../components/monthly-job-card";
 import { useSharedWeeklyPlan } from "../hooks/use-shared-weekly-plan";
 
 type FloorSector = "ENVASADO_PREMIUM" | "ENVASADO_MASIVO" | "ELABORACION";
@@ -39,12 +40,14 @@ export function VistaMensualView() {
     [items]
   );
 
+  const byId = useMemo(() => new Map(items.map((i) => [i.workItemId, i])), [items]);
+
   return (
     <TwinShell title="Vista mensual">
       <div className="mx-auto w-full max-w-[var(--os-content-max,1200px)] space-y-4 overflow-x-hidden" data-testid="vista-mensual" data-tab={tab} data-month={monthAnchor}>
         <header>
           <h2 className="text-2xl font-semibold tracking-tight">Vista mensual</h2>
-          <p className="text-sm text-[var(--os-text-muted)]">Planificación del mes por sector · solo consulta</p>
+          <p className="text-sm text-[var(--os-text-muted)]">Planificación del mes por sector · solo consulta · tocá un trabajo para ver su detalle</p>
         </header>
 
         <div className="flex flex-wrap gap-2" role="tablist" aria-label="Sector">
@@ -85,7 +88,7 @@ export function VistaMensualView() {
           </div>
         ) : null}
 
-        <OperationalMonthBoard monthStart={monthAnchor} today={today} items={monthItems} allItems={[]} canEdit={false} showUndated={false} onSelectItem={() => undefined} />
+        <OperationalMonthBoard monthStart={monthAnchor} today={today} items={monthItems} allItems={[]} canEdit={false} showUndated={false} onSelectItem={() => undefined} renderDetail={(it) => (byId.get(it.id) ? <MonthlyJobCard job={byId.get(it.id)!} /> : null)} />
       </div>
     </TwinShell>
   );

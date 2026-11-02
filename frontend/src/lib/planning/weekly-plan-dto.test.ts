@@ -40,6 +40,17 @@ describe("weekly-plan-dto", () => {
     expect(dto.deliveryDate).toBeNull();
   });
 
+  it("estado actual para la tarjeta: avance operativo si existe, si no el de planificación; lote solo si está asignado", () => {
+    expect(toWeeklyPlanItemDto(sample({ status: "PUBLICADO", operationalStatus: "pendiente" })).stateLabel).toBe("Pendiente");
+    expect(toWeeklyPlanItemDto(sample({ status: "PUBLICADO", operationalStatus: "en_curso" })).stateLabel).toBe("En curso");
+    expect(toWeeklyPlanItemDto(sample({ status: "PUBLICADO", operationalStatus: "completo" })).stateLabel).toBe("Completo");
+    expect(toWeeklyPlanItemDto(sample({ status: "PUBLICADO", operationalStatus: "bloqueado" })).stateLabel).toBe("Bloqueado");
+    expect(toWeeklyPlanItemDto(sample({ status: "PUBLICADO" })).stateLabel).toBe("Pendiente");
+    expect(toWeeklyPlanItemDto(sample({ status: "CANCELADO", operationalStatus: "en_curso" })).stateLabel).toBe("Cancelado");
+    expect(toWeeklyPlanItemDto(sample({ packagingLote: "  L-26099 " })).lote).toBe("L-26099");
+    expect(toWeeklyPlanItemDto(sample({ packagingLote: "  " })).lote).toBeNull();
+  });
+
   it("multiday covers Tue-Fri with one workItemId", () => {
     const dto = toWeeklyPlanItemDto(sample());
     const days = ["2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07"];
