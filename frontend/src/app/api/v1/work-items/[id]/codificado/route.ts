@@ -53,6 +53,7 @@ export async function POST(
           quantity: qty,
           finishedQty: body.finishedQty != null && String(body.finishedQty).trim() !== "" ? Number(String(body.finishedQty).replace(",", ".")) : null,
           observation: body.observation != null ? String(body.observation) : null,
+          packingGroups: body.packingGroups ?? null,
           idempotencyKey,
         },
         actor

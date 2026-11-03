@@ -1,5 +1,6 @@
 import { resolveWorkItemDeliveryPacking, validateDeliveryPacking } from "@/lib/remitos/delivery-packing";
 import { sumActiveCodificadoTransfers } from "./codificado-transfers-sum";
+import { mergePackingGroups } from "@/lib/remitos/delivery-boxes-input";
 import "server-only";
 
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -379,7 +380,7 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
   }
 
   // ── Cantidad objetivo y paso de entrega ──────────────────────────────────────────────────────────
-  const target = resolveDeliveryTarget({
+  let target = resolveDeliveryTarget({
     unit,
     deliverableUnits:
       patch.deliverableUnits !== undefined ? (patch.deliverableUnits as number | null) : row.deliverableUnits,
@@ -387,6 +388,12 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
     finishedQty: nextFinishedText,
     plannedQuantity: row.plannedQuantity,
   });
+  // Trabajo de Codificado que recibe entregas parciales de Envasado: si Envasado entregó MÁS que lo asignado (se realizaron más unidades),
+  // Codificado puede entregar todo lo recibido; con menos, el objetivo sigue siendo lo asignado (no se cierra antes de tiempo).
+  if (row.parentWorkItemId) {
+    const received = await sumActiveCodificadoTransfers(tx, row.parentWorkItemId);
+    if (received > (target ?? 0)) target = received;
+  }
 
   let stepQuantity: number | null = null;
   let cumulative: number | null = null;
@@ -549,6 +556,19 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
       })
       .returning();
     line = insertedLine;
+    // Cajas informadas en ESTA entrega: el resumen de cajas de la entrega vigente es la suma de las de sus renglones activos
+    // (cada tipo de caja por separado), para que Entregados y el remito vean el mismo total sin mezclar ni duplicar.
+    {
+      const activeLines: Array<{ packingGroups: unknown }> = await tx
+        .select({ packingGroups: workItemDeliveryLines.packingGroups })
+        .from(workItemDeliveryLines)
+        .where(and(eq(workItemDeliveryLines.deliveryId, delivery.id), eq(workItemDeliveryLines.status, "ACTIVA")));
+      const merged = mergePackingGroups(activeLines.map((l) => (Array.isArray(l.packingGroups) ? (l.packingGroups as Array<{ cajas: number; unidadesPorCaja: number }>) : null)));
+      if (merged.length > 0) {
+        const [withBoxes] = await tx.update(workItemDeliveries).set({ packingGroups: merged }).where(eq(workItemDeliveries.id, delivery.id)).returning();
+        delivery = withBoxes ?? delivery;
+      }
+    }
   }
 
   // ── Estado del trabajo ───────────────────────────────────────────────────────────────────────────

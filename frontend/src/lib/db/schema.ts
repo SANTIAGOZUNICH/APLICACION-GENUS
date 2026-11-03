@@ -2124,6 +2124,8 @@ export const workItemCodificadoTransfers = pgTable(
     idempotencyKey: text("idempotency_key").notNull(),
     status: text("status").notNull().default("ACTIVA"),
     note: text("note"),
+    /** 0080 — cajas de ESTA entrega: [{cajas, unidadesPorCaja}] (cantidades distintas por caja). null = sin detalle. */
+    packingGroups: jsonb("packing_groups"),
   },
   (table) => [
     uniqueIndex("work_item_codificado_transfers_idem_uq").on(table.idempotencyKey),
@@ -2169,6 +2171,8 @@ export const internalDeliveryChanges = pgTable(
     newObservations: text("new_observations"),
     finishedBefore: text("finished_before"),
     finishedAfter: text("finished_after"),
+    oldPacking: jsonb("old_packing"),
+    newPacking: jsonb("new_packing"),
     reason: text("reason"),
     actorEmail: text("actor_email").notNull(),
     actorName: text("actor_name"),

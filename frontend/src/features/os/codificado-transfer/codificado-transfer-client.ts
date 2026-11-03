@@ -18,7 +18,7 @@ export async function fetchTransferView(session: TransferSession, workItemId: st
   return (await call<{ view: CodificadoTransferView }>(res)).view;
 }
 
-export async function postTransfer(session: TransferSession, workItemId: string, body: { quantity: number; finishedQty?: number | null; observation?: string | null; idempotencyKey: string }) {
+export async function postTransfer(session: TransferSession, workItemId: string, body: { quantity: number; finishedQty?: number | null; observation?: string | null; packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null; idempotencyKey: string }) {
   const res = await fetch(`/api/v1/work-items/${encodeURIComponent(bare(workItemId))}/codificado`, { method: "POST", credentials: "include", headers: headers(session), body: JSON.stringify({ action: "transfer", ...body }) });
   return call<{ ok: true; replayed: boolean; complete: boolean; view: CodificadoTransferView }>(res);
 }

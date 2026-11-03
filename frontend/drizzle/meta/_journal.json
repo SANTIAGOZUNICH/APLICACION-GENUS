@@ -540,6 +540,13 @@
       "when": 1793900008000,
       "tag": "0079_internal_delivery_changes",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1793900009000,
+      "tag": "0080_delivery_boxes",
+      "breakpoints": true
     }
   ]
 }

@@ -3,7 +3,9 @@ import { resolvePlanningActor } from "@/lib/planning/actor";
 import { ensureNativePlanningReady, planningErrorResponse } from "@/lib/planning/http";
 import {
   cancelInternalDelivery,
+  editDeliveredWork,
   editInternalDelivery,
+  editLegacyDelivery,
   getInternalDeliveryHistory,
   InternalDeliveryConflictError,
   listInternalDeliveries,
@@ -45,6 +47,7 @@ export async function GET(request: Request) {
     const status = sp.get("status");
     const items = await listInternalDeliveries(actor, {
       q: sp.get("q"),
+      workItemId: sp.get("workItemId"),
       sector: sp.get("sector"),
       status: status === "ACTIVA" || status === "CANCELADA" ? status : null,
       from: sp.get("from"),
@@ -70,6 +73,30 @@ export async function POST(request: Request) {
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
     if (!body) throw new PlanningValidationError("Body JSON inválido.");
     const action = String(body.action ?? "").toLowerCase();
+    // Producción → Entregados → «Editar trabajo entregado»: corrige varias entregas del trabajo en UNA transacción.
+    if (action === "edit_work") {
+      const edits = Array.isArray(body.edits) ? (body.edits as Array<Record<string, unknown>>) : [];
+      const result = await editDeliveredWork(actor, {
+        workItemId: String(body.workItemId ?? ""),
+        edits: edits.map((e) => ({
+          id: String(e.id ?? ""),
+          quantity: e.quantity === undefined ? undefined : (e.quantity as number | string | null),
+          observations: e.observations === undefined ? undefined : e.observations == null ? "" : String(e.observations),
+          packingGroups: e.packingGroups,
+          expectedVersion: e.expectedVersion != null && Number.isFinite(Number(e.expectedVersion)) ? Number(e.expectedVersion) : null,
+        })),
+      });
+      return NextResponse.json({ ok: true, ...result }, { headers: NO_STORE });
+    }
+    if (action === "edit_legacy") {
+      const result = await editLegacyDelivery(actor, {
+        deliveryId: String(body.deliveryId ?? ""),
+        quantity: body.quantity === undefined ? undefined : (body.quantity as number | string | null),
+        observations: body.observations === undefined ? undefined : body.observations == null ? "" : String(body.observations),
+        packingGroups: body.packingGroups,
+      });
+      return NextResponse.json({ ok: true, ...result }, { headers: NO_STORE });
+    }
     const kind = kindOf(body.kind);
     const id = String(body.id ?? "");
     const expectedVersion = body.expectedVersion != null && Number.isFinite(Number(body.expectedVersion)) ? Number(body.expectedVersion) : null;
@@ -79,6 +106,7 @@ export async function POST(request: Request) {
         id,
         quantity: body.quantity === undefined ? undefined : (body.quantity as number | string | null),
         observations: body.observations === undefined ? undefined : body.observations == null ? "" : String(body.observations),
+        packingGroups: body.packingGroups,
         expectedVersion,
       });
       return NextResponse.json({ ok: true, ...result }, { headers: NO_STORE });
@@ -87,7 +115,7 @@ export async function POST(request: Request) {
       const result = await cancelInternalDelivery(actor, { kind, id, reason: String(body.reason ?? ""), expectedVersion });
       return NextResponse.json({ ok: true, ...result }, { headers: NO_STORE });
     }
-    throw new PlanningValidationError("Acción inválida (edit | cancel).");
+    throw new PlanningValidationError("Acción inválida (edit | cancel | edit_work | edit_legacy).");
   } catch (err) {
     return fail(err);
   }

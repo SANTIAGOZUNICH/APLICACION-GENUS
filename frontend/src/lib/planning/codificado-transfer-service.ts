@@ -19,6 +19,7 @@ import { operationalEvents, workItemCodificadoTransfers, workItems } from "@/lib
 import { canTransferToCodificado, canWorkReceivedCodificado, planCodificadoTransfer, summarizeCodificado, type CodificadoSummary } from "@/lib/planning/circuit/codificado-transfer";
 import { sumActiveDeliveredUnits } from "@/lib/planning/circuit/delivery-core";
 import { parseQuantity } from "@/lib/planning/circuit/delivery-math";
+import { validateDeliveryPacking, type DeliveryPackingGroup } from "@/lib/remitos/delivery-packing";
 import { sumActiveCodificadoTransfers } from "@/lib/planning/circuit/codificado-transfers-sum";
 import type { PlanningActor } from "@/lib/planning/types";
 import { PlanningForbiddenError, PlanningNotFoundError, PlanningValidationError } from "@/lib/planning/types";
@@ -41,6 +42,8 @@ export type CodificadoTransferDto = {
   deliveredAt: string;
   status: string;
   note: string | null;
+  /** Cajas de esta entrega ([{cajas, unidadesPorCaja}]); vacío = sin detalle de embalaje. */
+  packingGroups: DeliveryPackingGroup[];
 };
 
 export type CodificadoTransferView = {
@@ -63,12 +66,14 @@ export type TransferInput = {
   /** Total de unidades terminadas a registrar antes de entregar (solo sube; nunca baja de lo ya entregado). */
   finishedQty?: number | null;
   observation?: string | null;
+  /** Cajas de ESTA entrega (cantidades distintas por caja); si vienen, deben sumar exactamente la cantidad entregada. */
+  packingGroups?: unknown;
   idempotencyKey: string;
 };
 
 const norm = (raw: string) => (String(raw ?? "").trim().startsWith("native:") ? String(raw).trim().slice(7) : String(raw ?? "").trim());
 const sectorOf = (a: PlanningActor) => String(a.sector ?? "").toUpperCase();
-const toDto = (r: TransferRow): CodificadoTransferDto => ({ id: r.id, seq: r.seq, quantity: r.quantity, cumulative: r.cumulative, pending: r.pending, originSector: r.originSector, lote: r.lote, vto: r.vto, deliveredBy: r.deliveredBy, deliveredByName: r.deliveredByName, deliveredAt: r.deliveredAt.toISOString(), status: r.status, note: r.note });
+const toDto = (r: TransferRow): CodificadoTransferDto => ({ id: r.id, seq: r.seq, quantity: r.quantity, cumulative: r.cumulative, pending: r.pending, originSector: r.originSector, lote: r.lote, vto: r.vto, deliveredBy: r.deliveredBy, deliveredByName: r.deliveredByName, deliveredAt: r.deliveredAt.toISOString(), status: r.status, note: r.note, packingGroups: Array.isArray(r.packingGroups) ? (r.packingGroups as DeliveryPackingGroup[]) : [] });
 
 async function buildView(tx: Tx | Db, parent: typeof workItems.$inferSelect, child: typeof workItems.$inferSelect | null): Promise<CodificadoTransferView> {
   const rows = await tx.select().from(workItemCodificadoTransfers).where(eq(workItemCodificadoTransfers.workItemId, parent.id)).orderBy(asc(workItemCodificadoTransfers.seq));
@@ -140,6 +145,8 @@ export async function transferToCodificadoDurable(input: TransferInput, actor: P
   if (key.length < 8) throw new PlanningValidationError("idempotencyKey inválida.");
   const requested = Number(input.quantity);
   if (!Number.isFinite(requested) || requested <= 0) throw new PlanningValidationError("La cantidad a entregar debe ser mayor que 0.");
+  const boxes = validateDeliveryPacking(input.packingGroups ?? null, requested);
+  if (!boxes.ok) throw new PlanningValidationError(boxes.error);
 
   return getDb().transaction(async (tx) => {
     // Idempotencia: la misma clave devuelve la entrega ya registrada (doble clic, reintento de red).
@@ -270,6 +277,7 @@ export async function transferToCodificadoDurable(input: TransferInput, actor: P
         deliveredAt: now,
         idempotencyKey: key,
         note: input.observation?.trim() || null,
+        packingGroups: boxes.groups.length > 0 ? boxes.groups : null,
       })
       .returning();
 

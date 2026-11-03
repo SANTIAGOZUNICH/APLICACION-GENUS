@@ -7,6 +7,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { formatQty } from "@/lib/planning/circuit/delivery-math";
+import { resolveBoxesEntry, samePacking } from "@/lib/remitos/delivery-boxes-input";
+import type { PackingGroup } from "@/lib/remitos/packing-math";
+import { DeliveryBoxesSection } from "../components/delivery-boxes-section";
 import type { InternalDeliveryChangeDto, InternalDeliveryDto } from "@/lib/planning/internal-deliveries-service";
 
 const POLL_MS = 20_000;
@@ -146,7 +149,7 @@ export function EntregasInternasView() {
         </p>
 
         <div className="overflow-x-auto rounded border border-[var(--os-border)]">
-          <table className="w-full min-w-[980px] text-left text-sm" data-testid="ei-table">
+          <table className="w-full min-w-[1180px] text-left text-sm" data-testid="ei-table">
             <thead className="bg-white/5 text-xs uppercase text-[var(--os-text-muted)]">
               <tr>
                 <th className="px-3 py-2">Fecha</th>
@@ -155,6 +158,7 @@ export function EntregasInternasView() {
                 <th className="px-3 py-2">Lote</th>
                 <th className="px-3 py-2">Origen → Destino</th>
                 <th className="px-3 py-2 text-right">Cantidad entregada</th>
+                <th className="px-3 py-2">Cajas</th>
                 <th className="px-3 py-2">Observaciones</th>
                 <th className="px-3 py-2">Estado</th>
                 <th className="px-3 py-2 text-right">Acciones</th>
@@ -169,6 +173,7 @@ export function EntregasInternasView() {
                   <td className="px-3 py-2 font-mono text-xs">{d.lote ?? "—"}</td>
                   <td className="px-3 py-2">{d.originLabel} → {d.destinationLabel} <span className="text-xs text-[var(--os-text-muted)]">#{d.sequence}</span></td>
                   <td className={`px-3 py-2 text-right font-semibold tabular-nums ${d.status === "CANCELADA" ? "line-through" : ""}`} data-testid="ei-qty">{fmt(d.quantity)} {d.unit}</td>
+                  <td className="max-w-[240px] px-3 py-2 text-xs" data-testid="ei-boxes">{d.boxesText ?? <span className="text-[var(--os-text-muted)]">Sin detalle de cajas</span>}{d.packingInherited ? <span className="block text-[var(--os-text-muted)]">(cajas informadas por Envasado)</span> : null}{d.remito ? <span className="mt-1 block text-[var(--os-text-muted)]" data-testid="ei-remito">En remito {d.remito.number ?? "(borrador)"} · {d.remito.status}</span> : null}</td>
                   <td className="max-w-[260px] whitespace-pre-wrap break-words px-3 py-2" data-testid="ei-observations">{d.observations || <span className="text-[var(--os-text-muted)]">—</span>}</td>
                   <td className="px-3 py-2" data-testid="ei-status-cell">
                     {d.status === "ACTIVA" ? (
@@ -194,7 +199,7 @@ export function EntregasInternasView() {
                 </tr>
               ))}
               {!loading && items.length === 0 ? (
-                <tr><td colSpan={9} className="px-3 py-6 text-center text-[var(--os-text-muted)]" data-testid="ei-empty">No hay entregas internas para mostrar.</td></tr>
+                <tr><td colSpan={10} className="px-3 py-6 text-center text-[var(--os-text-muted)]" data-testid="ei-empty">No hay entregas internas para mostrar.</td></tr>
               ) : null}
             </tbody>
           </table>
@@ -220,6 +225,9 @@ export function EntregasInternasView() {
   );
 }
 
+const describePacking = (g: Array<{ cajas: number; unidadesPorCaja: number }> | null | undefined) =>
+  !g || g.length === 0 ? "sin detalle" : g.map((x) => `${x.cajas} × ${x.unidadesPorCaja}`).join(" + ");
+
 function Summary({ d }: { d: InternalDeliveryDto }) {
   return (
     <dl className="grid grid-cols-2 gap-2 rounded border border-[var(--os-border)] p-3 text-sm" data-testid="ei-summary">
@@ -234,6 +242,8 @@ function Summary({ d }: { d: InternalDeliveryDto }) {
 function EditDialog({ d, onClose, onSaved }: { d: InternalDeliveryDto; onClose: () => void; onSaved: (message: string) => void }) {
   const [qty, setQty] = useState(formatQty(d.quantity));
   const [obs, setObs] = useState(d.observations ?? "");
+  const [boxes, setBoxes] = useState<PackingGroup[]>(d.packingGroups.map((g) => ({ cajas: g.cajas, unidadesPorCaja: g.unidadesPorCaja })));
+  const [showBoxes, setShowBoxes] = useState(d.packingGroups.length > 0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busyRef = useRef(false);
@@ -245,7 +255,12 @@ function EditDialog({ d, onClose, onSaved }: { d: InternalDeliveryDto; onClose: 
     setBusy(true);
     try {
       const body: Json = { action: "edit", kind: d.kind, id: d.id, expectedVersion: d.version };
-      if (qty.trim() !== formatQty(d.quantity)) body.quantity = qty.trim();
+      const typed = Number(qty.trim().replace(/\./g, "").replace(",", "."));
+      const entry = resolveBoxesEntry({ quantity: Number.isFinite(typed) ? typed : null, groups: showBoxes ? boxes : [] });
+      if (!entry.ok) throw new Error(entry.error);
+      if (entry.derivedQuantity && entry.quantity != null) body.quantity = String(entry.quantity);
+      else if (qty.trim() !== formatQty(d.quantity)) body.quantity = qty.trim();
+      if (!samePacking(entry.groups, d.packingGroups)) body.packingGroups = entry.groups;
       if (obs.trim() !== (d.observations ?? "").trim()) body.observations = obs.trim();
       const res = await api<{ notice?: string | null }>("/api/v1/internal-deliveries", { method: "POST", body: JSON.stringify(body) });
       onSaved(["Entrega actualizada. Los totales se recalcularon.", res.notice].filter(Boolean).join(" "));
@@ -266,13 +281,15 @@ function EditDialog({ d, onClose, onSaved }: { d: InternalDeliveryDto; onClose: 
         <div className="space-y-3">
           <Summary d={d} />
           <label className="block text-sm">
-            <span className="font-medium">Cantidad entregada ({d.unit})</span>
+            <span className="font-medium">Cantidad entregada ({d.unit}) — si cargás cajas, el total se calcula</span>
             <input className="mt-1 w-full rounded border border-[var(--os-border)] bg-transparent px-3 py-2 tabular-nums" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} data-testid="ei-edit-qty" />
           </label>
           <label className="block text-sm">
             <span className="font-medium">Observaciones (opcional)</span>
             <textarea className="mt-1 w-full rounded border border-[var(--os-border)] bg-transparent px-3 py-2" rows={3} maxLength={1000} value={obs} onChange={(e) => setObs(e.target.value)} data-testid="ei-edit-obs" />
           </label>
+          <DeliveryBoxesSection boxes={boxes} onBoxesChange={setBoxes} expected={Number.isFinite(Number(qty.trim().replace(/\./g, "").replace(",", "."))) && qty.trim() !== "" ? Number(qty.trim().replace(/\./g, "").replace(",", ".")) : null} onUseTotal={(t) => setQty(String(t))} open={showBoxes} onOpenChange={setShowBoxes} prefix="ei-edit" label="Cajas de la entrega" />
+          {d.remito ? <p className="text-xs text-amber-300" data-testid="ei-edit-remito">Esta entrega ya figura en el remito {d.remito.number ?? "(borrador)"}: no se puede corregir hasta anularlo o reemplazarlo.</p> : null}
           {error ? <p role="alert" className="text-sm text-amber-300" data-testid="ei-edit-error">{error}</p> : null}
         </div>
         <DialogFooter>
@@ -351,6 +368,7 @@ function HistoryDialog({ state, onClose }: { state: { d: InternalDeliveryDto; ch
               <p className="text-xs text-[var(--os-text-muted)]">{c.actorName ?? c.actorEmail} · {c.actorSectorLabel}</p>
               {c.action === "EDITAR" && c.oldQuantity !== c.newQuantity ? <p>Cantidad: {fmt(c.oldQuantity)} → {fmt(c.newQuantity)} {d.unit}</p> : null}
               {c.action === "EDITAR" && (c.oldObservations ?? "") !== (c.newObservations ?? "") ? <p className="whitespace-pre-wrap">Observaciones: «{c.oldObservations ?? "—"}» → «{c.newObservations ?? "—"}»</p> : null}
+              {JSON.stringify(c.oldPacking ?? []) !== JSON.stringify(c.newPacking ?? []) && c.action === "EDITAR" ? <p data-testid="ei-history-packing">Cajas: {describePacking(c.oldPacking)} → {describePacking(c.newPacking)}</p> : null}
               {c.finishedBefore !== c.finishedAfter ? <p>Unidades realizadas del trabajo: {c.finishedBefore ?? "—"} → {c.finishedAfter ?? "—"}</p> : null}
               {c.action === "CANCELAR" ? <p>Motivo: {c.reason ?? "—"} (era de {fmt(c.oldQuantity)} {d.unit})</p> : null}
             </div>

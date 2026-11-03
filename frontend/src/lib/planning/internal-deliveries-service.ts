@@ -31,7 +31,10 @@ import { sumActiveCodificadoTransfers } from "@/lib/planning/circuit/codificado-
 import { sumActiveDeliveredUnits } from "@/lib/planning/circuit/delivery-core";
 import { DELIVERY_EPSILON, formatQty, parseQuantity, resolveDeliveryTarget } from "@/lib/planning/circuit/delivery-math";
 import { syncObsMark } from "@/lib/planning/circuit/delivery-group";
+import { mergePackingGroups, packingTotals, samePacking } from "@/lib/remitos/delivery-boxes-input";
+import { describeDeliveryPacking, validateDeliveryPacking, type DeliveryPackingGroup } from "@/lib/remitos/delivery-packing";
 import { annulDeliveryInTx } from "@/lib/planning/work-item-progress-repository";
+import { loadResolvedPackingByLine } from "@/lib/remitos/delivery-packing-resolve";
 import type { PlanningActor } from "@/lib/planning/types";
 import { PlanningForbiddenError, PlanningNotFoundError, PlanningValidationError } from "@/lib/planning/types";
 import { isIntegerUnit } from "@/lib/utils/ar-number-parsing";
@@ -83,6 +86,8 @@ export type InternalDeliveryChangeDto = {
   newObservations: string | null;
   finishedBefore: string | null;
   finishedAfter: string | null;
+  oldPacking: DeliveryPackingGroup[] | null;
+  newPacking: DeliveryPackingGroup[] | null;
   reason: string | null;
   actorName: string | null;
   actorEmail: string;
@@ -108,6 +113,15 @@ export type InternalDeliveryDto = {
   quantity: number;
   unit: string;
   observations: string | null;
+  /** Cajas de la entrega (cada tipo de caja por separado); [] = sin detalle de embalaje. */
+  packingGroups: DeliveryPackingGroup[];
+  /** Total de cajas y texto «8 cajas de 100 u. + 1 caja de 50 u. = 9 cajas / 850 u.» (null sin cajas). */
+  cajas: number;
+  boxesText: string | null;
+  /** true = las cajas vienen de las entregas de Envasado a Codificado (no son propias de esta entrega). */
+  packingInherited: boolean;
+  /** Remito vigente (no anulado) que ya incluye esta entrega: la entrega no se corrige hasta resolver el remito. */
+  remito: { id: string; number: string | null; status: string } | null;
   status: InternalDeliveryStatus;
   cumulative: number | null;
   pending: number | null;
@@ -123,6 +137,7 @@ export type InternalDeliveryDto = {
 
 export type InternalDeliveryFilters = {
   q?: string | null;
+  workItemId?: string | null;
   sector?: string | null;
   status?: InternalDeliveryStatus | null;
   from?: string | null;
@@ -130,11 +145,33 @@ export type InternalDeliveryFilters = {
   limit?: number | null;
 };
 
-type RawRow = Omit<InternalDeliveryDto, "version" | "cancelReason" | "cancelledAt" | "cancelledBy" | "canManage" | "originLabel" | "destinationLabel" | "status"> & {
+type RawRow = Omit<InternalDeliveryDto, "version" | "cancelReason" | "cancelledAt" | "cancelledBy" | "canManage" | "originLabel" | "destinationLabel" | "status" | "cajas" | "boxesText" | "remito" | "packingInherited"> & {
   status: InternalDeliveryStatus;
   cancelledAtRaw: Date | null;
   cancelledByRaw: string | null;
 };
+
+const asGroups = (raw: unknown): DeliveryPackingGroup[] =>
+  Array.isArray(raw)
+    ? (raw as Array<{ cajas?: unknown; unidadesPorCaja?: unknown }>)
+        .map((g) => ({ cajas: Number(g?.cajas) || 0, unidadesPorCaja: Number(g?.unidadesPorCaja) || 0 }))
+        .filter((g) => g.cajas > 0 && g.unidadesPorCaja > 0)
+    : [];
+
+/** Remitos vigentes (no anulados) que ya incluyen estas entregas a Producción. */
+async function loadRemitoLinks(tx: Tx, lineIds: string[]): Promise<Map<string, { id: string; number: string | null; status: string }>> {
+  const out = new Map<string, { id: string; number: string | null; status: string }>();
+  if (lineIds.length === 0) return out;
+  try {
+    const keys = lineIds.map((i) => `dl:${i}`);
+    const res = await tx.execute(sql`select k.work_item_id as key, r.id::text as id, r.remito_number as number, r.status as status
+      from remito_work_links k join remitos r on r.id = k.remito_id where r.status <> 'ANULADO' and k.work_item_id in (${sql.join(keys.map((k: string) => sql`${k}`), sql`, `)})`);
+    for (const r of res.rows as Array<Record<string, unknown>>) out.set(String(r.key).slice(3), { id: String(r.id), number: r.number == null ? null : String(r.number), status: String(r.status) });
+  } catch {
+    // remitos no disponibles: no se bloquea la corrección por esto
+  }
+  return out;
+}
 
 function fmtQtyFor(unit: string | null | undefined, n: number): string {
   return isIntegerUnit(unit) ? String(Math.round(n)) : formatQty(n);
@@ -154,6 +191,7 @@ async function loadLineRows(tx: Tx, where: ReturnType<typeof and> | undefined, l
       deliveredBySector: workItemDeliveryLines.deliveredBySector,
       at: workItemDeliveryLines.actualDeliveredAt,
       observations: workItemDeliveryLines.observations,
+      packing: workItemDeliveryLines.packingGroups,
       cumulative: workItemDeliveryLines.cumulativeAfter,
       pending: workItemDeliveryLines.pendingAfter,
       annulledAt: workItemDeliveryLines.annulledAt,
@@ -183,6 +221,7 @@ async function loadLineRows(tx: Tx, where: ReturnType<typeof and> | undefined, l
     quantity: Number(r.quantity),
     unit: String(r.unit ?? r.itemUnit ?? ""),
     observations: (r.observations as string | null) ?? null,
+    packingGroups: asGroups(r.packing),
     status: r.status === "ACTIVA" ? ("ACTIVA" as const) : ("CANCELADA" as const),
     cumulative: r.cumulative != null ? Number(r.cumulative) : null,
     pending: r.pending != null ? Number(r.pending) : null,
@@ -209,6 +248,7 @@ async function loadTransferRows(tx: Tx, where: ReturnType<typeof and> | undefine
       at: workItemCodificadoTransfers.deliveredAt,
       status: workItemCodificadoTransfers.status,
       note: workItemCodificadoTransfers.note,
+      packing: workItemCodificadoTransfers.packingGroups,
       lote: workItemCodificadoTransfers.lote,
       client: workItems.client,
       product: workItems.product,
@@ -233,6 +273,7 @@ async function loadTransferRows(tx: Tx, where: ReturnType<typeof and> | undefine
     quantity: Number(r.quantity),
     unit: String(r.unit ?? ""),
     observations: (r.note as string | null) ?? null,
+    packingGroups: asGroups(r.packing),
     status: r.status === "ACTIVA" ? ("ACTIVA" as const) : ("CANCELADA" as const),
     cumulative: r.cumulative != null ? Number(r.cumulative) : null,
     pending: r.pending != null ? Number(r.pending) : null,
@@ -268,11 +309,31 @@ async function decorate(tx: Tx, actor: PlanningActor, rows: RawRow[]): Promise<I
     byKey.set(k, list);
   }
   const s = sectorOf(actor);
+  const remitos = await loadRemitoLinks(tx, rows.filter((r) => r.kind === "PRODUCCION").map((r) => r.id));
+  // Entrega a Producción sin cajas propias (p. ej. Codificado → Producción): se muestran las cajas que Envasado informó en sus entregas a
+  // Codificado (solo lectura; no se guardan en la entrega). Es el mismo dato que usa el remito.
+  const inherited = new Map<string, DeliveryPackingGroup[]>();
+  const needResolve = rows.filter((r) => r.kind === "PRODUCCION" && r.packingGroups.length === 0);
+  if (needResolve.length > 0) {
+    try {
+      const resolved = await loadResolvedPackingByLine([...new Set(needResolve.map((r) => r.workItemId))]);
+      for (const r of needResolve) {
+        const rp = resolved.get(r.id);
+        if (rp && rp.source !== "NINGUNA" && rp.groups.length > 0) inherited.set(r.id, rp.groups);
+      }
+    } catch {
+      // solo lectura: si no se pudo resolver, se muestra «sin detalle»
+    }
+  }
   return rows.map(({ cancelledAtRaw, cancelledByRaw, ...r }) => {
     const list = byKey.get(`${r.kind}:${r.id}`) ?? [];
     const cancel = [...list].reverse().find((c) => c.action === "CANCELAR");
     return {
       ...r,
+      cajas: packingTotals(inherited.get(r.id) ?? r.packingGroups).cajas,
+      boxesText: describeDeliveryPacking(inherited.get(r.id) ?? r.packingGroups),
+      packingInherited: inherited.has(r.id),
+      remito: r.kind === "PRODUCCION" ? (remitos.get(r.id) ?? null) : null,
       originLabel: SECTOR_LABELS[r.originSector] ?? r.originSector,
       destinationLabel: SECTOR_LABELS[r.destination] ?? r.destination,
       version: list.length,
@@ -297,6 +358,7 @@ export async function listInternalDeliveries(actor: PlanningActor, filters: Inte
   const to = /^\d{4}-\d{2}-\d{2}$/.test(String(filters.to ?? "")) ? String(filters.to) : null;
 
   const lineConds = [
+    filters.workItemId && /^[0-9a-f-]{36}$/i.test(String(filters.workItemId)) ? eq(workItemDeliveryLines.workItemId, String(filters.workItemId)) : undefined,
     originFilter ? eq(workItemDeliveryLines.sourceSector, originFilter) : undefined,
     filters.status === "ACTIVA" ? eq(workItemDeliveryLines.status, "ACTIVA") : filters.status === "CANCELADA" ? eq(workItemDeliveryLines.status, "ANULADA") : undefined,
     from ? sql`${workItemDeliveryLines.actualDeliveredAt} >= ${from}::date` : undefined,
@@ -304,6 +366,7 @@ export async function listInternalDeliveries(actor: PlanningActor, filters: Inte
     like_ ? sql`(${workItems.client} ilike ${like_} or ${workItems.product} ilike ${like_} or coalesce(${workItems.packagingLote}, '') ilike ${like_})` : undefined,
   ].filter(Boolean);
   const transferConds = [
+    filters.workItemId && /^[0-9a-f-]{36}$/i.test(String(filters.workItemId)) ? eq(workItemCodificadoTransfers.workItemId, String(filters.workItemId)) : undefined,
     originFilter ? eq(workItemCodificadoTransfers.originSector, originFilter) : undefined,
     filters.status === "ACTIVA" ? eq(workItemCodificadoTransfers.status, "ACTIVA") : filters.status === "CANCELADA" ? eq(workItemCodificadoTransfers.status, "ANULADA") : undefined,
     from ? sql`${workItemCodificadoTransfers.deliveredAt} >= ${from}::date` : undefined,
@@ -343,6 +406,8 @@ export async function getInternalDeliveryHistory(actor: PlanningActor, kind: Int
     newObservations: r.newObservations,
     finishedBefore: r.finishedBefore,
     finishedAfter: r.finishedAfter,
+    oldPacking: r.oldPacking == null ? null : asGroups(r.oldPacking),
+    newPacking: r.newPacking == null ? null : asGroups(r.newPacking),
     reason: r.reason,
     actorName: r.actorName,
     actorEmail: r.actorEmail,
@@ -359,6 +424,8 @@ export type InternalDeliveryEditInput = {
   quantity?: number | string | null;
   /** Nuevas observaciones (omitir para dejarlas; "" las borra). */
   observations?: string | null;
+  /** Cajas de la entrega ([{cajas, unidadesPorCaja}], tipos de caja distintos); omitir = sin cambios; [] = quitar el detalle. */
+  packingGroups?: unknown;
   /** Versión que el cliente tenía al abrir el formulario (detecta ediciones simultáneas). */
   expectedVersion?: number | null;
 };
@@ -378,7 +445,7 @@ export type InternalDeliveryMutationResult = {
   notice: string | null;
 };
 
-type MutationInput = { kind: InternalDeliveryKind; id: string; mode: "edit" | "cancel"; quantity?: number | string | null; observations?: string | null; reason?: string; expectedVersion?: number | null };
+type MutationInput = { kind: InternalDeliveryKind; id: string; mode: "edit" | "cancel"; quantity?: number | string | null; observations?: string | null; packingGroups?: unknown; reason?: string; expectedVersion?: number | null };
 
 function parseNewQuantity(raw: number | string | null | undefined, unit: string): number {
   const value = typeof raw === "number" ? raw : parseQuantity(String(raw ?? "").trim(), unit);
@@ -418,6 +485,19 @@ export async function cancelInternalDelivery(actor: PlanningActor, input: Intern
   return runMutation(actor, { kind: input.kind, id: input.id, mode: "cancel", reason, expectedVersion: input.expectedVersion });
 }
 
+/** Cajas resultantes de una edición: las informadas (deben sumar la cantidad), las de antes si no se tocan, o ninguna. */
+function resolveNewPacking(raw: unknown, oldPacking: DeliveryPackingGroup[], oldQty: number, newQty: number): DeliveryPackingGroup[] {
+  if (raw !== undefined) {
+    const chk = validateDeliveryPacking(raw ?? [], newQty);
+    if (!chk.ok) throw new PlanningValidationError(chk.error);
+    return chk.groups;
+  }
+  if (oldPacking.length > 0 && Math.abs(newQty - oldQty) > DELIVERY_EPSILON) {
+    throw new PlanningValidationError(`Cambiaste la cantidad: actualizá también el desglose de cajas (hoy suma ${packingTotals(oldPacking).unidades} u. y la entrega pasa a ${newQty} u.).`);
+  }
+  return oldPacking;
+}
+
 async function runMutation(actor: PlanningActor, input: MutationInput): Promise<InternalDeliveryMutationResult> {
   if (input.kind !== "PRODUCCION" && input.kind !== "CODIFICADO") throw new PlanningValidationError("Tipo de entrega inválido.");
   const id = String(input.id ?? "").trim();
@@ -449,7 +529,16 @@ async function mutateLine(tx: Tx, actor: PlanningActor, input: MutationInput): P
   const cancel = input.mode === "cancel";
   const newQty = cancel ? 0 : input.quantity != null && input.quantity !== "" ? parseNewQuantity(input.quantity, unit) : oldQty;
   const newObs = cancel ? oldObs : input.observations !== undefined ? cleanObservation(input.observations) : oldObs;
-  if (!cancel && Math.abs(newQty - oldQty) <= DELIVERY_EPSILON && newObs === oldObs) throw new PlanningValidationError("No hay cambios para guardar.");
+  const oldPacking = asGroups(line.packingGroups);
+  const newPacking = cancel ? oldPacking : resolveNewPacking(input.packingGroups, oldPacking, oldQty, newQty);
+  if (!cancel && Math.abs(newQty - oldQty) <= DELIVERY_EPSILON && newObs === oldObs && samePacking(newPacking, oldPacking)) throw new PlanningValidationError("No hay cambios para guardar.");
+  // Una entrega que ya figura en un remito vigente no se modifica en silencio: el remito histórico se corrige con su propio mecanismo.
+  const inRemito = (await loadRemitoLinks(tx, [line.id])).get(line.id);
+  if (inRemito) {
+    throw new PlanningValidationError(
+      `Esta entrega ya figura en el remito ${inRemito.number ?? "(borrador)"} (${inRemito.status}). Para corregirla, anulá o reemplazá primero ese remito: el documento no se modifica en silencio.`
+    );
+  }
 
   const activeLines: Array<typeof line> = await tx
     .select()
@@ -502,7 +591,7 @@ async function mutateLine(tx: Tx, actor: PlanningActor, input: MutationInput): P
   if (cancel) {
     await tx.update(workItemDeliveryLines).set({ status: "ANULADA", annulledAt: now, annulledBy: actorName }).where(eq(workItemDeliveryLines.id, line.id));
   } else {
-    await tx.update(workItemDeliveryLines).set({ quantity: newQty, observations: newObs }).where(eq(workItemDeliveryLines.id, line.id));
+    await tx.update(workItemDeliveryLines).set({ quantity: newQty, observations: newObs, packingGroups: newPacking.length > 0 ? newPacking : null }).where(eq(workItemDeliveryLines.id, line.id));
   }
   // 2) acumulados y saldos de las entregas que siguen vigentes (en orden), sin duplicar nada
   let running = 0;
@@ -532,6 +621,11 @@ async function mutateLine(tx: Tx, actor: PlanningActor, input: MutationInput): P
         finishedQty: finishedAfter ?? undefined,
         deliveryComplete: complete,
         pendingBalance: complete ? null : pendingNow,
+        // Resumen de cajas de la entrega vigente = suma de las cajas de sus entregas activas (cada tipo de caja por separado).
+        packingGroups: (() => {
+          const merged = mergePackingGroups(nextQuantities.map((q) => (q.id === line.id ? newPacking : asGroups(activeLines.find((l) => l.id === q.id)?.packingGroups))));
+          return merged.length > 0 ? merged : null;
+        })(),
         updatedAt: now,
       })
       .where(eq(workItemDeliveries.id, line.deliveryId));
@@ -563,6 +657,8 @@ async function mutateLine(tx: Tx, actor: PlanningActor, input: MutationInput): P
     newObservations: cancel ? oldObs : newObs,
     finishedBefore,
     finishedAfter,
+    oldPacking: oldPacking.length > 0 ? oldPacking : null,
+    newPacking: cancel ? null : newPacking.length > 0 ? newPacking : null,
     reason: cancel ? (input.reason ?? null) : null,
     actorEmail: actor.email,
     actorName,
@@ -615,7 +711,9 @@ async function mutateTransfer(tx: Tx, actor: PlanningActor, input: MutationInput
   const oldObs: string | null = transfer.note ?? null;
   const newQty = cancel ? 0 : input.quantity != null && input.quantity !== "" ? parseNewQuantity(input.quantity, unit) : oldQty;
   const newObs = cancel ? oldObs : input.observations !== undefined ? cleanObservation(input.observations) : oldObs;
-  if (!cancel && Math.abs(newQty - oldQty) <= DELIVERY_EPSILON && newObs === oldObs) throw new PlanningValidationError("No hay cambios para guardar.");
+  const oldPacking = asGroups(transfer.packingGroups);
+  const newPacking = cancel ? oldPacking : resolveNewPacking(input.packingGroups, oldPacking, oldQty, newQty);
+  if (!cancel && Math.abs(newQty - oldQty) <= DELIVERY_EPSILON && newObs === oldObs && samePacking(newPacking, oldPacking)) throw new PlanningValidationError("No hay cambios para guardar.");
 
   const active: Array<typeof transfer> = await tx
     .select()
@@ -653,7 +751,7 @@ async function mutateTransfer(tx: Tx, actor: PlanningActor, input: MutationInput
   if (cancel) {
     await tx.update(workItemCodificadoTransfers).set({ status: "ANULADA" }).where(eq(workItemCodificadoTransfers.id, transfer.id));
   } else {
-    await tx.update(workItemCodificadoTransfers).set({ quantity: newQty, note: newObs }).where(eq(workItemCodificadoTransfers.id, transfer.id));
+    await tx.update(workItemCodificadoTransfers).set({ quantity: newQty, note: newObs, packingGroups: newPacking.length > 0 ? newPacking : null }).where(eq(workItemCodificadoTransfers.id, transfer.id));
   }
   // Acumulados y pendientes de las entregas vigentes, recalculados en orden.
   let running = 0;
@@ -692,6 +790,8 @@ async function mutateTransfer(tx: Tx, actor: PlanningActor, input: MutationInput
     newObservations: cancel ? oldObs : newObs,
     finishedBefore,
     finishedAfter,
+    oldPacking: oldPacking.length > 0 ? oldPacking : null,
+    newPacking: cancel ? null : newPacking.length > 0 ? newPacking : null,
     reason: cancel ? (input.reason ?? null) : null,
     actorEmail: actor.email,
     actorName,
@@ -703,4 +803,110 @@ async function mutateTransfer(tx: Tx, actor: PlanningActor, input: MutationInput
 
   const delivery = await loadOne(tx, actor, "CODIFICADO", transfer.id);
   return { delivery, totals: { delivered: deliveredToProd, transferredToCodificado: newTransferred, finishedQty: finishedAfter }, notice };
+}
+
+// ─────────────────────────── Editar un TRABAJO ENTREGADO (Producción → Entregados) ───────────────────────────
+
+export type DeliveredWorkEdit = {
+  /** Id de la entrega (renglón) a corregir. */
+  id: string;
+  quantity?: number | string | null;
+  observations?: string | null;
+  packingGroups?: unknown;
+  expectedVersion?: number | null;
+};
+
+export type DeliveredWorkResult = {
+  workItemId: string;
+  deliveries: InternalDeliveryDto[];
+  /** Totales ACTIVOS del trabajo ya recalculados: unidades y cajas entregadas. */
+  totals: { delivered: number; cajas: number; groups: DeliveryPackingGroup[]; transferredToCodificado: number; finishedQty: string | null };
+  notice: string | null;
+};
+
+/**
+ * Corrige un trabajo que YA está entregado (sin devolverlo a Pendientes): cantidad, cajas, unidades por caja, distribución y
+ * observaciones de una o más de sus entregas, TODO en una transacción y reutilizando la misma lógica (y la misma auditoría) que la
+ * edición de entregas internas: no se crea ninguna entrega nueva, no se duplican unidades y la cantidad pedida no se toca.
+ * Solo Producción / Dirección.
+ */
+export async function editDeliveredWork(actor: PlanningActor, input: { workItemId: string; edits: DeliveredWorkEdit[] }): Promise<DeliveredWorkResult> {
+  if (!isAdminSector(sectorOf(actor))) throw new PlanningForbiddenError("Solo Producción puede corregir un trabajo ya entregado.");
+  const workItemId = String(input.workItemId ?? "");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(workItemId)) throw new PlanningValidationError("Identificador de trabajo inválido.");
+  const edits = Array.isArray(input.edits) ? input.edits : [];
+  if (edits.length === 0) throw new PlanningValidationError("No hay cambios para guardar.");
+  if (new Set(edits.map((e) => e.id)).size !== edits.length) throw new PlanningValidationError("Una entrega aparece dos veces en los cambios.");
+  return getDb().transaction(async (tx: Tx) => {
+    const own: Array<{ id: string }> = await tx.select({ id: workItemDeliveryLines.id }).from(workItemDeliveryLines).where(eq(workItemDeliveryLines.workItemId, workItemId));
+    const ids = new Set(own.map((o) => o.id));
+    let notice: string | null = null;
+    for (const e of edits) {
+      if (!ids.has(String(e.id))) throw new PlanningValidationError("Una de las entregas no pertenece a este trabajo.");
+      const r = await mutateLine(tx, actor, { kind: "PRODUCCION", id: String(e.id), mode: "edit", quantity: e.quantity, observations: e.observations, packingGroups: e.packingGroups, expectedVersion: e.expectedVersion });
+      notice = r.notice ?? notice;
+    }
+    const lines = await loadLineRows(tx, eq(workItemDeliveryLines.workItemId, workItemId), 500);
+    const deliveries = await decorate(tx, actor, lines.sort((a, b) => a.sequence - b.sequence));
+    const active = deliveries.filter((d) => d.status === "ACTIVA");
+    const [item] = await tx.select({ finishedQty: workItems.finishedQty }).from(workItems).where(eq(workItems.id, workItemId)).limit(1);
+    const groups = mergePackingGroups(active.map((d) => d.packingGroups));
+    return {
+      workItemId,
+      deliveries,
+      totals: { delivered: active.reduce((s, d) => s + d.quantity, 0), cajas: packingTotals(groups).cajas, groups, transferredToCodificado: await sumActiveCodificadoTransfers(tx, workItemId), finishedQty: item?.finishedQty ?? null },
+      notice,
+    };
+  });
+}
+
+/**
+ * Entregas HISTÓRICAS (anteriores al seguimiento por renglones: la entrega no tiene renglones): se corrige el registro de la entrega
+ * (cantidad, cajas, observaciones) con auditoría. No se crea ningún renglón ni se toca el pedido. Solo Producción / Dirección.
+ */
+export async function editLegacyDelivery(
+  actor: PlanningActor,
+  input: { deliveryId: string; quantity?: number | string | null; observations?: string | null; packingGroups?: unknown }
+): Promise<{ deliveryId: string; quantity: string | null; observations: string | null; packingGroups: DeliveryPackingGroup[]; cajas: number }> {
+  if (!isAdminSector(sectorOf(actor))) throw new PlanningForbiddenError("Solo Producción puede corregir un trabajo ya entregado.");
+  const id = String(input.deliveryId ?? "");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new PlanningValidationError("Identificador de entrega inválido.");
+  return getDb().transaction(async (tx: Tx) => {
+    const [d] = await tx.select().from(workItemDeliveries).where(eq(workItemDeliveries.id, id)).for("update").limit(1);
+    if (!d || d.status !== "ENTREGADO" || d.archived) throw new PlanningNotFoundError("Entrega no encontrada o ya no está vigente.");
+    const [anyLine] = await tx.select({ id: workItemDeliveryLines.id }).from(workItemDeliveryLines).where(eq(workItemDeliveryLines.deliveryId, d.id)).limit(1);
+    if (anyLine) throw new PlanningValidationError("Esta entrega tiene renglones: corregila entrega por entrega.");
+    const unit = String(d.unit ?? "");
+    const oldQty = parseQuantity(d.quantity, unit);
+    const newQty = input.quantity != null && input.quantity !== "" ? parseNewQuantity(input.quantity, unit) : oldQty;
+    if (newQty == null) throw new PlanningValidationError("La cantidad entregada debe ser un número mayor que 0.");
+    const oldObs: string | null = d.observations ?? null;
+    const newObs = input.observations !== undefined ? cleanObservation(input.observations) : oldObs;
+    const oldPacking = asGroups(d.packingGroups);
+    const newPacking = resolveNewPacking(input.packingGroups, oldPacking, oldQty ?? newQty, newQty);
+    if (oldQty != null && Math.abs(newQty - oldQty) <= DELIVERY_EPSILON && newObs === oldObs && samePacking(newPacking, oldPacking)) throw new PlanningValidationError("No hay cambios para guardar.");
+    const now = new Date();
+    const actorName = actor.displayName || actor.email;
+    await tx
+      .update(workItemDeliveries)
+      .set({ quantity: fmtQtyFor(unit, newQty), observations: newObs, packingGroups: newPacking.length > 0 ? newPacking : null, updatedAt: now })
+      .where(eq(workItemDeliveries.id, d.id));
+    await tx.insert(internalDeliveryChanges).values({
+      kind: "ENTREGA",
+      deliveryId: d.id,
+      workItemId: d.workItemId,
+      action: "EDITAR",
+      oldQuantity: oldQty,
+      newQuantity: newQty,
+      oldObservations: oldObs,
+      newObservations: newObs,
+      oldPacking: oldPacking.length > 0 ? oldPacking : null,
+      newPacking: newPacking.length > 0 ? newPacking : null,
+      actorEmail: actor.email,
+      actorName,
+      actorSector: sectorOf(actor),
+    });
+    await tx.insert(operationalEvents).values({ workItemId: d.workItemId, type: "DELIVERY_EDITED", fromStatus: "entregado", toStatus: "entregado", actorEmail: actor.email, actorSector: actor.sector, note: `entrega histórica: ${oldQty ?? "s/d"} → ${fmtQtyFor(unit, newQty)}`.slice(0, 500) });
+    return { deliveryId: d.id, quantity: fmtQtyFor(unit, newQty), observations: newObs, packingGroups: newPacking, cajas: packingTotals(newPacking).cajas };
+  });
 }
