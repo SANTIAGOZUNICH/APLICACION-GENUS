@@ -115,7 +115,7 @@ try {
   check("2) remito de la entrega de 600 completa con sus 6 × 100", whole.status() === 201 && Number((await remLines(l2))[0].total_units) === 600);
 
   // 7) corrección incompatible
-  const edit = await prodApi.post("/api/v1/internal-deliveries", { data: { action: "edit", kind: "PRODUCCION", id: l2, quantity: 500 } });
+  const edit = await prodApi.post("/api/v1/internal-deliveries", { data: { action: "edit", kind: "PRODUCCION", id: l2, quantity: 500, packingGroups: [{ cajas: 5, unidadesPorCaja: 100 }] } });
   check("7) bajar de 600 a 500 una entrega con remito vigente se bloquea (400)", edit.status() === 400 && /remito/i.test((await edit.json()).error ?? ""));
   const cancel = await prodApi.post("/api/v1/internal-deliveries", { data: { action: "cancel", kind: "PRODUCCION", id: l2, reason: "prueba" } });
   check("7) cancelarla también (400)", cancel.status() === 400);
