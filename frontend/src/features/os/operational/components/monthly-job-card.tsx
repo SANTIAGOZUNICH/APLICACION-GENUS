@@ -1,6 +1,7 @@
 "use client";
 
 import type { WeeklyPlanItemDto } from "@/lib/planning/weekly-plan-dto";
+import { JobComments } from "./job-comments";
 
 const UNIT_NAMES: Record<string, string> = { "un.": "unidades", un: "unidades", u: "unidades", unid: "unidades", unidades: "unidades" };
 
@@ -22,8 +23,8 @@ export function formatJobDates(from: string, to: string): string {
 }
 
 /**
- * Contenido de la tarjeta flotante de un trabajo en la Vista mensual: SOLO información (sin acciones de asignar, editar, eliminar ni
- * reprogramar). Título = producto; luego Cliente y Cantidad; debajo, en menor jerarquía: fecha, sector, estado y lote (si existe).
+ * Contenido de la tarjeta flotante de un trabajo en la Vista mensual: información (sin acciones de asignar, editar, eliminar ni
+ * reprogramar), las observaciones originales del trabajo (solo lectura) y los comentarios del equipo (único dato que se puede agregar). Título = producto; luego Cliente y Cantidad; debajo, en menor jerarquía: fecha, sector, estado y lote (si existe).
  * Sin campos vacíos. El fondo opaco y el borde los pone el contenedor (`.os-floating-card`).
  */
 export function MonthlyJobCard({ job }: { job: WeeklyPlanItemDto }) {
@@ -56,6 +57,15 @@ export function MonthlyJobCard({ job }: { job: WeeklyPlanItemDto }) {
             </div>
           ))}
       </dl>
+      <section className="mt-3 border-t border-white/15 pt-3" aria-label="Observaciones del trabajo" data-testid="job-card-observations">
+        <h4 className="text-[13px] font-semibold uppercase tracking-wide text-[#9fb4c0]">Observaciones del trabajo</h4>
+        {job.notes?.trim() ? (
+          <p className="mt-1 whitespace-pre-wrap text-[14px] text-[#eaf3f6]" data-testid="job-card-observations-text">{job.notes}</p>
+        ) : (
+          <p className="mt-1 text-[13px] text-[#9fb4c0]" data-testid="job-card-observations-empty">Sin observaciones</p>
+        )}
+      </section>
+      <JobComments workItemId={job.workItemId} />
     </div>
   );
 }

@@ -526,6 +526,13 @@
       "when": 1793900006000,
       "tag": "0077_codificado_transfers",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1793900007000,
+      "tag": "0078_work_item_comments",
+      "breakpoints": true
     }
   ]
 }

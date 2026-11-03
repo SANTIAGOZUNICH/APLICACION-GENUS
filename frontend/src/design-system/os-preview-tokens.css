@@ -826,7 +826,8 @@ body {
   box-sizing: border-box;
   width: min(21rem, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
-  max-height: min(26rem, calc(100vh - 24px));
+  max-height: min(34rem, calc(100vh - 24px));
+  max-height: min(34rem, calc(100dvh - 24px), var(--radix-popover-content-available-height, 100dvh));
   overflow-x: hidden;
   overflow-y: auto;
   padding: 1.125rem;
