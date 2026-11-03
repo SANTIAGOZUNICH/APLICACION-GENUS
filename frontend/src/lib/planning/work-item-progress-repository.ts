@@ -1624,8 +1624,12 @@ export async function restoreDeliveryDurable(id: string) {
  * una aparición «entregada» con las otras pendientes. Nunca toca entregas de otros pedidos ni de otras etapas.
  */
 export async function annulDeliveryDurable(id: string, reason: string, actorName: string) {
-  const db = getDb();
-  return db.transaction(async (tx: Tx) => {
+  return getDb().transaction(async (tx: Tx) => annulDeliveryInTx(tx, id, reason, actorName));
+}
+
+/** Cuerpo de `annulDeliveryDurable` dentro de una transacción ya abierta (lo reutiliza la cancelación de entregas internas). */
+export async function annulDeliveryInTx(tx: Tx, id: string, reason: string, actorName: string) {
+  {
     const [existing] = await tx.select().from(workItemDeliveries).where(eq(workItemDeliveries.id, id)).limit(1);
     if (!existing) return null;
     if (existing.status === "REGISTRO_ELIMINADO") return null;
@@ -1676,7 +1680,7 @@ export async function annulDeliveryDurable(id: string, reason: string, actorName
       await annulOne(d, `${reason ? `${reason} · ` : ""}Entrega sincronizada con la del trabajo ${existing.workItemId}: se anula junto con ella.`.slice(0, 500));
     }
     return row;
-  });
+  }
 }
 
 export async function deleteDeliveryRecordDurable(

@@ -3,8 +3,8 @@
  *
  * Una entrega a Codificado es un MOVIMIENTO INTERNO: no es una entrega al cliente ni mueve stock de Depósito.
  *
- *  - Saldo = asignada − (entregado a Producción + entregado a Codificado). El trabajo de Envasado sigue abierto mientras haya saldo.
- *  - Tope = terminadas − (lo ya entregado por cualquier vía). Las MUESTRAS son metadata y no se descuentan de lo terminado
+ *  - Saldo = asignada − (entregado a Producción + entregado a Codificado), nunca negativo. El trabajo de Envasado sigue abierto mientras haya saldo.
+ *  - Tope = terminadas − (lo ya entregado por cualquier vía). La cantidad asignada NO limita la entrega (se pueden entregar más unidades que las pedidas si se realizaron). Las MUESTRAS son metadata y no se descuentan de lo terminado
  *    (regla vigente del packaging): no se contabilizan dos veces.
  *  - Codificado ve: recibidas (suma de entregas), codificadas (su avance, ≤ recibidas), pendientes de codificar y aún no recibidas.
  */
@@ -24,10 +24,10 @@ export function planCodificadoTransfer(input: {
   const r = planPartialDelivery({ assigned: input.assigned, alreadyDelivered: input.alreadyOut, produced: input.produced, requested: input.requested, unit: input.unit });
   if (r.ok) return r;
   if (r.code === "EXCEEDS_BALANCE") {
-    return { ...r, error: `La cantidad supera lo que falta entregar a Codificado (${formatQty(Math.max(0, input.assigned - input.alreadyOut))}).` };
+    return { ...r, error: `La cantidad supera lo disponible para entregar a Codificado (${formatQty(Math.max(0, input.assigned - input.alreadyOut))}). Si se realizaron más unidades, registralas primero como terminadas.` };
   }
-  if (r.code === "NOTHING_PENDING") {
-    return { ...r, error: "Ya se entregó a Codificado (o a Producción) toda la cantidad asignada de este trabajo." };
+  if (r.code === "NOTHING_PENDING" && !(input.produced != null && input.produced > 0)) {
+    return { ...r, error: "Ya se entregó a Codificado (o a Producción) toda la cantidad de este trabajo." };
   }
   return r;
 }
@@ -48,8 +48,10 @@ export interface CodificadoSummary {
   assigned: number;
   produced: number | null;
   transferred: number;
-  /** Pendiente de entregar a Codificado (de lo asignado). */
+  /** Pendiente de entregar a Codificado (de lo asignado, nunca negativo). */
   pendingToTransfer: number;
+  /** Lo que ya salió del trabajo por cualquier vía (a Producción + a Codificado); puede superar lo asignado si se realizaron más unidades. */
+  alreadyOut: number;
   /** Terminadas y todavía no entregadas a ningún lado (null si no hay dato de terminadas). */
   availableToTransfer: number | null;
   received: number;
@@ -67,6 +69,7 @@ export function summarizeCodificado(i: CodificadoSummaryInput): CodificadoSummar
     produced: i.produced,
     transferred: i.transferred,
     pendingToTransfer: nz(i.assigned - out),
+    alreadyOut: out,
     availableToTransfer: i.produced != null && i.produced > 0 ? nz(i.produced - out) : null,
     received: i.transferred,
     coded: Math.min(i.coded, i.transferred),

@@ -33,6 +33,18 @@ describe("planPartialDelivery (saldo = asignada − entregado)", () => {
     expect(planPartialDelivery({ ...base, alreadyDelivered: 0, produced: 0, requested: 1000 }).ok).toBe(true);
   });
 
+  it("más de lo pedido: con 2.050 realizadas se entregan 2.050 (1.000 + 800 + 250) sin excedente, sin pendiente negativo", () => {
+    expect(planPartialDelivery({ ...base, alreadyDelivered: 0, produced: 2050, requested: 2050 })).toMatchObject({ ok: true, quantity: 2050, cumulative: 2050, pending: 0, complete: true });
+    expect(planPartialDelivery({ ...base, alreadyDelivered: 0, produced: 2050, requested: 1000 })).toMatchObject({ ok: true, pending: 1000, complete: false });
+    expect(planPartialDelivery({ ...base, alreadyDelivered: 1000, produced: 2050, requested: 800 })).toMatchObject({ ok: true, pending: 200, complete: false });
+    expect(planPartialDelivery({ ...base, alreadyDelivered: 1800, produced: 2050, requested: 250 })).toMatchObject({ ok: true, cumulative: 2050, pending: 0, complete: true });
+    expect(planPartialDelivery({ ...base, alreadyDelivered: 1800, produced: 2050, requested: 251 })).toMatchObject({ ok: false, code: "EXCEEDS_AVAILABLE" });
+  });
+
+  it("sin dato de realizadas la asignada es la referencia (no se inventan unidades)", () => {
+    expect(planPartialDelivery({ ...base, alreadyDelivered: 0, produced: null, requested: 2050 })).toMatchObject({ ok: false, code: "EXCEEDS_BALANCE", error: expect.stringContaining("registralas primero como realizadas") });
+  });
+
   it("sin saldo pendiente no admite más entregas", () => {
     expect(planPartialDelivery({ ...base, alreadyDelivered: 2000, produced: 2000, requested: 1 })).toMatchObject({ ok: false, code: "NOTHING_PENDING" });
   });

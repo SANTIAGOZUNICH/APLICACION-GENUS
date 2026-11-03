@@ -49,7 +49,7 @@ export function DeliverToCodificadoDialog({ open, onOpenChange, item, finishedDr
         const s = v.summary;
         const known = s.produced ?? 0;
         setFinished(String(Math.max(known, Number.isFinite(draft) ? draft : 0) || ""));
-        const out = s.assigned - s.pendingToTransfer; // ya salió (a Producción + a Codificado)
+        const out = s.alreadyOut ?? s.assigned - s.pendingToTransfer; // ya salió (a Producción + a Codificado)
         const avail = Math.max(0, Math.max(known, Number.isFinite(draft) ? draft : 0) - out);
         setQty(avail > 0 ? String(avail) : "");
       })
@@ -60,7 +60,7 @@ export function DeliverToCodificadoDialog({ open, onOpenChange, item, finishedDr
   }, [open, item.id, email, sectorId, finishedDraft]);
 
   const s = view?.summary;
-  const out = s ? s.assigned - s.pendingToTransfer : 0; // lo que ya salió por cualquier vía (a Producción + a Codificado)
+  const out = s ? (s.alreadyOut ?? s.assigned - s.pendingToTransfer) : 0; // lo que ya salió por cualquier vía (a Producción + a Codificado)
 
   async function confirm() {
     if (!s) return;
@@ -69,8 +69,7 @@ export function DeliverToCodificadoDialog({ open, onOpenChange, item, finishedDr
     if (!Number.isFinite(q) || q <= 0) return setError("Ingresá cuántas unidades entregás ahora (mayor que 0).");
     if (!Number.isInteger(q) && /^(un|u\b)/i.test(item.unit ?? "un.")) return setError("La cantidad debe ser un número entero de unidades.");
     if (!Number.isFinite(f) || f <= 0) return setError("Registrá cuántas unidades están terminadas (incluye las ya entregadas).");
-    if (q > s.pendingToTransfer + 1e-6) return setError(`No podés entregar más de lo pendiente (${fmtQty(s.pendingToTransfer)}).`);
-    if (q > f - out + 1e-6) return setError(`Solo hay ${fmtQty(Math.max(0, f - out))} unidades terminadas sin entregar. Subí las terminadas si ya las tenés.`);
+    if (q > f - out + 1e-6) return setError(`Solo hay ${fmtQty(Math.max(0, f - out))} unidades terminadas sin entregar. Subí las terminadas si ya las tenés (podés registrar más unidades que las pedidas si se realizaron).`);
     setBusy(true);
     setError(null);
     try {

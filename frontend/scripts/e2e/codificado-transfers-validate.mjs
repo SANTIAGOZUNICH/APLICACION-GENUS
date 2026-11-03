@@ -91,10 +91,9 @@ try {
   await dlg.locator("[data-testid=dtc-qty]").fill("900");
   await dlg.locator("[data-testid=dtc-confirm]").click();
   check("no deja entregar más de lo terminado (900 con 800 terminadas)", /Solo hay 800/.test(await dlg.locator("[data-testid=dtc-error]").innerText()) && (await transfers(ids.main)).length === 0);
-  await dlg.locator("[data-testid=dtc-qty]").fill("2500");
-  await dlg.locator("[data-testid=dtc-finished]").fill("2500");
+  await dlg.locator("[data-testid=dtc-qty]").fill("0");
   await dlg.locator("[data-testid=dtc-confirm]").click();
-  check("no deja registrar más terminadas que lo asignado", (await dlg.locator("[data-testid=dtc-error]").count()) === 1 && (await transfers(ids.main)).length === 0);
+  check("no deja entregar una cantidad en cero", (await dlg.locator("[data-testid=dtc-error]").count()) === 1 && (await transfers(ids.main)).length === 0);
 
   // 1ª entrega: 800 (doble clic: no duplica)
   await dlg.locator("[data-testid=dtc-finished]").fill("800");

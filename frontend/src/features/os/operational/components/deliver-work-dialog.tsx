@@ -271,7 +271,7 @@ export function DeliverWorkDialog({
             <span className="mt-1 block text-xs text-[var(--os-text-muted)]">
               {isPartialMode
                 ? produced != null && produced > 0
-                  ? `Terminadas sin entregar: ${formatQty(Math.max(0, produced - delivered))}${unitLabel}.`
+                  ? `Realizadas sin entregar: ${formatQty(Math.max(0, produced - delivered))}${unitLabel}. Podés entregar más que la cantidad pedida si se realizaron.`
                   : "Indicá cuántas unidades entregás ahora."
                 : "Si entregás menos que el saldo, la entrega es PARCIAL: queda el saldo pendiente y el trabajo no se marca como entregado hasta completar la cantidad."}
             </span>
@@ -281,6 +281,20 @@ export function DeliverWorkDialog({
               Entrega parcial: quedarán {formatQty(preview.pending)}
               {unitLabel} pendientes.
             </p>
+          ) : null}
+
+          {isPartialMode ? (
+            <label className="block">
+              <span className="font-medium">Observaciones (opcional)</span>
+              <textarea
+                value={observations}
+                onChange={(e) => setObservations(e.target.value)}
+                rows={2}
+                maxLength={1000}
+                className="mt-1 w-full rounded border border-[var(--os-border)] px-3 py-2"
+                data-testid="deliver-observations"
+              />
+            </label>
           ) : null}
 
           {!isPartialMode ? (
