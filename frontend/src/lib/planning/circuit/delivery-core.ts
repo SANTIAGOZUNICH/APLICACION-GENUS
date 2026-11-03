@@ -740,6 +740,57 @@ export async function closePedidoIfAllDelivered(
   return true;
 }
 
+/**
+ * Inversa de `closePedidoIfAllDelivered`: si se cancela o se baja una entrega y algún trabajo de despacho del pedido ya no está entregado, el
+ * pedido NO puede seguir figurando ENTREGADO. Solo se revierte cuando el último cambio de estado del pedido fue el automático «todo entregado»
+ * (si alguien lo cambió a mano después, no se toca) y vuelve al estado anterior, con su evento. No modifica trabajos ni remitos.
+ */
+export async function reopenPedidoIfNotAllDelivered(tx: Tx, workItemId: string, actor: DeliveryActor): Promise<boolean> {
+  const [wi] = await tx.select({ pedidoId: workItems.productionPedidoId }).from(workItems).where(eq(workItems.id, workItemId)).limit(1);
+  const pedidoId = wi?.pedidoId;
+  if (!pedidoId) return false;
+  const [pedido] = await tx
+    .select()
+    .from(productionPedidos)
+    .where(and(eq(productionPedidos.id, pedidoId), sql`${productionPedidos.deletedAt} IS NULL`))
+    .for("update")
+    .limit(1);
+  if (!pedido || pedido.estado !== "ENTREGADO") return false;
+  const [last] = await tx
+    .select()
+    .from(productionPedidoStatusEvents)
+    .where(eq(productionPedidoStatusEvents.pedidoId, pedidoId))
+    .orderBy(sql`${productionPedidoStatusEvents.createdAt} desc`)
+    .limit(1);
+  if (!last || last.event !== "ALL_WORK_DELIVERED") return false;
+  const siblings = await tx
+    .select({ operationalStatus: workItems.operationalStatus })
+    .from(workItems)
+    .where(
+      and(
+        eq(workItems.productionPedidoId, pedidoId),
+        sql`${workItems.deletedAt} IS NULL`,
+        sql`${workItems.sector} IN ('ENVASADO_MASIVO', 'ENVASADO_PREMIUM', 'CODIFICADO')`,
+        sql`${workItems.operationalStatus} <> 'cancelado'`,
+        sql`${workItems.status} <> 'CANCELADO'`
+      )
+    );
+  if (siblings.length > 0 && siblings.every((s: { operationalStatus: string }) => s.operationalStatus === "entregado")) return false;
+  const back = last.fromEstado && last.fromEstado !== "ENTREGADO" ? last.fromEstado : "EN_ENVASADO";
+  await tx.update(productionPedidos).set({ estado: back, updatedBy: actor.email, updatedAt: new Date() }).where(eq(productionPedidos.id, pedidoId));
+  await tx.insert(productionPedidoStatusEvents).values({
+    pedidoId,
+    workItemId,
+    fromEstado: "ENTREGADO",
+    toEstado: back,
+    actorEmail: actor.email,
+    actorSector: actor.sector,
+    event: "DELIVERY_REVERTED",
+    motivo: "Se corrigió o canceló una entrega: el pedido ya no tiene todos sus trabajos entregados.",
+  });
+  return true;
+}
+
 /** Suma de lo entregado (líneas ACTIVAS de la entrega vigente) — para vistas y tests. */
 export async function sumActiveDeliveredUnits(tx: Tx, workItemId: string): Promise<number> {
   const [active] = await tx

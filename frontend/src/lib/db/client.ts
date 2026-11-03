@@ -44,3 +44,29 @@ export async function closeDb(): Promise<void> {
     db = null;
   }
 }
+
+/**
+ * Ejecuta `fn` con candados de aplicación (advisory locks de SESIÓN de Postgres) tomados en una conexión dedicada, en orden estable
+ * (sin interbloqueos). Sirve para serializar secuencias «verificar → escribir» que usan varias consultas/servicios (p. ej. no remitir dos
+ * veces las mismas unidades): dos usuarios, incluso en instancias distintas, esperan su turno. Sin base configurada solo ejecuta `fn`.
+ */
+export async function withAdvisoryLocks<T>(keys: string[], fn: () => Promise<T>): Promise<T> {
+  const unique = [...new Set(keys.filter(Boolean))].sort();
+  if (unique.length === 0 || !isDatabaseConfigured()) return fn();
+  getDb();
+  const client = await pool!.connect();
+  const taken: string[] = [];
+  try {
+    for (const k of unique) {
+      await client.query("select pg_advisory_lock(hashtextextended($1, 0))", [k]);
+      taken.push(k);
+    }
+    return await fn();
+  } finally {
+    for (const k of taken.reverse()) await client.query("select pg_advisory_unlock(hashtextextended($1, 0))", [k]).catch(() => undefined);
+    client.release();
+  }
+}
+
+/** Clave del candado de remitos de UNA entrega (renglón de entrega a Producción). */
+export const remitoLineLockKey = (deliveryLineId: string) => `remito-dl:${deliveryLineId}`;

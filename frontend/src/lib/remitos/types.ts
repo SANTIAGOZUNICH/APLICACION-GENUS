@@ -29,6 +29,11 @@ export type RemitoLineTrace = {
   orderRef: string | null;
   /** Texto de remito que se cargó al registrar la entrega (si había). */
   deliveryRemito?: string | null;
+  /** Entrega parcial N.º (orden dentro del trabajo) y unidades que tenía la entrega al preparar el remito. */
+  /** Observaciones relevantes de la entrega (las de Envasado/Codificado + las que Producción agregó al preparar el remito). */
+  observations?: string | null;
+  deliverySequence?: number;
+  deliveredQuantity?: number;
 };
 
 export type RemitoCajaCombo = {

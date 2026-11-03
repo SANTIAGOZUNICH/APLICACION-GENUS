@@ -154,11 +154,11 @@ export function EditDeliveredWorkDialog({ target, onClose, onSaved }: { target: 
           {rows?.map((r, i) => (
             <div key={r.d.id} className="space-y-2 rounded border border-[var(--os-border)] p-3" data-testid="edw-row" data-delivery-id={r.d.id}>
               <p className="font-medium">Entrega #{r.d.sequence} · {r.d.originLabel} · {fmtDate(r.d.date)}</p>
-              {r.d.remito ? <p className="text-xs text-amber-300" data-testid="edw-remito">Ya figura en el remito {r.d.remito.number ?? "(borrador)"} ({r.d.remito.status}): anulá o reemplazá el remito para poder corregirla.</p> : null}
+              {r.d.remito ? <p className="text-xs text-amber-300" data-testid="edw-remito">Ya figura en remitos vigentes ({fmt(r.d.remitted)} u.): solo se puede subir la cantidad o cambiar observaciones; para bajarla o cambiar las cajas, primero anulá o reemplazá el remito.</p> : null}
               <label className="block"><span className="font-medium">Cantidad entregada ({r.d.unit}) — si cargás cajas, el total se calcula</span>
-                <input className="mt-1 w-full rounded border border-[var(--os-border)] bg-transparent px-3 py-2 tabular-nums" inputMode="numeric" value={r.qty} onChange={(e) => setRow(i, { qty: e.target.value })} data-testid="edw-qty" disabled={Boolean(r.d.remito)} /></label>
+                <input className="mt-1 w-full rounded border border-[var(--os-border)] bg-transparent px-3 py-2 tabular-nums" inputMode="numeric" value={r.qty} onChange={(e) => setRow(i, { qty: e.target.value })} data-testid="edw-qty" /></label>
               <label className="block"><span className="font-medium">Observaciones</span>
-                <textarea className="mt-1 w-full rounded border border-[var(--os-border)] bg-transparent px-3 py-2" rows={2} value={r.obs} onChange={(e) => setRow(i, { obs: e.target.value })} data-testid="edw-obs" disabled={Boolean(r.d.remito)} /></label>
+                <textarea className="mt-1 w-full rounded border border-[var(--os-border)] bg-transparent px-3 py-2" rows={2} value={r.obs} onChange={(e) => setRow(i, { obs: e.target.value })} data-testid="edw-obs" /></label>
               <DeliveryBoxesSection boxes={r.boxes} onBoxesChange={(boxes) => setRow(i, { boxes })} expected={parseQty(r.qty)} onUseTotal={(t) => setRow(i, { qty: String(t) })} open={r.showBoxes} onOpenChange={(showBoxes) => setRow(i, { showBoxes })} prefix={`edw-${i}`} label="Cajas de la entrega" />
             </div>
           ))}

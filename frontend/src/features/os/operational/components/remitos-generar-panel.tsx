@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { describeDeliveryPacking } from "@/lib/remitos/delivery-packing";
+import { PrepareRemitoDialog, type PrepareRemitoTarget } from "./prepare-remito-dialog";
 import type { EligibleDelivery, RemitoPreviewGroup } from "@/lib/remitos/delivery-grouping";
 import { createRemitosFromDeliveriesApi, fetchEligibleDeliveriesApi, fetchMarkedDeliveriesApi, markDeliveriesApi, previewRemitosFromDeliveriesApi, type MarkedDeliveryView } from "@/lib/remitos/remitos-client";
 
@@ -32,6 +33,8 @@ export function RemitosGenerarPanel({ session, canManage, onCreated }: { session
   const [extNumber, setExtNumber] = useState("");
   const [extDate, setExtDate] = useState("");
   const [extNotes, setExtNotes] = useState("");
+  const [prep, setPrep] = useState<PrepareRemitoTarget | null>(null);
+  const SRC: Record<string, string> = { ENVASADO_MASIVO: "Envasado Masivo", ENVASADO_PREMIUM: "Envasado Premium", CODIFICADO: "Codificado" };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -186,10 +189,12 @@ export function RemitosGenerarPanel({ session, canManage, onCreated }: { session
                 {canManage ? <th className="w-12 px-3 py-2" /> : null}
                 <th className="px-2 py-2">Pedido</th>
                 <th className="px-2 py-2">Producto</th>
-                <th className="px-2 py-2">Entregado</th>
+                <th className="px-2 py-2">Entrega</th>
+                <th className="px-2 py-2">A remitir</th>
                 <th className="px-2 py-2">Cajas</th>
                 <th className="px-2 py-2">Lote</th>
                 <th className="px-2 py-2">Tipo</th>
+                {canManage ? <th className="px-2 py-2" /> : null}
               </tr>
             </thead>
             <tbody>
@@ -200,10 +205,14 @@ export function RemitosGenerarPanel({ session, canManage, onCreated }: { session
                   ) : null}
                   <td className="px-2 py-2">{d.pedido ?? "—"}</td>
                   <td className="px-2 py-2">{d.product}</td>
-                  <td className="px-2 py-2 tabular-nums">{fmt(d.quantity)} {d.unit ?? ""}</td>
+                  <td className="px-2 py-2" data-testid="remitos-generar-entrega">{d.sequence ? `Parcial ${d.sequence}` : "—"}{d.sourceSector ? <span className="block text-[var(--os-text-muted)]">{SRC[d.sourceSector] ?? d.sourceSector}</span> : null}</td>
+                  <td className="px-2 py-2 tabular-nums">{fmt(d.quantity)} {d.unit ?? ""}{d.remittedQuantity && d.remittedQuantity > 0 ? <span className="block text-[var(--os-text-muted)]">recibidas {fmt(d.deliveredQuantity ?? d.quantity)} · ya en remitos {fmt(d.remittedQuantity)}</span> : null}</td>
                   <td className="px-2 py-2">{d.boxesText ?? <span className="text-[var(--genus-warning)]">Sin detalle de cajas registrado</span>}</td>
                   <td className="px-2 py-2 font-mono">{d.lote || "—"}</td>
                   <td className="px-2 py-2">{d.kind === "FINAL" ? "Final" : "Parcial"}</td>
+                  {canManage ? (
+                    <td className="px-2 py-2"><Button type="button" variant="secondary" className="min-h-9" onClick={() => setPrep({ deliveryLineId: d.deliveryLineId, product: d.product, client: d.client, lote: d.lote, sequence: d.sequence ?? null, sourceLabel: d.sourceSector ? (SRC[d.sourceSector] ?? d.sourceSector) : null, unit: d.unit, delivered: d.deliveredQuantity ?? d.quantity, remitted: d.remittedQuantity ?? 0, available: d.quantity, packingGroups: d.packingGroups, observations: d.observations ?? null })} data-testid="remitos-preparar">Preparar remito</Button></td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>
@@ -240,6 +249,8 @@ export function RemitosGenerarPanel({ session, canManage, onCreated }: { session
           ) : null}
         </div>
       ) : null}
+
+      {prep ? <PrepareRemitoDialog target={prep} onClose={() => setPrep(null)} onDone={(m) => { setPrep(null); setNotice(m); void load(); onCreated(); }} /> : null}
 
       <Dialog open={markDialog != null} onOpenChange={(o) => (!o && !busy ? setMarkDialog(null) : undefined)}>
         <DialogContent className="max-w-md" data-testid="remitos-mark-dialog">

@@ -71,7 +71,7 @@ export async function markDeliveries(
         select l.id from work_item_delivery_lines l
          where l.id = ${id}::uuid and l.status = 'ACTIVA'
            and not exists (select 1 from remito_work_links k join remitos r on r.id = k.remito_id
-                            where k.work_item_id = 'dl:' || l.id::text and r.status <> 'ANULADO')`);
+                            where k.work_item_id like 'dl:' || l.id::text || '%' and r.status <> 'ANULADO')`);
       if ((line.rows as Row[]).length === 0) {
         skipped.push(id); // inexistente, anulada o ya dentro de un remito vigente de GENUS OS
         continue;

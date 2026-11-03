@@ -19,8 +19,12 @@ export function validateDeliveryPacking(raw: unknown, deliveredUnits: number | n
     if (!Number.isInteger(cajas) || !Number.isInteger(upc) || cajas <= 0 || upc <= 0) {
       return { ok: false, error: "Cada grupo de cajas necesita una cantidad de cajas y de unidades por caja (enteros mayores a 0)." };
     }
-    groups.push({ cajas, unidadesPorCaja: upc });
+    // Tipos de caja repetidos (p. ej. dos filas «4 × 100») son el mismo tipo: se suman, no se guardan duplicados.
+    const same = groups.find((x) => x.unidadesPorCaja === upc);
+    if (same) same.cajas += cajas;
+    else groups.push({ cajas, unidadesPorCaja: upc });
   }
+  if (groups.some((g) => g.cajas > 1_000_000 || g.unidadesPorCaja > 10_000_000)) return { ok: false, error: "Las cajas o las unidades por caja superan un valor razonable: revisá los números." };
   const cajas = groups.reduce((s, g) => s + g.cajas, 0);
   const unidades = groups.reduce((s, g) => s + g.cajas * g.unidadesPorCaja, 0);
   if (groups.length > 0 && deliveredUnits != null && unidades !== deliveredUnits) {

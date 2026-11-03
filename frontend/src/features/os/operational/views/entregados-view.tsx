@@ -22,6 +22,7 @@ import { postAnnulDelivery, postArchiveDelivery, postDeleteDeliveryRecord, postR
 import { postCircuitDelivery, fetchDeliveryProgress, type DeliveryProgress } from "../adapters/circuit-client";
 import { DeliverWorkDialog, type DeliverWorkPayload } from "../components/deliver-work-dialog";
 import { EditDeliveredWorkDialog, type EditDeliveredWorkTarget } from "../components/edit-delivered-work-dialog";
+import { ReceivedDeliveriesTable } from "../components/received-deliveries-table";
 import { isReadyForDelivery } from "../lib/pending-delivery";
 import { resolveDeliveryTarget } from "@/lib/planning/circuit/delivery-math";
 import { deliveryLifecycleActions } from "@/lib/lifecycle/adapters/common";
@@ -1021,6 +1022,7 @@ export function EntregadosView() {
                   </ul>
                 </div>
               ) : null}
+              {canMutate ? <ReceivedDeliveriesTable workItemId={String(detail.workItemId).replace(/^native:/, "")} canPrepare={canMutate} /> : null}
               {detail.packingGroups && detail.packingGroups.length > 0 && (
                 <div>
                   <p className="text-xs uppercase text-[var(--os-text-muted)]">Packing</p>

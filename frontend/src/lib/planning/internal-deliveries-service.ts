@@ -18,7 +18,7 @@
 import "server-only";
 
 import { and, asc, desc, eq, inArray, like, sql } from "drizzle-orm";
-import { getDb } from "@/lib/db/client";
+import { getDb, remitoLineLockKey } from "@/lib/db/client";
 import {
   internalDeliveryChanges,
   operationalEvents,
@@ -28,13 +28,14 @@ import {
   workItems,
 } from "@/lib/db/schema";
 import { sumActiveCodificadoTransfers } from "@/lib/planning/circuit/codificado-transfers-sum";
-import { sumActiveDeliveredUnits } from "@/lib/planning/circuit/delivery-core";
+import { reopenPedidoIfNotAllDelivered, sumActiveDeliveredUnits } from "@/lib/planning/circuit/delivery-core";
 import { DELIVERY_EPSILON, formatQty, parseQuantity, resolveDeliveryTarget } from "@/lib/planning/circuit/delivery-math";
 import { syncObsMark } from "@/lib/planning/circuit/delivery-group";
 import { mergePackingGroups, packingTotals, samePacking } from "@/lib/remitos/delivery-boxes-input";
 import { describeDeliveryPacking, validateDeliveryPacking, type DeliveryPackingGroup } from "@/lib/remitos/delivery-packing";
 import { annulDeliveryInTx } from "@/lib/planning/work-item-progress-repository";
 import { loadResolvedPackingByLine } from "@/lib/remitos/delivery-packing-resolve";
+import { availableToRemit, loadRemittanceByLine, remittedEditProblem } from "@/lib/remitos/delivery-remittance";
 import type { PlanningActor } from "@/lib/planning/types";
 import { PlanningForbiddenError, PlanningNotFoundError, PlanningValidationError } from "@/lib/planning/types";
 import { isIntegerUnit } from "@/lib/utils/ar-number-parsing";
@@ -120,8 +121,12 @@ export type InternalDeliveryDto = {
   boxesText: string | null;
   /** true = las cajas vienen de las entregas de Envasado a Codificado (no son propias de esta entrega). */
   packingInherited: boolean;
-  /** Remito vigente (no anulado) que ya incluye esta entrega: la entrega no se corrige hasta resolver el remito. */
+  /** Primer remito vigente (no anulado) que incluye esta entrega (null = ninguno). */
   remito: { id: string; number: string | null; status: string } | null;
+  /** Entrega a Producción: unidades ya incluidas en remitos vigentes y disponibles para remitir (no aplica a entregas a Codificado). */
+  remitted: number;
+  available: number;
+  remitos: Array<{ id: string; number: string | null; status: string; units: number }>;
   status: InternalDeliveryStatus;
   cumulative: number | null;
   pending: number | null;
@@ -145,7 +150,7 @@ export type InternalDeliveryFilters = {
   limit?: number | null;
 };
 
-type RawRow = Omit<InternalDeliveryDto, "version" | "cancelReason" | "cancelledAt" | "cancelledBy" | "canManage" | "originLabel" | "destinationLabel" | "status" | "cajas" | "boxesText" | "remito" | "packingInherited"> & {
+type RawRow = Omit<InternalDeliveryDto, "version" | "cancelReason" | "cancelledAt" | "cancelledBy" | "canManage" | "originLabel" | "destinationLabel" | "status" | "cajas" | "boxesText" | "remito" | "remitted" | "available" | "remitos" | "packingInherited"> & {
   status: InternalDeliveryStatus;
   cancelledAtRaw: Date | null;
   cancelledByRaw: string | null;
@@ -157,21 +162,6 @@ const asGroups = (raw: unknown): DeliveryPackingGroup[] =>
         .map((g) => ({ cajas: Number(g?.cajas) || 0, unidadesPorCaja: Number(g?.unidadesPorCaja) || 0 }))
         .filter((g) => g.cajas > 0 && g.unidadesPorCaja > 0)
     : [];
-
-/** Remitos vigentes (no anulados) que ya incluyen estas entregas a Producción. */
-async function loadRemitoLinks(tx: Tx, lineIds: string[]): Promise<Map<string, { id: string; number: string | null; status: string }>> {
-  const out = new Map<string, { id: string; number: string | null; status: string }>();
-  if (lineIds.length === 0) return out;
-  try {
-    const keys = lineIds.map((i) => `dl:${i}`);
-    const res = await tx.execute(sql`select k.work_item_id as key, r.id::text as id, r.remito_number as number, r.status as status
-      from remito_work_links k join remitos r on r.id = k.remito_id where r.status <> 'ANULADO' and k.work_item_id in (${sql.join(keys.map((k: string) => sql`${k}`), sql`, `)})`);
-    for (const r of res.rows as Array<Record<string, unknown>>) out.set(String(r.key).slice(3), { id: String(r.id), number: r.number == null ? null : String(r.number), status: String(r.status) });
-  } catch {
-    // remitos no disponibles: no se bloquea la corrección por esto
-  }
-  return out;
-}
 
 function fmtQtyFor(unit: string | null | undefined, n: number): string {
   return isIntegerUnit(unit) ? String(Math.round(n)) : formatQty(n);
@@ -309,7 +299,7 @@ async function decorate(tx: Tx, actor: PlanningActor, rows: RawRow[]): Promise<I
     byKey.set(k, list);
   }
   const s = sectorOf(actor);
-  const remitos = await loadRemitoLinks(tx, rows.filter((r) => r.kind === "PRODUCCION").map((r) => r.id));
+  const remittance = await loadRemittanceByLine(rows.filter((r) => r.kind === "PRODUCCION").map((r) => r.id), tx);
   // Entrega a Producción sin cajas propias (p. ej. Codificado → Producción): se muestran las cajas que Envasado informó en sus entregas a
   // Codificado (solo lectura; no se guardan en la entrega). Es el mismo dato que usa el remito.
   const inherited = new Map<string, DeliveryPackingGroup[]>();
@@ -333,7 +323,10 @@ async function decorate(tx: Tx, actor: PlanningActor, rows: RawRow[]): Promise<I
       cajas: packingTotals(inherited.get(r.id) ?? r.packingGroups).cajas,
       boxesText: describeDeliveryPacking(inherited.get(r.id) ?? r.packingGroups),
       packingInherited: inherited.has(r.id),
-      remito: r.kind === "PRODUCCION" ? (remitos.get(r.id) ?? null) : null,
+      remito: r.kind === "PRODUCCION" ? (remittance.get(r.id)?.remitos[0] ? { id: remittance.get(r.id)!.remitos[0]!.id, number: remittance.get(r.id)!.remitos[0]!.number, status: remittance.get(r.id)!.remitos[0]!.status } : null) : null,
+      remitted: r.kind === "PRODUCCION" ? (remittance.get(r.id)?.remitted ?? 0) : 0,
+      available: r.kind === "PRODUCCION" && r.status === "ACTIVA" ? availableToRemit(r.quantity, remittance.get(r.id) ?? { remitted: 0, mark: null }) : 0,
+      remitos: r.kind === "PRODUCCION" ? (remittance.get(r.id)?.remitos ?? []).map(({ id, number, status, units }) => ({ id, number, status, units })) : [],
       originLabel: SECTOR_LABELS[r.originSector] ?? r.originSector,
       destinationLabel: SECTOR_LABELS[r.destination] ?? r.destination,
       version: list.length,
@@ -516,6 +509,8 @@ async function mutateLine(tx: Tx, actor: PlanningActor, input: MutationInput): P
   // Serializa con cualquier otra entrega/edición del MISMO trabajo.
   const [item] = await tx.select().from(workItems).where(eq(workItems.id, peek.workItemId)).for("update").limit(1);
   if (!item) throw new PlanningNotFoundError("Trabajo no encontrado.");
+  // Mismo candado que «Preparar remito»: corregir/cancelar una entrega y remitirla no pueden ocurrir a la vez sobre las mismas unidades.
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${remitoLineLockKey(input.id)}, 0))`);
   const [line] = await tx.select().from(workItemDeliveryLines).where(eq(workItemDeliveryLines.id, input.id)).limit(1);
   if (!canManageInternalDelivery(sectorOf(actor), line.sourceSector)) throw new PlanningForbiddenError(FORBIDDEN_MSG);
   if (line.status !== "ACTIVA") throw new PlanningValidationError("Esta entrega ya está cancelada: no se puede modificar.");
@@ -532,13 +527,14 @@ async function mutateLine(tx: Tx, actor: PlanningActor, input: MutationInput): P
   const oldPacking = asGroups(line.packingGroups);
   const newPacking = cancel ? oldPacking : resolveNewPacking(input.packingGroups, oldPacking, oldQty, newQty);
   if (!cancel && Math.abs(newQty - oldQty) <= DELIVERY_EPSILON && newObs === oldObs && samePacking(newPacking, oldPacking)) throw new PlanningValidationError("No hay cambios para guardar.");
-  // Una entrega que ya figura en un remito vigente no se modifica en silencio: el remito histórico se corrige con su propio mecanismo.
-  const inRemito = (await loadRemitoLinks(tx, [line.id])).get(line.id);
-  if (inRemito) {
-    throw new PlanningValidationError(
-      `Esta entrega ya figura en el remito ${inRemito.number ?? "(borrador)"} (${inRemito.status}). Para corregirla, anulá o reemplazá primero ese remito: el documento no se modifica en silencio.`
-    );
-  }
+  // Una entrega que ya figura en un remito vigente no se corrige en silencio: no puede quedar un remito por 800 vinculado a una entrega de 600.
+  // Se anula o reemplaza primero el remito (con su propia trazabilidad). Subir la cantidad u observar sí se puede.
+  const remitProblem = remittedEditProblem((await loadRemittanceByLine([line.id], tx)).get(line.id) ?? { remitted: 0, remitos: [], mark: null }, {
+    cancel,
+    newQuantity: cancel ? null : newQty,
+    boxesChanged: !cancel && !samePacking(newPacking, oldPacking),
+  });
+  if (remitProblem) throw new PlanningValidationError(remitProblem);
 
   const activeLines: Array<typeof line> = await tx
     .select()
@@ -646,6 +642,8 @@ async function mutateLine(tx: Tx, actor: PlanningActor, input: MutationInput): P
     await tx.update(workItems).set({ finishedQty: finishedAfter }).where(eq(workItems.id, item.id));
   }
 
+  // El trabajo ya no está entregado (se canceló o se bajó una entrega): el pedido no puede seguir figurando ENTREGADO.
+  if (nextQuantities.length === 0 || !complete) await reopenPedidoIfNotAllDelivered(tx, item.id, { email: actor.email, sector: actor.sector, displayName: actorName });
   await tx.insert(internalDeliveryChanges).values({
     kind: "PRODUCCION",
     deliveryId: line.id,

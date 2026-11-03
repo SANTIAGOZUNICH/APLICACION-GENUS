@@ -3,7 +3,7 @@ import "server-only";
 import { resolveManualLoteLinkPatch } from "@/lib/asignacion-lotes/lote-link";
 import { loadResolvedPackingByLine } from "@/lib/remitos/delivery-packing-resolve";
 import { and, desc, eq, inArray, isNotNull, isNull, like, ne, or, sql } from "drizzle-orm";
-import { getDb } from "@/lib/db/client";
+import { getDb, remitoLineLockKey } from "@/lib/db/client";
 import { operationalEvents, operationalOrders, workItemDeliveries, workItemDeliveryLines, workItems } from "@/lib/db/schema";
 import type { SectorId } from "@/types/operational/sector";
 import {
@@ -20,6 +20,7 @@ import { normalizeOaOrderNumber } from "@/lib/planning/oa-assign-helpers";
 import { loadWorkItemOperationalData } from "@/lib/planning/work-item-operational-data";
 import {
   recordDeliveryInTx,
+  reopenPedidoIfNotAllDelivered,
   type DeliveryActor,
   type DeliveryCompletion,
   type RecordDeliveryResult,
@@ -27,6 +28,7 @@ import {
 import { primaryOfSyncObs, syncObsMark } from "@/lib/planning/circuit/delivery-group";
 import { emitCircuitNotification } from "@/lib/planning/circuit/circuit-notifications";
 import { emitBillingForDelivery } from "@/lib/notifications/billing-notifications";
+import { loadRemittanceByLine, remittedEditProblem } from "@/lib/remitos/delivery-remittance";
 import {
   computeLoteIdentityKey,
   computeProductIdentityKey,
@@ -1654,6 +1656,19 @@ export async function annulDeliveryInTx(tx: Tx, id: string, reason: string, acto
             .for("update");
     const relatedDeliveries = [...primaryDelivery, ...marked].filter((d) => d.id !== existing.id);
 
+    // Un remito vigente no puede quedar vinculado a una entrega anulada: primero se anula o reemplaza el remito.
+    const affected = [existing, ...relatedDeliveries];
+    const lineRows: Array<{ id: string }> = await tx
+      .select({ id: workItemDeliveryLines.id })
+      .from(workItemDeliveryLines)
+      .where(and(inArray(workItemDeliveryLines.deliveryId, affected.map((d) => d.id)), eq(workItemDeliveryLines.status, "ACTIVA")));
+    for (const l of [...lineRows].sort((a, b) => a.id.localeCompare(b.id))) await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${remitoLineLockKey(l.id)}, 0))`);
+    const remittance = await loadRemittanceByLine(lineRows.map((l) => l.id), tx);
+    for (const l of lineRows) {
+      const problem = remittedEditProblem(remittance.get(l.id) ?? { remitted: 0, remitos: [], mark: null }, { cancel: true, newQuantity: null, boxesChanged: false });
+      if (problem) throw new PlanningValidationError(problem.replace("No se puede cancelar", "No se puede anular la entrega"));
+    }
+
     const annulOne = async (d: typeof workItemDeliveries.$inferSelect, why: string) => {
       const now = new Date();
       const [row] = await tx
@@ -1671,6 +1686,7 @@ export async function annulDeliveryInTx(tx: Tx, id: string, reason: string, acto
           .update(workItems)
           .set({ operationalStatus: "revision", progressUpdatedAt: now, progressUpdatedBy: actorName, updatedAt: now })
           .where(eq(workItems.id, row.workItemId));
+        await reopenPedidoIfNotAllDelivered(tx, row.workItemId, { email: actorName, sector: "PRODUCCION", displayName: actorName });
       }
       return row ?? null;
     };

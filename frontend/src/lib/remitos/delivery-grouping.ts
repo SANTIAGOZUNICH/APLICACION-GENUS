@@ -10,7 +10,15 @@ export type EligibleDelivery = {
   product: string;
   lote: string;
   vto: string;
+  /** Unidades DISPONIBLES para remitir de esta entrega (lo que llevaría el remito por defecto). */
   quantity: number;
+  /** Unidades que Producción recibió en esta entrega y las que ya figuran en remitos vigentes (quantity = delivered − remitted). */
+  deliveredQuantity?: number;
+  remittedQuantity?: number;
+  /** Entrega parcial N.º y sector que entregó. */
+  sequence?: number;
+  sourceSector?: string;
+  observations?: string | null;
   unit: string | null;
   kind: "PARCIAL" | "FINAL";
   deliveredAt: string;

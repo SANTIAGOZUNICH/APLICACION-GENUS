@@ -233,8 +233,8 @@ try {
   const lineA1 = String(lsA[0].id);
   const mkRem = await prodApi.post("/api/v1/remitos/deliveries", { data: { action: "create", lineIds: [lineA1] } });
   check("   Producción confecciona el borrador de remito con la entrega de 800 u. (8 × 100)", mkRem.status() === 201, String(mkRem.status()));
-  const blocked = await prodApi.post("/api/v1/internal-deliveries", { data: { action: "edit", kind: "PRODUCCION", id: lineA1, observations: "cambio silencioso" } });
-  check("12) la entrega que ya figura en un remito NO se modifica en silencio (400 con instrucción de anular/reemplazar el remito)", blocked.status() === 400 && /ya figura en el remito/.test((await blocked.json()).error ?? "") && (await lines(ids.A))[0].observations !== "cambio silencioso");
+  const blocked = await prodApi.post("/api/v1/internal-deliveries", { data: { action: "edit", kind: "PRODUCCION", id: lineA1, quantity: 700, packingGroups: [{ cajas: 7, unidadesPorCaja: 100 }], observations: "cambio silencioso" } });
+  check("12) la entrega que ya figura en un remito NO se modifica en silencio (400 con instrucción de anular/reemplazar el remito)", blocked.status() === 400 && /No se puede bajar la entrega.*ya figuran en el remito/.test((await blocked.json()).error ?? "") && (await lines(ids.A))[0].observations !== "cambio silencioso");
   await nav(pp, "Entregas internas");
   await pp.locator("[data-testid=entregas-internas]").waitFor({ timeout: 60_000 });
   await search(P.A);
