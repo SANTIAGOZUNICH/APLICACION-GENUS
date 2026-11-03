@@ -51,8 +51,8 @@ const num = (t) => Number(String(t).replace(/[^\d,.-]/g, "").replace(/\./g, "").
 const toListMode = async (pg) => { const t = pg.getByText("Ver como lista"); await pg.locator("[data-testid=os-table-mode-toggle]").first().waitFor({ timeout: 120_000 }); if ((await t.count()) > 0) await t.first().click(); };
 
 
-const deliver = (api, id, qty, boxes, sector) => api.post("/api/v1/live-sync/operations", { data: { action: "deliver_work", workItemId: `native:${id}`, actorSectorId: sector, deliverQuantity: qty, partial: true, packingGroups: boxes, idempotencyKey: `rpar-${randomUUID()}`, actualDeliveredAt: new Date().toISOString(), sourceSector: sector, product: "" } });
-const remLines = (lineId) => q("select rl.total_units, r.status, rl.work_item_id from remito_lines rl join remitos r on r.id = rl.remito_id where rl.work_item_id like $1 and r.status <> 'ANULADO' order by rl.created_at", [`dl:${lineId}%`]);
+const deliver = (api, id, qty, boxes, sector) => api.post("/api/v1/live-sync/operations", { data: { action: "deliver_work", workItemId: `native:${id}`, actorSectorId: sector, deliverQuantity: qty, partial: true, deliveryPackingGroups: boxes, idempotencyKey: `rpar-${randomUUID()}`, actualDeliveredAt: new Date().toISOString(), sourceSector: sector, product: "" } });
+const remLines = (lineId) => q("select rl.total_units, r.status, rl.work_item_id from remito_lines rl join remitos r on r.id = rl.remito_id where rl.work_item_id like $1 and r.status <> 'ANULADO' order by rl.id", [`dl:${lineId}%`]);
 try {
   await q("update work_items set deleted_at = now() where notes like $1 and deleted_at is null", [`${TAG}%`]);
   const prodApi = await apiAs(E2E_USERS.produccion);

@@ -90,7 +90,8 @@ export function PrepareRemitoDialog({ target, onClose, onDone }: { target: Prepa
             {target.observations ? <div className="col-span-2"><dt className="text-xs uppercase text-[var(--os-text-muted)]">Observaciones de la entrega</dt><dd className="whitespace-pre-wrap">{target.observations}</dd></div> : null}
           </dl>
           <label className="block"><span className="font-medium">Unidades a remitir ({target.unit ?? "un."})</span>
-            <input className="mt-1 w-full rounded border border-[var(--os-border)] bg-transparent px-3 py-2 tabular-nums" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} data-testid="pr-qty" /></label>
+            <input className="mt-1 w-full rounded border border-[var(--os-border)] bg-transparent px-3 py-2 tabular-nums" inputMode="numeric" value={qty} onChange={(e) => { const v = e.target.value; setQty(v); const n = Number(v.trim().replace(/\./g, "").replace(",", ".")); // las cajas de la entrega completa no valen para una parte: no se asumen
+              if (!touchedBoxes && boxes.length > 0 && Number.isFinite(n) && n !== target.available) { setBoxes([]); setShowBoxes(false); } }} data-testid="pr-qty" /></label>
           {!full ? <p className="text-xs text-[var(--os-text-muted)]" data-testid="pr-partial-note">Remitís una parte de la entrega: informá las cajas de esas unidades (no se asumen ni se dividen). Si todavía no las tenés, completalas en el borrador antes de emitir.</p> : null}
           <DeliveryBoxesSection boxes={boxes} onBoxesChange={(b) => { setTouchedBoxes(true); setBoxes(b); }} expected={quantity} onUseTotal={(t) => setQty(String(t))} open={showBoxes} onOpenChange={setShowBoxes} prefix="pr" label="Cajas de este remito" />
           <label className="block"><span className="font-medium">Observaciones para el remito (opcional)</span>
