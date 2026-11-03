@@ -10,6 +10,7 @@ import { formatQty } from "@/lib/planning/circuit/delivery-math";
 import { resolveBoxesEntry, samePacking } from "@/lib/remitos/delivery-boxes-input";
 import type { PackingGroup } from "@/lib/remitos/packing-math";
 import { DeliveryBoxesSection } from "../components/delivery-boxes-section";
+import { PrepareRemitoDialog, type PrepareRemitoTarget } from "../components/prepare-remito-dialog";
 import type { InternalDeliveryChangeDto, InternalDeliveryDto } from "@/lib/planning/internal-deliveries-service";
 
 const POLL_MS = 20_000;
@@ -52,6 +53,7 @@ export function EntregasInternasView() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [editing, setEditing] = useState<InternalDeliveryDto | null>(null);
+  const [preparing, setPreparing] = useState<PrepareRemitoTarget | null>(null);
   const [cancelling, setCancelling] = useState<InternalDeliveryDto | null>(null);
   const [history, setHistory] = useState<{ d: InternalDeliveryDto; changes: InternalDeliveryChangeDto[] | null; error?: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -100,6 +102,20 @@ export function EntregasInternasView() {
     }
   }
 
+  // Resumen por trabajo (solo entregas a Producción vigentes): recibido, remitido y disponible. Se muestra cuando hay pocos trabajos a la vista.
+  const workSummaries = useMemo(() => {
+    const m = new Map<string, { product: string; client: string; received: number; remitted: number; available: number; cajas: number }>();
+    for (const d of items) {
+      if (d.kind !== "PRODUCCION" || d.status !== "ACTIVA") continue;
+      const cur = m.get(d.workItemId) ?? { product: d.product, client: d.client, received: 0, remitted: 0, available: 0, cajas: 0 };
+      cur.received += d.quantity;
+      cur.remitted += d.remitted;
+      cur.available += d.available;
+      cur.cajas += d.cajas;
+      m.set(d.workItemId, cur);
+    }
+    return [...m.entries()];
+  }, [items]);
   const activeTotal = useMemo(() => items.filter((i) => i.status === "ACTIVA").reduce((s, i) => s + i.quantity, 0), [items]);
 
   return (
@@ -148,6 +164,16 @@ export function EntregasInternasView() {
           {loading ? "Cargando…" : `${items.length} entrega${items.length === 1 ? "" : "s"} · ${fmt(activeTotal)} unidades vigentes`}
         </p>
 
+        {isAdmin && workSummaries.length > 0 && workSummaries.length <= 6 ? (
+          <div className="space-y-1" data-testid="ei-work-summaries">
+            {workSummaries.map(([id, w]) => (
+              <p key={id} className="rounded bg-white/5 px-3 py-2 text-sm" data-testid="ei-work-summary">
+                <strong>{w.product}</strong> · {w.client} — Recibido por Producción: <strong>{formatQty(w.received)} u.</strong>{w.cajas > 0 ? ` en ${w.cajas} cajas` : ""} · Remitido: <strong>{formatQty(w.remitted)} u.</strong> · Disponible para remitir: <strong>{formatQty(w.available)} u.</strong>
+              </p>
+            ))}
+          </div>
+        ) : null}
+
         <div className="overflow-x-auto rounded border border-[var(--os-border)]">
           <table className="w-full min-w-[1180px] text-left text-sm" data-testid="ei-table">
             <thead className="bg-white/5 text-xs uppercase text-[var(--os-text-muted)]">
@@ -173,7 +199,7 @@ export function EntregasInternasView() {
                   <td className="px-3 py-2 font-mono text-xs">{d.lote ?? "—"}</td>
                   <td className="px-3 py-2">{d.originLabel} → {d.destinationLabel} <span className="text-xs text-[var(--os-text-muted)]">#{d.sequence}</span></td>
                   <td className={`px-3 py-2 text-right font-semibold tabular-nums ${d.status === "CANCELADA" ? "line-through" : ""}`} data-testid="ei-qty">{fmt(d.quantity)} {d.unit}</td>
-                  <td className="max-w-[240px] px-3 py-2 text-xs" data-testid="ei-boxes">{d.boxesText ?? <span className="text-[var(--os-text-muted)]">Sin detalle de cajas</span>}{d.packingInherited ? <span className="block text-[var(--os-text-muted)]">(cajas informadas por Envasado)</span> : null}{d.remito ? <span className="mt-1 block text-[var(--os-text-muted)]" data-testid="ei-remito">En remito {d.remito.number ?? "(borrador)"} · {d.remito.status}</span> : null}</td>
+                  <td className="max-w-[240px] px-3 py-2 text-xs" data-testid="ei-boxes">{d.boxesText ?? <span className="text-[var(--os-text-muted)]">Sin detalle de cajas</span>}{d.packingInherited ? <span className="block text-[var(--os-text-muted)]">(cajas informadas por Envasado)</span> : null}{d.remito ? <span className="mt-1 block text-[var(--os-text-muted)]" data-testid="ei-remito">En remito {d.remitos.map((r) => `${r.number ?? "borrador"} (${formatQty(r.units)} u.)`).join(", ")} · disponible {formatQty(d.available)} u.</span> : d.kind === "PRODUCCION" && d.status === "ACTIVA" ? <span className="mt-1 block text-[var(--os-text-muted)]">Sin remito · disponible {formatQty(d.available)} u.</span> : null}</td>
                   <td className="max-w-[260px] whitespace-pre-wrap break-words px-3 py-2" data-testid="ei-observations">{d.observations || <span className="text-[var(--os-text-muted)]">—</span>}</td>
                   <td className="px-3 py-2" data-testid="ei-status-cell">
                     {d.status === "ACTIVA" ? (
@@ -191,6 +217,9 @@ export function EntregasInternasView() {
                           <button type="button" className="inline-flex min-h-9 items-center gap-1 rounded border border-rose-500/50 px-2 text-xs text-rose-300" onClick={() => setCancelling(d)} data-testid="ei-cancel"><XCircle className="size-3.5" aria-hidden="true" /> Cancelar</button>
                         </>
                       ) : null}
+                      {sectorId === "PRODUCCION" && d.kind === "PRODUCCION" && d.status === "ACTIVA" && d.available > 1e-6 ? (
+                        <button type="button" className="inline-flex min-h-9 items-center gap-1 rounded border border-[var(--os-teal)]/60 px-2 text-xs font-medium" onClick={() => setPreparing({ deliveryLineId: d.id, product: d.product, client: d.client, lote: d.lote, sequence: d.sequence, sourceLabel: d.originLabel, unit: d.unit, delivered: d.quantity, remitted: d.remitted, available: d.available, packingGroups: d.packingGroups, observations: d.observations })} data-testid="ei-prepare-remito">Preparar remito</button>
+                      ) : null}
                       {isAdmin || d.canManage || d.version > 0 ? (
                         <button type="button" className="inline-flex min-h-9 items-center gap-1 rounded border border-[var(--os-border)] px-2 text-xs" onClick={() => void openHistory(d)} data-testid="ei-history"><History className="size-3.5" aria-hidden="true" /> Historial</button>
                       ) : null}
@@ -206,6 +235,7 @@ export function EntregasInternasView() {
         </div>
       </div>
 
+      {preparing ? <PrepareRemitoDialog target={preparing} onClose={() => setPreparing(null)} onDone={(m) => { setPreparing(null); flash(m); void load(); }} /> : null}
       {editing ? (
         <EditDialog
           d={editing}
@@ -289,7 +319,7 @@ function EditDialog({ d, onClose, onSaved }: { d: InternalDeliveryDto; onClose: 
             <textarea className="mt-1 w-full rounded border border-[var(--os-border)] bg-transparent px-3 py-2" rows={3} maxLength={1000} value={obs} onChange={(e) => setObs(e.target.value)} data-testid="ei-edit-obs" />
           </label>
           <DeliveryBoxesSection boxes={boxes} onBoxesChange={setBoxes} expected={Number.isFinite(Number(qty.trim().replace(/\./g, "").replace(",", "."))) && qty.trim() !== "" ? Number(qty.trim().replace(/\./g, "").replace(",", ".")) : null} onUseTotal={(t) => setQty(String(t))} open={showBoxes} onOpenChange={setShowBoxes} prefix="ei-edit" label="Cajas de la entrega" />
-          {d.remito ? <p className="text-xs text-amber-300" data-testid="ei-edit-remito">Esta entrega ya figura en el remito {d.remito.number ?? "(borrador)"}: no se puede corregir hasta anularlo o reemplazarlo.</p> : null}
+          {d.remito ? <p className="text-xs text-amber-300" data-testid="ei-edit-remito">Esta entrega ya figura en un remito vigente ({formatQty(d.remitted)} u. remitidas): solo se puede subir la cantidad o cambiar observaciones. Para bajarla, cancelarla o cambiar las cajas, primero anulá o reemplazá el remito.</p> : null}
           {error ? <p role="alert" className="text-sm text-amber-300" data-testid="ei-edit-error">{error}</p> : null}
         </div>
         <DialogFooter>

@@ -339,7 +339,7 @@ export class RemitoService {
   async upsertDraftFromApproval(
     actor: RemitoActor,
     input: RemitoApprovalInput,
-    options?: { systemHook?: boolean }
+    options?: { systemHook?: boolean; standalone?: boolean }
   ): Promise<RemitoUpsertResult> {
     if (!options?.systemHook) assertAccess(actor);
     await assertRemitoWritesEnabled();
@@ -367,21 +367,27 @@ export class RemitoService {
 
     const group = remitoGroupKey(clientIdNormalized, deliveryDate);
     const all = await this.loadAll();
-    const draft = all
-      .filter(
-        (r) =>
-          remitoGroupKey(r.clientIdNormalized, r.deliveryDate) === group &&
-          r.status === "BORRADOR"
-      )
-      .sort((a, b) => b.version - a.version)[0];
+    // Remito INDIVIDUAL de una entrega (parcial): nunca se funde con el borrador del mismo cliente y fecha ni queda bloqueado por un remito ya
+    // emitido de ese grupo; siempre es un remito propio, con su número de versión.
+    const draft = options?.standalone
+      ? undefined
+      : all
+          .filter(
+            (r) =>
+              remitoGroupKey(r.clientIdNormalized, r.deliveryDate) === group &&
+              r.status === "BORRADOR"
+          )
+          .sort((a, b) => b.version - a.version)[0];
 
-    const generated = all
-      .filter(
-        (r) =>
-          remitoGroupKey(r.clientIdNormalized, r.deliveryDate) === group &&
-          r.status === "GENERADO"
-      )
-      .sort((a, b) => b.version - a.version)[0];
+    const generated = options?.standalone
+      ? undefined
+      : all
+          .filter(
+            (r) =>
+              remitoGroupKey(r.clientIdNormalized, r.deliveryDate) === group &&
+              r.status === "GENERADO"
+          )
+          .sort((a, b) => b.version - a.version)[0];
 
     if (generated && !draft) {
       return {
@@ -470,6 +476,22 @@ export class RemitoService {
     patch: RemitoDraftPatch
   ): Promise<RemitoRecord> {
     assertAccess(actor);
+    // Un borrador con renglones de ENTREGAS: la edición corre bajo el candado de esas entregas (mismo candado que «Preparar remito»), así dos
+    // usuarios no pueden dejar remitidas más unidades de las recibidas (ver draftOverRemitProblem).
+    const current = patch.lines?.length ? await this.findById(remitoId) : null;
+    const lineIds = [...new Set((current?.lines ?? []).map((l) => l.trace?.deliveryLineId).filter((x): x is string => Boolean(x)))];
+    if (lineIds.length > 0) {
+      const { withAdvisoryLocks, remitoLineLockKey } = await import("@/lib/db/client");
+      return withAdvisoryLocks(lineIds.map(remitoLineLockKey), () => this.applyDraftPatch(actor, remitoId, patch));
+    }
+    return this.applyDraftPatch(actor, remitoId, patch);
+  }
+
+  private async applyDraftPatch(
+    actor: RemitoActor,
+    remitoId: string,
+    patch: RemitoDraftPatch
+  ): Promise<RemitoRecord> {
     await assertRemitoWritesEnabled();
     const remito = await this.findById(remitoId);
     if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
@@ -495,6 +517,9 @@ export class RemitoService {
       remito.totalUnits = totals.totalUnits;
       remito.totalCajas = totals.totalCajas;
       remito.totalBultos = totals.totalBultos;
+      const { draftOverRemitProblem } = await import("./delivery-remittance");
+      const problem = await draftOverRemitProblem(remito);
+      if (problem) throw new OrdersValidationError(problem);
     }
     if (patch.applyToWorkItem) {
       remito.snapshot = {
