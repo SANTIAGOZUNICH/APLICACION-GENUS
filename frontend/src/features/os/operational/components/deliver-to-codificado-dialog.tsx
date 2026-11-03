@@ -6,6 +6,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { fetchTransferView, fmtQty, postTransfer, type CodificadoTransferView } from "@/features/os/codificado-transfer/codificado-transfer-client";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import type { WorkItem } from "@/types/operational/work-item";
+import type { PackingGroup } from "@/lib/remitos/packing-math";
+import { resolveBoxesEntry } from "@/lib/remitos/delivery-boxes-input";
+import { DeliveryBoxesSection } from "./delivery-boxes-section";
 
 type Props = {
   open: boolean;
@@ -26,6 +29,8 @@ export function DeliverToCodificadoDialog({ open, onOpenChange, item, finishedDr
   const [qty, setQty] = useState("");
   const [finished, setFinished] = useState("");
   const [obs, setObs] = useState("");
+  const [boxes, setBoxes] = useState<PackingGroup[]>([]);
+  const [showBoxes, setShowBoxes] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Una clave por intento: un doble clic o un reintento tras un corte de red devuelve la MISMA entrega (no duplica).
@@ -43,6 +48,8 @@ export function DeliverToCodificadoDialog({ open, onOpenChange, item, finishedDr
         if (off) return;
         setError(null);
         setObs("");
+        setBoxes([]);
+        setShowBoxes(false);
         setView(v);
         if (edited.current) return;
         const draft = Number(String(finishedDraft).replace(",", "."));
@@ -64,7 +71,11 @@ export function DeliverToCodificadoDialog({ open, onOpenChange, item, finishedDr
 
   async function confirm() {
     if (!s) return;
-    const q = Number(qty.replace(",", "."));
+    // Cajas (opcional): si se informan sin cantidad, el total se calcula; si hay cantidad, las cajas deben sumarla exactamente.
+    const typed = qty.trim() === "" ? null : Number(qty.replace(",", "."));
+    const entry = showBoxes ? resolveBoxesEntry({ quantity: typed != null && Number.isFinite(typed) ? typed : null, groups: boxes }) : null;
+    if (entry && !entry.ok) return setError(entry.error);
+    const q = entry && entry.ok && entry.groups.length > 0 && entry.derivedQuantity && entry.quantity != null ? entry.quantity : Number(qty.replace(",", "."));
     const f = Number(finished.replace(",", "."));
     if (!Number.isFinite(q) || q <= 0) return setError("Ingresá cuántas unidades entregás ahora (mayor que 0).");
     if (!Number.isInteger(q) && /^(un|u\b)/i.test(item.unit ?? "un.")) return setError("La cantidad debe ser un número entero de unidades.");
@@ -73,7 +84,7 @@ export function DeliverToCodificadoDialog({ open, onOpenChange, item, finishedDr
     setBusy(true);
     setError(null);
     try {
-      const res = await postTransfer({ email, sector: sectorId }, item.id, { quantity: q, finishedQty: f, observation: obs.trim() || null, idempotencyKey: keyRef.current });
+      const res = await postTransfer({ email, sector: sectorId }, item.id, { quantity: q, finishedQty: f, observation: obs.trim() || null, packingGroups: entry && entry.ok && entry.groups.length > 0 ? entry.groups : null, idempotencyKey: keyRef.current });
       onDone(res.view);
       onOpenChange(false);
     } catch (e) {
@@ -110,8 +121,9 @@ export function DeliverToCodificadoDialog({ open, onOpenChange, item, finishedDr
           </label>
           <label className="block">
             <span className="text-sm font-medium">Observaciones (opcional)</span>
-            <textarea className="mt-1 w-full rounded border border-[var(--os-border)] px-3 py-2" rows={2} value={obs} onChange={(e) => setObs(e.target.value)} />
+            <textarea className="mt-1 w-full rounded border border-[var(--os-border)] px-3 py-2" rows={2} value={obs} onChange={(e) => setObs(e.target.value)} data-testid="dtc-observations" />
           </label>
+          <DeliveryBoxesSection boxes={boxes} onBoxesChange={setBoxes} expected={qty.trim() !== "" && Number.isFinite(Number(qty.replace(",", "."))) ? Number(qty.replace(",", ".")) : null} onUseTotal={(t) => { edited.current = true; setQty(String(t)); }} open={showBoxes} onOpenChange={setShowBoxes} prefix="dtc" />
           {error ? <p role="alert" className="text-sm text-[var(--genus-error,#b91c1c)]" data-testid="dtc-error">{error}</p> : null}
         </div>
         <DialogFooter>

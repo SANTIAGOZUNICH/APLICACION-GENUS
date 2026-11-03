@@ -16,9 +16,10 @@ import { formatQty, parseQuantity, planDeliveryStep, planPartialDelivery } from 
 import { parseBulkRemainderKg } from "../lib/bulk-remainder";
 import { newIdempotencyKey, type DeliveryProgress } from "../adapters/circuit-client";
 import { WorkItemWarningBadge } from "./work-item-warning-badge";
-import { PackingGroupsEditor } from "./packing-groups-editor";
+import { DeliveryBoxesSection } from "./delivery-boxes-section";
 import type { PackingGroup } from "@/lib/remitos/packing-math";
 import { validateDeliveryPacking } from "@/lib/remitos/delivery-packing";
+import { resolveBoxesEntry } from "@/lib/remitos/delivery-boxes-input";
 
 export interface DeliverWorkPayload {
   /** Unidades entregadas ahora (null = todo el saldo). */
@@ -151,12 +152,26 @@ export function DeliverWorkDialog({
       setError("La fecha y hora real de entrega son obligatorias.");
       return;
     }
+    // Entrega parcial con cajas: o se informan las cajas (el total se calcula) o se informa la cantidad y las cajas deben sumarla.
+    let effectiveRequested = requested;
+    let partialBoxes: Array<{ cajas: number; unidadesPorCaja: number }> | null = null;
+    if (isPartialMode && showBoxes) {
+      const entry = resolveBoxesEntry({ quantity: requested, groups: boxes });
+      if (!entry.ok) {
+        setError(entry.error);
+        return;
+      }
+      if (entry.groups.length > 0) {
+        partialBoxes = entry.groups;
+        if (entry.derivedQuantity) effectiveRequested = entry.quantity;
+      }
+    }
     if (isPartialMode) {
       if (target == null) {
         setError("Este trabajo no tiene una cantidad asignada numérica: no admite entrega parcial.");
         return;
       }
-      const step = planPartialDelivery({ assigned: target, alreadyDelivered: delivered, produced, requested, unit });
+      const step = planPartialDelivery({ assigned: target, alreadyDelivered: delivered, produced, requested: effectiveRequested, unit });
       if (!step.ok) {
         setError(step.error);
         return;
@@ -169,7 +184,9 @@ export function DeliverWorkDialog({
       }
     }
     let deliveryPackingGroups: Array<{ cajas: number; unidadesPorCaja: number }> | null = null;
-    if (showBoxes && !isPartialMode) {
+    if (partialBoxes) {
+      deliveryPackingGroups = partialBoxes;
+    } else if (showBoxes && !isPartialMode) {
       const stepUnits = requested ?? balance;
       const packing = validateDeliveryPacking(boxes, stepUnits);
       if (!packing.ok) {
@@ -189,7 +206,7 @@ export function DeliverWorkDialog({
     setBusy(true);
     try {
       await onConfirm({
-        deliverQuantity: requested,
+        deliverQuantity: effectiveRequested,
         actualDeliveredAt: toIso(at),
         remito: remito.trim(),
         receivedBy: receivedBy.trim(),
@@ -296,6 +313,9 @@ export function DeliverWorkDialog({
               />
             </label>
           ) : null}
+          {isPartialMode ? (
+            <DeliveryBoxesSection boxes={boxes} onBoxesChange={setBoxes} expected={requested} onUseTotal={(t) => setQuantity(String(t))} open={showBoxes} onOpenChange={setShowBoxes} />
+          ) : null}
 
           {!isPartialMode ? (
             <>
@@ -341,33 +361,7 @@ export function DeliverWorkDialog({
               data-testid="deliver-observations"
             />
           </label>
-          <div className="rounded border border-[var(--os-border)] p-2" data-testid="deliver-boxes-section">
-            <button
-              type="button"
-              className="min-h-10 text-xs font-medium text-[var(--os-teal)]"
-              onClick={() => setShowBoxes((v) => !v)}
-              data-testid="deliver-boxes-toggle"
-            >
-              {showBoxes ? "▾ Cajas de esta entrega" : "▸ Cargar cajas de esta entrega (opcional)"}
-            </button>
-            {showBoxes ? (
-              <div className="mt-2 space-y-2">
-                <PackingGroupsEditor groups={boxes} onChange={setBoxes} testIdPrefix="deliver-box" />
-                {(() => {
-                  const live = validateDeliveryPacking(boxes, null);
-                  const total = live.ok ? live.unidades : 0;
-                  const cajas = live.ok ? live.cajas : 0;
-                  const expected = requested ?? balance;
-                  return (
-                    <p className={`text-xs ${expected != null && total > 0 && total !== expected ? "text-[var(--genus-warning)]" : "text-[var(--os-text-muted)]"}`} data-testid="deliver-boxes-total">
-                      Total: {cajas} {cajas === 1 ? "caja" : "cajas"} · {total} u.
-                      {expected != null ? ` (la entrega es de ${formatQty(expected)} u.)` : ""}
-                    </p>
-                  );
-                })()}
-              </div>
-            ) : null}
-          </div>
+          <DeliveryBoxesSection boxes={boxes} onBoxesChange={setBoxes} expected={requested ?? balance} onUseTotal={(t) => setQuantity(String(t))} open={showBoxes} onOpenChange={setShowBoxes} />
           {showBulkRemainder ? (
             <>
               <label className="block">

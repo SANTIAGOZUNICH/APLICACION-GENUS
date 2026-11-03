@@ -31,7 +31,7 @@ const open = (over: Partial<React.ComponentProps<typeof DeliverWorkDialog>> = {}
 };
 
 describe("DeliverWorkDialog — modo «Entregar parcial»", () => {
-  it("muestra cliente, producto, total, ya entregado y pendiente; sin remito, cajas ni fecha", () => {
+  it("muestra cliente, producto, total, ya entregado y pendiente; sin remito ni fecha; las cajas son opcionales", () => {
     open();
     expect(screen.getByTestId("deliver-identity").textContent).toContain("CLIENTE X");
     expect(screen.getByTestId("deliver-identity").textContent).toContain("ORIGINAL BLACK");
@@ -40,7 +40,8 @@ describe("DeliverWorkDialog — modo «Entregar parcial»", () => {
     expect(bal).toContain("2000");
     expect(bal).toContain("Pendiente de entregar");
     expect(screen.queryByTestId("deliver-remito")).toBeNull();
-    expect(screen.queryByTestId("deliver-boxes-toggle")).toBeNull();
+    expect(screen.getByTestId("deliver-boxes-toggle")).toBeTruthy(); // cajas de esta entrega: opcionales (cerradas por defecto)
+    expect(screen.queryByTestId("deliver-box-groups-editor")).toBeNull();
     expect(screen.queryByTestId("deliver-at")).toBeNull();
     expect(screen.getByText(/Cancelar/)).toBeTruthy();
   });
@@ -85,7 +86,35 @@ describe("DeliverWorkDialog — modo «Entregar parcial»", () => {
     expect(screen.queryByTestId("deliver-partial-note")).toBeNull(); // completa: nada «parcial» ni de excedente
     fireEvent.click(screen.getByTestId("confirm-deliver"));
     await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
-    expect(onConfirm.mock.calls[0]![0]).toMatchObject({ deliverQuantity: 2050, observations: "50 unidades de más", partial: true });
+    expect((onConfirm.mock.calls[0] as unknown[])[0]).toMatchObject({ deliverQuantity: 2050, observations: "50 unidades de más", partial: true });
     expect(document.body.textContent).not.toMatch(/exced|sobreprod/i);
+  });
+
+  it("cajas en la entrega parcial: 8 × 100 calcula el total (opción A); con cajas incompletas 8 × 100 + 1 × 50 = 850 en 9 cajas", async () => {
+    const onConfirm = open({ produced: 2050 });
+    fireEvent.click(screen.getByTestId("deliver-boxes-toggle"));
+    fireEvent.change(screen.getByTestId("deliver-box-cajas-0"), { target: { value: "8" } });
+    fireEvent.change(screen.getByTestId("deliver-box-upc-0"), { target: { value: "100" } });
+    fireEvent.change(screen.getByTestId("deliver-box-cajas-1"), { target: { value: "1" } });
+    fireEvent.change(screen.getByTestId("deliver-box-upc-1"), { target: { value: "50" } });
+    expect(screen.getByTestId("deliver-boxes-total").textContent).toMatch(/9 cajas · 850 u\./);
+    fireEvent.click(screen.getByTestId("confirm-deliver")); // sin escribir la cantidad: el total sale de las cajas
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+    expect((onConfirm.mock.calls[0] as unknown[])[0]).toMatchObject({ deliverQuantity: 850, deliveryPackingGroups: [{ cajas: 8, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 50 }], partial: true });
+  });
+
+  it("opción B: cantidad informada y cajas que no suman → error con los números exactos, sin enviar", async () => {
+    const onConfirm = open({ produced: 2050 });
+    fireEvent.change(screen.getByTestId("deliver-quantity"), { target: { value: "850" } });
+    fireEvent.click(screen.getByTestId("deliver-boxes-toggle"));
+    fireEvent.change(screen.getByTestId("deliver-box-cajas-0"), { target: { value: "8" } });
+    fireEvent.change(screen.getByTestId("deliver-box-upc-0"), { target: { value: "100" } });
+    fireEvent.click(screen.getByTestId("confirm-deliver"));
+    await waitFor(() => expect(screen.getByTestId("deliver-error").textContent).toMatch(/suman 800 u\. pero la cantidad total es 850 u\./));
+    expect(onConfirm).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("deliver-boxes-use-total")); // «Usar 800 u. como cantidad total»
+    fireEvent.click(screen.getByTestId("confirm-deliver"));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+    expect((onConfirm.mock.calls[0] as unknown[])[0]).toMatchObject({ deliverQuantity: 800 });
   });
 });

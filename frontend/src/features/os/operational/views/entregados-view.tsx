@@ -21,6 +21,7 @@ import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { postAnnulDelivery, postArchiveDelivery, postDeleteDeliveryRecord, postRestoreDelivery } from "@/lib/api/live-sync-client";
 import { postCircuitDelivery, fetchDeliveryProgress, type DeliveryProgress } from "../adapters/circuit-client";
 import { DeliverWorkDialog, type DeliverWorkPayload } from "../components/deliver-work-dialog";
+import { EditDeliveredWorkDialog, type EditDeliveredWorkTarget } from "../components/edit-delivered-work-dialog";
 import { isReadyForDelivery } from "../lib/pending-delivery";
 import { resolveDeliveryTarget } from "@/lib/planning/circuit/delivery-math";
 import { deliveryLifecycleActions } from "@/lib/lifecycle/adapters/common";
@@ -192,6 +193,7 @@ export function EntregadosView() {
 
   const [tab, setTab] = useState<EntregadosTab>("entregados");
   const [tick, setTick] = useState(0);
+  const [editWork, setEditWork] = useState<EditDeliveredWorkTarget | null>(null);
   const [deliveries, setDeliveries] = useState<DeliveryRecord[]>([]);
   const [deliveriesLoading, setDeliveriesLoading] = useState(true);
   const [deliveriesError, setDeliveriesError] = useState<string | null>(null);
@@ -497,6 +499,21 @@ export function EntregadosView() {
     showToast("Entrega restaurada.");
   }, [sectorId, showToast]);
 
+  const openEditDelivered = useCallback((record: DeliveryRecord) => {
+    setEditWork({
+      deliveryRecordId: record.id,
+      workItemId: String(record.workItemId).replace(/^native:/, ""),
+      client: record.client ?? "",
+      product: record.product,
+      lote: record.lote,
+      unit: record.unit ?? "un.",
+      plannedQuantity: record.plannedQuantity ?? null,
+      quantity: record.quantity,
+      observations: record.observations,
+      packingGroups: record.packingGroups ?? [],
+    });
+  }, []);
+
   const handleDeliveryLifecycle = useCallback(
     async (record: DeliveryRecord, action: LifecycleAction, reason: string) => {
       if (action === "archivar") {
@@ -650,13 +667,20 @@ export function EntregadosView() {
       key: "actions",
       header: "Acción",
       render: (record) => (
-        <DeliveryLifecycleActions
-          record={record}
-          canMutate={canMutate}
-          onOpen={() => setDetail(record)}
-          primaryLabel="Ver detalle"
-          onAction={(action, reason) => handleDeliveryLifecycle(record, action, reason)}
-        />
+        <div className="flex flex-wrap items-center justify-end gap-1">
+          <DeliveryLifecycleActions
+            record={record}
+            canMutate={canMutate}
+            onOpen={() => setDetail(record)}
+            primaryLabel="Ver detalle"
+            onAction={(action, reason) => handleDeliveryLifecycle(record, action, reason)}
+          />
+          {canMutate && record.status === "ENTREGADO" && !record.archived ? (
+            <button type="button" className="min-h-9 rounded border border-[var(--os-border)] px-2 text-xs font-medium" onClick={() => openEditDelivered(record)} data-testid="edit-delivered-work">
+              Editar trabajo entregado
+            </button>
+          ) : null}
+        </div>
       ),
     },
   ];
@@ -934,6 +958,18 @@ export function EntregadosView() {
         />
       ) : null}
 
+      {editWork ? (
+        <EditDeliveredWorkDialog
+          target={editWork}
+          onClose={() => setEditWork(null)}
+          onSaved={(message) => {
+            setEditWork(null);
+            setDetail(null);
+            setTick((t) => t + 1); // recarga Entregados desde la base: la tarjeta y el detalle muestran los datos nuevos de inmediato
+            showToast(message, "success");
+          }}
+        />
+      ) : null}
       <Dialog open={detail !== null} onOpenChange={(open) => !open && setDetail(null)}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
