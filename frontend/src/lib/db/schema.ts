@@ -2131,3 +2131,25 @@ export const workItemCodificadoTransfers = pgTable(
     index("work_item_codificado_transfers_dest_idx").on(table.codificadoItemId),
   ]
 );
+
+/** Comentarios del equipo por trabajo (0078). Inmutables; la autoría sale de la sesión. Vinculados al id estable del trabajo. */
+export const workItemComments = pgTable(
+  "work_item_comments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workItemId: uuid("work_item_id")
+      .notNull()
+      .references(() => workItems.id, { onDelete: "cascade" }),
+    body: text("body").notNull(),
+    authorEmail: text("author_email").notNull(),
+    authorName: text("author_name").notNull(),
+    authorSector: text("author_sector").notNull(),
+    authorSectorLabel: text("author_sector_label").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    clientRequestId: text("client_request_id").notNull(),
+  },
+  (table) => [
+    uniqueIndex("work_item_comments_idem_uq").on(table.workItemId, table.authorEmail, table.clientRequestId),
+    index("work_item_comments_item_idx").on(table.workItemId, table.createdAt),
+  ]
+);
