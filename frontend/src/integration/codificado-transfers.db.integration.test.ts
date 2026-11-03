@@ -111,18 +111,28 @@ describe.skipIf(Boolean(PROBLEM))(`Entregas parciales de Envasado a Codificado${
 
   it("no se puede entregar más de lo disponible (terminadas − entregadas) ni más que lo asignado; cantidades inválidas", async () => {
     const id = await newWork("ENVASADO_PREMIUM", "2000");
-    await expect(transfer(premium, id, 900, 800)).rejects.toThrow(/Solo hay 800 unidades terminadas/);
-    await expect(transfer(premium, id, 2500, 2000)).rejects.toThrow(/supera lo que falta entregar|supera/i);
+    await expect(transfer(premium, id, 900, 800)).rejects.toThrow(/Solo hay 800 unidades realizadas/);
+    await expect(transfer(premium, id, 2500, 2000)).rejects.toThrow(/Solo hay 2000 unidades realizadas/);
     await expect(transfer(premium, id, 0, 800)).rejects.toThrow(/mayor que 0/);
     await expect(transfer(premium, id, -5, 800)).rejects.toThrow(/mayor que 0/);
     await expect(transfer(premium, id, 10.5, 800)).rejects.toThrow(/entero/);
-    await expect(transfer(premium, id, 100, 3000)).rejects.toThrow(/superan la cantidad asignada/);
     expect(await transfers(id)).toHaveLength(0);
     expect(await children(id)).toHaveLength(0); // una entrega rechazada no deja trabajo en Codificado
     await transfer(premium, id, 800, 800);
-    await expect(transfer(premium, id, 1, null)).rejects.toThrow(/Solo hay 0 unidades terminadas sin entregar/);
+    await expect(transfer(premium, id, 1, null)).rejects.toThrow(/No quedan unidades realizadas sin entregar/);
     await expect(transfer(premium, id, 100, 700)).rejects.toThrow(/no pueden ser menos que lo ya entregado/);
     expect(await transfers(id)).toHaveLength(1);
+  });
+
+  it("la cantidad asignada no es un tope: con 2.050 realizadas se entregan 800 + 1.000 + 250 a Codificado (pendiente nunca negativo)", async () => {
+    const id = await newWork("ENVASADO_PREMIUM", "2000");
+    await transfer(premium, id, 800, 2050);
+    await transfer(premium, id, 1000, null);
+    const last = await transfer(premium, id, 250, null);
+    expect(last.complete).toBe(true);
+    expect(last.view.summary).toMatchObject({ assigned: 2000, transferred: 2050, received: 2050, pendingToTransfer: 0, alreadyOut: 2050 });
+    await expect(transfer(premium, id, 1, null)).rejects.toThrow(/No queda saldo pendiente|No quedan unidades/);
+    expect(String((await row(id)).planned_quantity)).toBe("2000");
   });
 
   it("reintentos (doble clic / red) con la misma clave no duplican: una sola entrega y un solo trabajo en Codificado", async () => {
@@ -193,9 +203,9 @@ describe.skipIf(Boolean(PROBLEM))(`Entregas parciales de Envasado a Codificado${
     await transfer(masivo, id, 800, 2000);
     const { deliverWorkDurable } = await import("@/lib/planning/work-item-progress-repository");
     const toProd = (qty: number, key: string) => deliverWorkDurable({ workItemId: id, codigo: null, sourceSector: "ENVASADO_MASIVO", plannedDeliveryDate: null, actualDeliveredAt: new Date().toISOString(), remito: null, receivedBy: null, observations: null, partial: true, deliverQuantity: qty, idempotencyKey: key, completion: { finishedQty: "2000" } } as never, { email: masivo.email, sector: masivo.sector, displayName: masivo.displayName });
-    await expect(toProd(1300, `${RUN}-p1`)).rejects.toThrow(/supera|saldo/i); // 800 ya salieron hacia Codificado: solo quedan 1.200
+    await expect(toProd(1300, `${RUN}-p1`)).rejects.toThrow(/Solo hay 1200 unidades realizadas/); // 800 ya salieron hacia Codificado: solo quedan 1.200
     expect(await toProd(500, `${RUN}-p2`)).toMatchObject({ delivered: 500 });
-    await expect(transfer(masivo, id, 800, null)).rejects.toThrow(/supera|falta entregar/i); // quedan 700
+    await expect(transfer(masivo, id, 800, null)).rejects.toThrow(/Solo hay 700 unidades realizadas/); // quedan 700
     const last = await transfer(masivo, id, 700, null);
     expect(last.complete).toBe(true);
     // el envío total (legacy) queda bloqueado cuando hay entregas parciales

@@ -189,7 +189,6 @@ export async function transferToCodificadoDurable(input: TransferInput, actor: P
       const f = Number(input.finishedQty);
       if (!Number.isFinite(f) || f <= 0) throw new PlanningValidationError("Las unidades terminadas deben ser un número mayor que 0.");
       if (f < alreadyOut - 1e-6) throw new PlanningValidationError(`Las unidades terminadas (${f}) no pueden ser menos que lo ya entregado (${alreadyOut}).`);
-      if (f > assigned + 1e-6) throw new PlanningValidationError(`Las unidades terminadas (${f}) superan la cantidad asignada (${assigned}).`);
       if (finished == null || f > finished) {
         finished = f;
         finishedRegistered = true;

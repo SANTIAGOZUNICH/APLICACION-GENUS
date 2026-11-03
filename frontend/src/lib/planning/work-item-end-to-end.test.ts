@@ -157,6 +157,9 @@ vi.mock("@/lib/db/client", () => ({
   }),
 }));
 
+// Las entregas parciales a Codificado (0077) no participan de estos escenarios: el schema simulado no las define.
+vi.mock("@/lib/planning/circuit/codificado-transfers-sum", () => ({ sumActiveCodificadoTransfers: async () => 0 }));
+
 vi.mock("@/lib/db/schema", () => {
   const workItemCols = [
     "id",

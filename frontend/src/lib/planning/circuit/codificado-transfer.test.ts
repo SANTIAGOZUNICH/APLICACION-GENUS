@@ -13,13 +13,22 @@ describe("planCodificadoTransfer", () => {
   });
   it("no se puede entregar más que lo terminado sin entregar, más que el saldo, 0, negativos ni decimales", () => {
     expect(planCodificadoTransfer({ ...base, alreadyOut: 0, produced: 800, requested: 900 })).toMatchObject({ ok: false, code: "EXCEEDS_AVAILABLE" });
-    expect(planCodificadoTransfer({ ...base, alreadyOut: 1900, produced: 2000, requested: 200 })).toMatchObject({ ok: false, code: "EXCEEDS_BALANCE", error: expect.stringContaining("falta entregar a Codificado (100)") });
+    expect(planCodificadoTransfer({ ...base, alreadyOut: 1900, produced: 2000, requested: 200 })).toMatchObject({ ok: false, code: "EXCEEDS_AVAILABLE", error: expect.stringContaining("Solo hay 100 unidades realizadas") });
     expect(planCodificadoTransfer({ ...base, alreadyOut: 2000, produced: 2000, requested: 1 })).toMatchObject({ ok: false, code: "NOTHING_PENDING" });
     expect(planCodificadoTransfer({ ...base, alreadyOut: 0, produced: 800, requested: 0 })).toMatchObject({ ok: false, code: "INVALID_QUANTITY" });
     expect(planCodificadoTransfer({ ...base, alreadyOut: 0, produced: 800, requested: 10.5 })).toMatchObject({ ok: false, code: "INVALID_QUANTITY" });
   });
   it("las entregas a Producción cuentan igual que las de Codificado (nada se cuenta dos veces)", () => {
-    expect(planCodificadoTransfer({ ...base, alreadyOut: 1300 + 500, produced: 2000, requested: 300 })).toMatchObject({ ok: false, code: "EXCEEDS_BALANCE" });
+    expect(planCodificadoTransfer({ ...base, alreadyOut: 1300 + 500, produced: 2000, requested: 300 })).toMatchObject({ ok: false, code: "EXCEEDS_AVAILABLE" });
+  });
+  it("la cantidad asignada NO es un tope: con 2.050 realizadas se pueden entregar 2.050 a Codificado (pendiente nunca negativo)", () => {
+    expect(planCodificadoTransfer({ ...base, alreadyOut: 0, produced: 2050, requested: 2050 })).toMatchObject({ ok: true, quantity: 2050, cumulative: 2050, pending: 0, complete: true });
+    // 1.000 + 800 + 250 = 2.050 (las tres se aceptan)
+    expect(planCodificadoTransfer({ ...base, alreadyOut: 0, produced: 2050, requested: 1000 })).toMatchObject({ ok: true, pending: 1000, complete: false });
+    expect(planCodificadoTransfer({ ...base, alreadyOut: 1000, produced: 2050, requested: 800 })).toMatchObject({ ok: true, pending: 200, complete: false });
+    expect(planCodificadoTransfer({ ...base, alreadyOut: 1800, produced: 2050, requested: 250 })).toMatchObject({ ok: true, cumulative: 2050, pending: 0, complete: true });
+    // pero no más de lo realizado
+    expect(planCodificadoTransfer({ ...base, alreadyOut: 1800, produced: 2050, requested: 251 })).toMatchObject({ ok: false, code: "EXCEEDS_AVAILABLE" });
   });
 });
 

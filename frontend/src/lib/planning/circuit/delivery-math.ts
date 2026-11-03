@@ -121,22 +121,29 @@ export type PartialDeliveryResult =
   | { ok: false; code: "INVALID_QUANTITY" | "EXCEEDS_BALANCE" | "EXCEEDS_AVAILABLE" | "NOTHING_PENDING"; error: string };
 
 /**
- * «Entregar parcial» (Envasado → Producción). A diferencia de la entrega final, el SALDO se mide contra la cantidad ASIGNADA al
- * trabajo (no contra lo producido hasta ahora): `pendiente = asignada − entregado`. El trabajo solo se completa al llegar a la
- * asignada. Además no se puede entregar más de lo terminado y todavía no entregado (`produced − entregado`) cuando ese dato existe.
+ * «Entregar parcial» (Envasado → Producción / Codificado). La cantidad pedida/asignada NO es un tope de entrega: el límite es lo
+ * efectivamente REALIZADO (terminadas) y todavía no entregado (`realizadas − entregado`). Solo cuando no hay dato de realizadas se
+ * usa la asignada como referencia (nunca se inventan unidades). El pendiente se mide contra la asignada y nunca es negativo:
+ * si se entregan 2.050 de 2.000 el pendiente es 0 y el trabajo se completa, sin ningún «excedente» aparte.
  */
 export function planPartialDelivery(input: {
   assigned: number;
   alreadyDelivered: number;
-  /** Unidades terminadas según los registros operativos (realizadas). null/0 = sin dato: no limita. */
+  /** Unidades terminadas según los registros operativos (realizadas). null/0 = sin dato: se toma la asignada como referencia. */
   produced: number | null | undefined;
   requested: number | null | undefined;
   unit: string | null | undefined;
 }): PartialDeliveryResult {
   const { assigned, alreadyDelivered, unit } = input;
-  const balance = Math.max(0, assigned - alreadyDelivered);
-  if (balance <= DELIVERY_EPSILON) {
-    return { ok: false, code: "NOTHING_PENDING", error: "No queda saldo pendiente de entrega en este trabajo." };
+  const produced = input.produced != null && Number.isFinite(input.produced) && input.produced > 0 ? input.produced : null;
+  const cap = produced ?? assigned;
+  const available = Math.max(0, cap - alreadyDelivered);
+  if (available <= DELIVERY_EPSILON) {
+    // Ya salió todo lo asignado y todo lo realizado: nada pendiente. Si falta entregar lo asignado pero no hay realizadas, hay que registrarlas.
+    if (alreadyDelivered >= assigned - DELIVERY_EPSILON) {
+      return { ok: false, code: "NOTHING_PENDING", error: "No queda saldo pendiente de entrega en este trabajo." };
+    }
+    return { ok: false, code: "EXCEEDS_AVAILABLE", error: "No quedan unidades realizadas sin entregar. Registrá el avance (unidades realizadas) antes de entregar más." };
   }
   const requested = input.requested == null ? NaN : Number(input.requested);
   if (!Number.isFinite(requested) || requested <= 0) {
@@ -145,23 +152,18 @@ export function planPartialDelivery(input: {
   if (isIntegerUnit(unit) && !Number.isInteger(requested)) {
     return { ok: false, code: "INVALID_QUANTITY", error: "La cantidad a entregar debe ser un número entero de unidades." };
   }
-  if (requested > balance + DELIVERY_EPSILON) {
-    return {
-      ok: false,
-      code: "EXCEEDS_BALANCE",
-      error: `La cantidad (${formatQty(requested)}) supera el saldo pendiente de entrega (${formatQty(balance)}).`,
-    };
-  }
-  const produced = input.produced != null && Number.isFinite(input.produced) && input.produced > 0 ? input.produced : null;
-  if (produced != null) {
-    const available = Math.max(0, produced - alreadyDelivered);
-    if (requested > available + DELIVERY_EPSILON) {
-      return {
-        ok: false,
-        code: "EXCEEDS_AVAILABLE",
-        error: `Solo hay ${formatQty(available)} unidades terminadas sin entregar (terminadas ${formatQty(produced)}, ya entregadas ${formatQty(alreadyDelivered)}). Registrá el avance antes de entregar más.`,
-      };
-    }
+  if (requested > available + DELIVERY_EPSILON) {
+    return produced != null
+      ? {
+          ok: false,
+          code: "EXCEEDS_AVAILABLE",
+          error: `Solo hay ${formatQty(available)} unidades realizadas sin entregar (realizadas ${formatQty(produced)}, ya entregadas ${formatQty(alreadyDelivered)}). Registrá el avance antes de entregar más.`,
+        }
+      : {
+          ok: false,
+          code: "EXCEEDS_BALANCE",
+          error: `La cantidad (${formatQty(requested)}) supera lo disponible para entregar (${formatQty(available)}). Si se realizaron más unidades, registralas primero como realizadas.`,
+        };
   }
   const cumulative = alreadyDelivered + requested;
   const pending = Math.max(0, assigned - cumulative);

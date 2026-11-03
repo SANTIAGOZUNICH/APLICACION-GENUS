@@ -2153,3 +2153,30 @@ export const workItemComments = pgTable(
     index("work_item_comments_item_idx").on(table.workItemId, table.createdAt),
   ]
 );
+
+/** Correcciones de entregas internas (0079): una fila inmutable por edición o cancelación, con valores anteriores y nuevos. */
+export const internalDeliveryChanges = pgTable(
+  "internal_delivery_changes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    kind: text("kind").notNull(),
+    deliveryId: uuid("delivery_id").notNull(),
+    workItemId: uuid("work_item_id").notNull(),
+    action: text("action").notNull(),
+    oldQuantity: doublePrecision("old_quantity"),
+    newQuantity: doublePrecision("new_quantity"),
+    oldObservations: text("old_observations"),
+    newObservations: text("new_observations"),
+    finishedBefore: text("finished_before"),
+    finishedAfter: text("finished_after"),
+    reason: text("reason"),
+    actorEmail: text("actor_email").notNull(),
+    actorName: text("actor_name"),
+    actorSector: text("actor_sector").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("internal_delivery_changes_delivery_idx").on(table.kind, table.deliveryId, table.createdAt),
+    index("internal_delivery_changes_item_idx").on(table.workItemId, table.createdAt),
+  ]
+);

@@ -168,7 +168,8 @@ export function WorkItemDrawer({
 
   if (item && item.id !== loadedItemId) {
     setLoadedItemId(item.id);
-    setFinishedQty(getFinishedQty(item.id));
+    // Igual que la tarjeta: en trabajos nativos las unidades realizadas son las del trabajo (Neon); el overlay local es el respaldo.
+    setFinishedQty(isNativeWorkItemId(item.id) ? (item.finishedQty ?? getFinishedQty(item.id)) : getFinishedQty(item.id));
     setObservation(getObservation(item.id));
     setPackagingDraft(null);
     setDeliveryProgress(null);

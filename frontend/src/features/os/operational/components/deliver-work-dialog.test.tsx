@@ -58,16 +58,16 @@ describe("DeliverWorkDialog — modo «Entregar parcial»", () => {
     expect(payload.idempotencyKey).toMatch(/^deliver/);
   });
 
-  it("valida en pantalla: vacío, mayor al saldo y mayor a lo terminado", async () => {
+  it("valida en pantalla: vacío y mayor a lo realizado (la cantidad pedida ya no es tope)", async () => {
     const onConfirm = open();
     fireEvent.click(screen.getByTestId("confirm-deliver"));
     expect((await screen.findByTestId("deliver-error")).textContent).toMatch(/mayor que 0/);
     fireEvent.change(screen.getByTestId("deliver-quantity"), { target: { value: "2500" } });
     fireEvent.click(screen.getByTestId("confirm-deliver"));
-    await waitFor(() => expect(screen.getByTestId("deliver-error").textContent).toMatch(/supera el saldo/));
+    await waitFor(() => expect(screen.getByTestId("deliver-error").textContent).toMatch(/realizadas/));
     fireEvent.change(screen.getByTestId("deliver-quantity"), { target: { value: "1500" } });
     fireEvent.click(screen.getByTestId("confirm-deliver"));
-    await waitFor(() => expect(screen.getByTestId("deliver-error").textContent).toMatch(/terminadas/));
+    await waitFor(() => expect(screen.getByTestId("deliver-error").textContent).toMatch(/realizadas/));
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
@@ -76,5 +76,16 @@ describe("DeliverWorkDialog — modo «Entregar parcial»", () => {
     expect(screen.getByTestId("deliver-balance").textContent).toContain("1000");
     fireEvent.change(screen.getByTestId("deliver-quantity"), { target: { value: "600" } });
     expect(screen.getByTestId("deliver-partial-note").textContent).toContain("400");
+  });
+
+  it("más de lo pedido: con 2.050 realizadas se pueden entregar 2.050 (pedido 2.000) con observación opcional, sin avisos de excedente", async () => {
+    const onConfirm = open({ produced: 2050 });
+    fireEvent.change(screen.getByTestId("deliver-quantity"), { target: { value: "2050" } });
+    fireEvent.change(screen.getByTestId("deliver-observations"), { target: { value: "50 unidades de más" } });
+    expect(screen.queryByTestId("deliver-partial-note")).toBeNull(); // completa: nada «parcial» ni de excedente
+    fireEvent.click(screen.getByTestId("confirm-deliver"));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+    expect(onConfirm.mock.calls[0]![0]).toMatchObject({ deliverQuantity: 2050, observations: "50 unidades de más", partial: true });
+    expect(document.body.textContent).not.toMatch(/exced|sobreprod/i);
   });
 });

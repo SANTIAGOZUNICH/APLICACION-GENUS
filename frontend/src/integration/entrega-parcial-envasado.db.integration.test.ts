@@ -102,16 +102,16 @@ describe.skipIf(Boolean(PROBLEM))(`Entregas parciales de Envasado en Postgres re
     expect(Number(notes[0]!.n)).toBeGreaterThanOrEqual(1);
   });
 
-  it("no se puede entregar más que el saldo asignado ni más de lo terminado; cantidad inválida se rechaza sin registrar nada", async () => {
+  it("no se puede entregar más de lo realizado (la cantidad asignada ya no es tope); cantidad inválida se rechaza sin registrar nada", async () => {
     const id = await newWork("ENVASADO_MASIVO", "2000");
-    await expect(partial(masivo, id, 2500, 2500, `${RUN}-x1`)).rejects.toThrow(/supera el saldo/);
-    await expect(partial(masivo, id, 1000, 800, `${RUN}-x2`)).rejects.toThrow(/terminad/i); // solo 800 realizadas
+    await expect(partial(masivo, id, 2500, 2000, `${RUN}-x1`)).rejects.toThrow(/Solo hay 2000 unidades realizadas/); // la asignada ya no es tope: manda lo realizado
+    await expect(partial(masivo, id, 1000, 800, `${RUN}-x2`)).rejects.toThrow(/realizadas/i); // solo 800 realizadas
     await expect(partial(masivo, id, 0, 800, `${RUN}-x3`)).rejects.toThrow();
     await expect(partial(masivo, id, -5, 800, `${RUN}-x4`)).rejects.toThrow();
     await expect(partial(masivo, id, 10.5, 800, `${RUN}-x5`)).rejects.toThrow(/entero/);
     expect(await lines(id)).toHaveLength(0);
     await partial(masivo, id, 800, 800, `${RUN}-ok`);
-    await expect(partial(masivo, id, 300, 800, `${RUN}-x6`)).rejects.toThrow(/terminad/i); // ya entregó las 800 terminadas
+    await expect(partial(masivo, id, 300, 800, `${RUN}-x6`)).rejects.toThrow(/realizadas/i); // ya entregó las 800 realizadas
     expect((await lines(id)).map((l) => Number(l.quantity))).toEqual([800]);
   });
 

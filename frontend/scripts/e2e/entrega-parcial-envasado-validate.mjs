@@ -78,17 +78,17 @@ try {
   await dlg.waitFor({ timeout: 30_000 });
   const txt = (await dlg.innerText()).replace(/\s+/g, " ");
   check("ventana simple: cliente, producto, total, ya entregado, pendiente y «Cantidad a entregar ahora»", /CLIENTE EPAR SA/.test(txt) && /ORIGINAL BLACK AFTER SHAVE EPAR/.test(txt) && /Cantidad total del trabajo/.test(txt) && /2000/.test(txt) && /Ya entregado/.test(txt) && /Pendiente de entregar/.test(txt) && /Cantidad a entregar ahora/.test(txt));
-  check("no pide motivos, remito ni autorizaciones; tiene Cancelar y Confirmar entrega", (await dlg.locator("[data-testid=deliver-remito], [data-testid=deliver-boxes-toggle], textarea").count()) === 0 && /Cancelar/.test(txt) && /Confirmar entrega/.test(txt));
+  check("no pide motivos, remito ni autorizaciones; tiene Cancelar y Confirmar entrega", (await dlg.locator("[data-testid=deliver-remito], [data-testid=deliver-boxes-toggle]").count()) === 0 && (await dlg.locator("textarea").count()) === 1 && /Cancelar/.test(txt) && /Confirmar entrega/.test(txt));
   await p.screenshot({ path: `${OUT}/1-dialogo-parcial.png` });
 
   // Validaciones en pantalla
   await dlg.locator("[data-testid=deliver-quantity]").fill("1500");
   await dlg.locator("[data-testid=confirm-deliver]").click();
   const err1 = await dlg.locator("[data-testid=deliver-error]").innerText();
-  check("entregar más de lo terminado se rechaza con mensaje claro y no registra nada", /terminadas/.test(err1) && (await lines(ids.masivo)).length === 0, `${err1} | finished_qty=${(await q("select finished_qty from work_items where id = $1", [ids.masivo]))[0].finished_qty} | líneas=${(await lines(ids.masivo)).length}`);
+  check("entregar más de lo terminado se rechaza con mensaje claro y no registra nada", /realizadas/.test(err1) && (await lines(ids.masivo)).length === 0, `${err1} | finished_qty=${(await q("select finished_qty from work_items where id = $1", [ids.masivo]))[0].finished_qty} | líneas=${(await lines(ids.masivo)).length}`);
   await dlg.locator("[data-testid=deliver-quantity]").fill("2500");
   await dlg.locator("[data-testid=confirm-deliver]").click();
-  check("entregar más que el saldo se rechaza", /supera el saldo/.test(await dlg.locator("[data-testid=deliver-error]").innerText()));
+  check("entregar más de lo realizado se rechaza", /realizadas/.test(await dlg.locator("[data-testid=deliver-error]").innerText()));
 
   // 1.ª parcial: 1.000, con DOBLE CLIC
   await dlg.locator("[data-testid=deliver-quantity]").fill("1000");
