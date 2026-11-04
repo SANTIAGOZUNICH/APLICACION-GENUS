@@ -14,7 +14,7 @@ import {
 import { deriveProductFromFilename, normalizeSearchKey } from "@/lib/formulas/types";
 import { rankText } from "@/lib/formulas/drive-match-rules";
 import { resolveExtraFormulasFolderIds, resolveFormulasFolderId } from "@/lib/formulas/drive-formulas-diagnose";
-import { parseWorkbookBuffer } from "@/lib/formulas/parse-workbook";
+import { parseWorkbookBuffer, reviewReasonText, type SheetDiagnostic } from "@/lib/formulas/parse-workbook";
 import { emptyOeMaterial } from "@/lib/orders/content";
 
 const XLSX =
@@ -478,6 +478,9 @@ export async function resolveFormulaFromDriveFile(args: {
   });
 }
 
+/** Prefijo común de los mensajes cuando no se pueden cargar las materias primas (se muestra en la OE y en «Ver OE / Fórmula»). */
+export const FORMULA_UNREADABLE = "No se pudieron cargar las materias primas de esta fórmula.";
+
 /** Parsea el archivo de una fórmula de Drive (ya descargado). No muta el banco Neon. */
 export function parseDriveFormulaBuffer(args: {
   buffer: Buffer;
@@ -490,23 +493,30 @@ export function parseDriveFormulaBuffer(args: {
   knownClients: string[];
 }): DriveResolveResult | { found: false; message: string } {
   const { buffer, checksum, fileName, modifiedTime, client, knownClients } = args;
-  const drafts = parseWorkbookBuffer(buffer, {
-    sourceFile: fileName,
-    sourceModifiedAt: modifiedTime,
-    folderClient: client && client !== "SIN_CLIENTE" ? client : undefined,
-    knownClients,
-  });
-
-  if (!drafts.length) {
-    return {
-      found: false,
-      message: "No se pudo parsear una fórmula válida desde el archivo de Drive.",
-    };
+  const diagnostics: SheetDiagnostic[] = [];
+  let drafts: ReturnType<typeof parseWorkbookBuffer>;
+  try {
+    drafts = parseWorkbookBuffer(buffer, {
+      sourceFile: fileName,
+      sourceModifiedAt: modifiedTime,
+      folderClient: client && client !== "SIN_CLIENTE" ? client : undefined,
+      knownClients,
+      onDiagnostic: (d) => diagnostics.push(d),
+    });
+  } catch (err) {
+    return { found: false, message: `${FORMULA_UNREADABLE} El archivo no se pudo abrir como planilla de Excel (${err instanceof Error ? err.message : "formato inválido"}).` };
   }
 
-  // Preferir draft cuyo producto matchee el hint; si no, el de mayor ingredientes.
+  if (!drafts.length) {
+    const causes = diagnostics.filter((d) => !d.ok).map((d) => (d.sheet ? `Hoja «${d.sheet}»: ${d.reason}` : d.reason));
+    return { found: false, message: `${FORMULA_UNREADABLE} ${causes.length ? causes.slice(0, 3).join(" ") : "El archivo no tiene una tabla de materias primas reconocible."}` };
+  }
+
+  // El archivo lo eligió Producción (vínculo) o es la única coincidencia: se elige la hoja por producto; si no hay coincidencia
+  // se usa la única hoja válida (no se toma «la primera» entre varias distintas: podría ser la fórmula de otro producto).
   const productHint = normalizeSearchKey(args.productHint ?? "");
   let draft = drafts[0]!;
+  const usable = drafts.filter((d) => !d.reviewRequired);
   if (productHint) {
     const match = drafts.find(
       (d) =>
@@ -516,20 +526,23 @@ export function parseDriveFormulaBuffer(args: {
         )
     );
     if (match) draft = match;
-    // Con varias hojas y ninguna coincide con el producto pedido NO se toma «la primera» (podría ser la fórmula de otro producto).
     else if (drafts.length > 1) {
-      return { found: false, message: "El archivo tiene varias fórmulas y ninguna coincide con el producto: no se eligió ninguna." };
+      const distinct = new Set(usable.map((d) => d.semanticHash));
+      if (usable.length >= 1 && distinct.size === 1) draft = usable[0]!; // hojas idénticas (copias): da igual cuál
+      else if (usable.length === 1) draft = usable[0]!; // solo una hoja es una fórmula válida
+      else return { found: false, message: `${FORMULA_UNREADABLE} El archivo tiene varias hojas con fórmulas (${drafts.map((d) => `«${d.sourceSheet}»`).join(", ")}) y ninguna coincide con el producto: no se eligió ninguna.` };
     }
   } else {
-    draft = [...drafts].sort(
+    draft = [...(usable.length ? usable : drafts)].sort(
       (a, b) => b.ingredients.length - a.ingredients.length
     )[0]!;
   }
 
   if (draft.reviewRequired) {
+    const missing = draft.ingredients.filter((i) => i.percentage == null).map((i) => i.materialName);
     return {
       found: false,
-      message: "Fórmula requiere revisión y no está disponible para OE.",
+      message: `${FORMULA_UNREADABLE} Hoja «${draft.sourceSheet}»: ${reviewReasonText(draft.reviewReasons)}${missing.length ? ` (${missing.slice(0, 5).join(", ")})` : ""}. Corregí el archivo de Drive y usá «Reintentar lectura».`,
     };
   }
 

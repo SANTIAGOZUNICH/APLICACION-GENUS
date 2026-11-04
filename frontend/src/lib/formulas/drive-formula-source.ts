@@ -655,11 +655,15 @@ export async function autoLinkFormula(actor: Actor, input: { client: string; pro
 }
 
 /**
- * OE de Elaboración que quedaron con la fórmula pendiente (sin empezar): se vuelven a preparar con la búsqueda actual.
- * Usa la preparación automática existente (misma OE, mismo número; no reemplaza fórmulas ya cargadas, no toca lotes,
- * cantidades, consumos ni stock). Devuelve cuántas quedaron con fórmula.
+ * OE de Elaboración que quedaron con la fórmula pendiente o SIN materias primas (sin empezar): se vuelven a preparar con la
+ * búsqueda y la lectura actuales. Usa la preparación automática existente (misma OE, mismo número): no reemplaza fórmulas ya
+ * cargadas ni materias primas escritas a mano, no toca lotes, ajustes, kg reales, consumos ni stock, y no modifica Drive.
+ * Si la fórmula sigue sin poder leerse, la OE guarda el MOTIVO (no queda una tabla vacía sin explicación).
+ * Devuelve cuántas quedaron con fórmula y el resultado de cada una.
  */
-export async function retryPendingOeFormulas(actor: Actor, opts: { limit?: number; workItemIds?: string[] } = {}): Promise<{ checked: number; resolved: number; orderNumbers: string[] }> {
+export type RetryOeDetail = { orderNumber: string; outcome: "loaded" | "unreadable" | "unchanged" | "kept" | "started" | "error"; message: string | null };
+
+export async function retryPendingOeFormulas(actor: Actor, opts: { limit?: number; workItemIds?: string[] } = {}): Promise<{ checked: number; resolved: number; orderNumbers: string[]; details: RetryOeDetail[] }> {
   const db = requireDb();
   const ids = opts.workItemIds?.length ? opts.workItemIds : null;
   const rows = (await db.execute(sql`
@@ -667,27 +671,46 @@ export async function retryPendingOeFormulas(actor: Actor, opts: { limit?: numbe
       join work_items w on (w.id::text = o.linked_work_item_id or (coalesce(o.linked_work_item_id, '') = '' and w.order_id = o.id))
      where o.type = 'OE' and o.deleted_at is null and o.status::text in ('BORRADOR', 'PENDIENTE')
        and w.sector::text = 'ELABORACION' and w.status::text <> 'CANCELADO'
-       and coalesce(o.form_data->'autoPrep'->'formula'->>'status', '') not in ('ok', 'manual_content')
+       and (
+         coalesce(o.form_data->'autoPrep'->'formula'->>'status', '') not in ('ok', 'manual_content')
+         -- fórmula «ok» o «manual» pero SIN materias primas: quedó vacía; se puede recuperar sin recrear nada
+         or jsonb_array_length(case when jsonb_typeof(o.form_data->'materials') = 'array' then o.form_data->'materials' else '[]'::jsonb end) = 0
+       )
        ${ids ? sql`and w.id::text in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})` : sql``}
-     order by o.created_at desc, o.id limit ${opts.limit ?? 25}`)).rows as Row[];
+     order by o.created_at desc, o.id limit ${opts.limit ?? 50}`)).rows as Row[];
   const { prepareOeFromWork } = await import("@/lib/planning/oe-auto-prep");
   let resolved = 0;
   const orderNumbers: string[] = [];
+  const details: RetryOeDetail[] = [];
   for (const r of rows) {
+    const orderNumber = String(r.order_number);
     try {
-      // Primero se mira sin guardar: si la fórmula sigue sin aparecer, la OE no se toca (ni versión ni mensaje).
-      const preview = await prepareOeFromWork({ orderId: String(r.id), actor, reason: "Fórmula encontrada en la carpeta de Drive", dryRun: true });
-      if (preview.status !== "applied" || preview.autoPrep.formula.status !== "ok") continue;
-      const out = await prepareOeFromWork({ orderId: String(r.id), actor, reason: "Fórmula encontrada en la carpeta de Drive", expectedVersion: preview.version });
+      const reason = "Fórmula encontrada en la carpeta de Drive";
+      // Primero se mira sin guardar (vista previa); recién después se aplica, con control de versión.
+      const preview = await prepareOeFromWork({ orderId: String(r.id), actor, reason, dryRun: true });
+      if (preview.status === "skipped_started") { details.push({ orderNumber, outcome: "started", message: preview.message }); continue; }
+      if (preview.status === "skipped" || preview.status === "needs_confirmation") { details.push({ orderNumber, outcome: "kept", message: preview.message }); continue; }
+      if (preview.status === "unchanged") {
+        // Mismo resultado que ya tenía la OE: si la fórmula sigue sin poder leerse, el motivo se informa igual.
+        const f = preview.autoPrep?.formula;
+        details.push({ orderNumber, outcome: f && f.status !== "ok" ? "unreadable" : "unchanged", message: f?.message ?? null });
+        continue;
+      }
+      const loaded = preview.autoPrep.formula.status === "ok";
+      // Si no se pudo leer, se guarda el motivo en la OE (solo cambia el mensaje de estado; las materias primas no se tocan).
+      const out = await prepareOeFromWork({ orderId: String(r.id), actor, reason: loaded ? reason : "Lectura de la fórmula reintentada", expectedVersion: preview.version });
       if (out.status === "applied" && out.autoPrep.formula.status === "ok") {
         resolved++;
-        orderNumbers.push(String(r.order_number));
+        orderNumbers.push(orderNumber);
+        details.push({ orderNumber, outcome: "loaded", message: null });
+      } else {
+        details.push({ orderNumber, outcome: "unreadable", message: out.status === "applied" ? out.autoPrep.formula.message : "message" in out ? out.message : null });
       }
-    } catch {
-      /* se reintenta en la próxima actualización */
+    } catch (err) {
+      details.push({ orderNumber, outcome: "error", message: err instanceof Error ? err.message : "No se pudo reintentar." });
     }
   }
-  return { checked: rows.length, resolved, orderNumbers };
+  return { checked: rows.length, resolved, orderNumbers, details };
 }
 
 /** Contenido del archivo (para la OE y para «Descargar»). Solo archivos del índice: nunca es un proxy genérico de Drive. */

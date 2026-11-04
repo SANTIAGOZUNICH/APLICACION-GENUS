@@ -241,10 +241,16 @@ export function isPendingProduct(displayProduct: string): boolean {
 export function parseLooseNumber(raw: unknown): number | null {
   if (raw == null || raw === "") return null;
   if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
-  const s = String(raw)
+  let s = String(raw)
     .replace(/%/g, "")
     .replace(/\s+/g, "")
-    .replace(",", ".");
+    .replace(/(kg|kgs|gr|grs|g|l|lt|lts|ml)\.?$/i, "");
+  // «1.234,56» (miles con punto, decimal con coma) y «1,234.56»: el último separador es el decimal.
+  if (s.includes(",") && s.includes(".")) {
+    s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  } else {
+    s = s.replace(",", ".");
+  }
   if (!s) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;

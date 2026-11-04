@@ -49,7 +49,7 @@ async function prepareOeAfterLink(actor: { email: string; sector: string }, work
   const { getWorkFormulaInfo } = await import("@/lib/formulas/work-formula-info");
   const info = await getWorkFormulaInfo(actor, workItemId);
   if (!info.oe) return null;
-  if (info.oe.formulaStatus === "ok") {
+  if (info.oe.formulaStatus === "ok" && info.oe.materialsCount > 0) {
     return { status: "kept", orderNumber: info.oe.number, message: "La OE ya tenía una fórmula cargada: no se reemplazó. Para cambiarla usá «Actualizar desde fórmula» en la OE." };
   }
   const { prepareOeFromWork } = await import("@/lib/planning/oe-auto-prep");

@@ -11,7 +11,7 @@
  */
 import { useState } from "react";
 import type { OeContent } from "@/lib/orders/types";
-import { oeAutoPrepApi, type OeAutoPrepApiResponse, type OrdersClientSession } from "@/lib/orders/orders-client";
+import { oeAutoPrepApi, retryFormulaReadApi, type OeAutoPrepApiResponse, type OrdersClientSession } from "@/lib/orders/orders-client";
 import { friendlySaveError } from "@/lib/ui/friendly-error";
 
 const fmtKg = (v: number | null | undefined) =>
@@ -37,6 +37,7 @@ export function OeAutoPrepPanel({
   version,
   content,
   canRefresh,
+  canRetryRead = false,
   session,
   onApplied,
 }: {
@@ -44,6 +45,8 @@ export function OeAutoPrepPanel({
   version: number;
   content: OeContent;
   canRefresh: boolean;
+  /** Producción/Dirección: puede reintentar la lectura de la fórmula vinculada (no reemplaza nada ya cargado). */
+  canRetryRead?: boolean;
   session: OrdersClientSession;
   onApplied: () => void | Promise<void>;
 }) {
@@ -73,6 +76,30 @@ export function OeAutoPrepPanel({
       setAcceptLoss(false);
     } catch (err) {
       setMsg(friendlySaveError(err, "No se pudo actualizar la OE."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const retryRead = async () => {
+    if (!ap?.workItemId) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await retryFormulaReadApi(session, ap.workItemId);
+      const d = res.pending.details?.[0];
+      setMsg(
+        d?.outcome === "loaded"
+          ? "Listo: se cargaron las materias primas de la fórmula."
+          : d?.outcome === "unreadable" || d?.outcome === "kept" || d?.outcome === "started" || d?.outcome === "error"
+            ? d.message ?? "No se pudieron cargar las materias primas de esta fórmula."
+            : res.pending.checked === 0
+              ? "Esta OE no necesita reintentar la lectura (ya tiene materias primas o la elaboración empezó)."
+              : "La fórmula no cambió."
+      );
+      await onApplied();
+    } catch (err) {
+      setMsg(friendlySaveError(err, "No se pudo reintentar la lectura."));
     } finally {
       setBusy(false);
     }
@@ -116,6 +143,17 @@ export function OeAutoPrepPanel({
             <p className="text-xs text-[var(--os-text-muted)]">Esta OE no se preparó automáticamente.</p>
           )}
         </div>
+        {canRetryRead && ap && (f?.status !== "ok" || content.materials.length === 0) ? (
+          <button
+            type="button"
+            className="rounded border border-amber-400 px-3 py-1.5 text-sm hover:bg-amber-50 disabled:opacity-50"
+            onClick={() => void retryRead()}
+            disabled={busy}
+            data-testid="oe-autoprep-retry-read"
+          >
+            {busy && !preview ? "Leyendo…" : "Reintentar lectura"}
+          </button>
+        ) : null}
         {canRefresh ? (
           <button
             type="button"
