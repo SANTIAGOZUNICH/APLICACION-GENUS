@@ -845,6 +845,20 @@ export async function oeAutoPrepApi(
   return parseJson<OeAutoPrepApiResponse>(res);
 }
 
+export type RetryFormulaReadResponse = {
+  pending: { checked: number; resolved: number; details?: Array<{ orderNumber: string; outcome: string; message: string | null }> };
+};
+
+/** «Reintentar lectura» (Producción/Dirección): vuelve a leer la fórmula de Drive vinculada al trabajo y completa la OE si estaba vacía. */
+export async function retryFormulaReadApi(session: OrdersClientSession, workItemId: string): Promise<RetryFormulaReadResponse> {
+  const res = await fetch(`/api/v1/formulas/work/${encodeURIComponent(workItemId)}`, {
+    method: "POST",
+    credentials: "include",
+    headers: actorHeaders(session),
+  });
+  return parseJson<RetryFormulaReadResponse>(res);
+}
+
 /** Catálogo de Stock MP (códigos y lotes) para completar CÓDIGO MP y LOTE MP en la OE. */
 export async function fetchMpCatalogApi(
   session: OrdersClientSession

@@ -158,9 +158,9 @@ async function resolveFromNewDriveSource(client: string, product: string, actor?
       productHint: product,
       knownClients: [file.clientFolderName],
     });
-    if (!res.found) return { ok: false, status: "error", message: `No se pudo leer la fórmula del archivo «${file.fileName}»: ${res.message}` };
+    if (!res.found) return { ok: false, status: "error", message: `${res.message} Archivo de Drive «${file.fileName}».` };
     const why = formulaIncompleteReason(res.materials);
-    if (why) return { ok: false, status: "incomplete", message: `${why} Archivo de Drive «${file.fileName}».` };
+    if (why) return { ok: false, status: "incomplete", message: `No se pudieron cargar las materias primas de esta fórmula. ${why} Archivo de Drive «${file.fileName}».` };
     // Única coincidencia segura → queda vinculada para las próximas asignaciones del mismo cliente + producto.
     if (lookup.kind === "match" && actor) await src.autoLinkFormula(actor, { client, product, fileId: file.fileId }).catch(() => false);
     return {

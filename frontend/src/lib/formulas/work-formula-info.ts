@@ -55,7 +55,7 @@ export type FormulaCandidateView = {
 
 export type WorkFormulaInfo = {
   work: { id: string; client: string; product: string; sector: string };
-  oe: { id: string; number: string; status: string; formulaStatus: string | null; formulaMessage: string | null; formulaProduct: string | null } | null;
+  oe: { id: string; number: string; status: string; formulaStatus: string | null; formulaMessage: string | null; formulaProduct: string | null; materialsCount: number } | null;
   document: FormulaDocument | null;
   /** ok: hay documento · ambiguous: varias opciones · not_found · link_invalid · no_index (carpeta nueva sin indexar) */
   status: "ok" | "ambiguous" | "not_found" | "link_invalid" | "unavailable" | "no_index";
@@ -91,10 +91,10 @@ export async function getWorkFormulaInfo(actor: { email: string; sector: string 
     select id, order_number, status::text as status, form_data from operational_orders
      where type = 'OE' and deleted_at is null and (id = ${w.order_id ?? null}::uuid or linked_work_item_id = ${workItemId})
      order by (id = ${w.order_id ?? null}::uuid) desc nulls last, created_at desc limit 1`)).rows as Row[];
-  const fd = (o?.form_data ?? null) as { autoPrep?: { formula?: { status?: string; message?: string; driveFileId?: string; displayProduct?: string; source?: string } } } | null;
+  const fd = (o?.form_data ?? null) as { materials?: unknown[]; autoPrep?: { formula?: { status?: string; message?: string; driveFileId?: string; displayProduct?: string; source?: string } } } | null;
   const apf = fd?.autoPrep?.formula ?? null;
   const oe = o
-    ? { id: String(o.id), number: String(o.order_number), status: String(o.status), formulaStatus: apf?.status ?? null, formulaMessage: apf?.message ?? null, formulaProduct: apf?.displayProduct ?? null }
+    ? { id: String(o.id), number: String(o.order_number), status: String(o.status), formulaStatus: apf?.status ?? null, formulaMessage: apf?.message ?? null, formulaProduct: apf?.displayProduct ?? null, materialsCount: Array.isArray(fd?.materials) ? fd.materials.length : 0 }
     : null;
 
   const canLink = canLinkFormula(actor.sector);

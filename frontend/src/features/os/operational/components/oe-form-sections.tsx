@@ -256,6 +256,18 @@ export function OeFormSections({
             (sin lote se descuenta por código). Se descuenta del stock solo lo realmente utilizado.
           </p>
         )}
+        {content.materials.length === 0 && content.autoPrep ? (
+          <p
+            className="mt-2 rounded border border-rose-300 bg-rose-50 px-2 py-1.5 text-xs text-rose-900"
+            role="alert"
+            data-testid="oe-materials-empty"
+          >
+            {content.autoPrep.formula.status === "ok"
+              ? "No se pudieron cargar las materias primas de esta fórmula."
+              : content.autoPrep.formula.message || "No se pudieron cargar las materias primas de esta fórmula."}{" "}
+            El total teórico de 0 kg no corresponde a una fórmula válida: Producción puede usar «Reintentar lectura» en el panel de arriba.
+          </p>
+        ) : null}
         <OeMaterialsTable
           content={content}
           onChange={onChange}
@@ -270,7 +282,7 @@ export function OeFormSections({
           className="mt-2 grid gap-1 text-xs text-[var(--os-text-muted)] sm:grid-cols-4"
           data-testid="oe-ajuste-summary"
         >
-          <span>Total teórico: {content.totals.kgSum ?? "—"} kg</span>
+          <span>Total teórico: {content.materials.length === 0 ? "— (sin materias primas)" : `${content.totals.kgSum ?? "—"} kg`}</span>
           <span>Diferencia total: {content.totals.ajusteSum ?? "—"} kg</span>
           <span>Total real utilizado: {content.totals.kgRealSum ?? "—"} kg</span>
           <span>Diferencia: {content.totals.diferenciaPct ?? "—"}%</span>

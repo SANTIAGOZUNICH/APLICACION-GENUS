@@ -1327,6 +1327,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
               Boolean(order.linkedWorkItemId) &&
               (sectorId === "PRODUCCION" || sectorId === "DIRECCION" || sectorId === "ELABORACION")
             }
+            canRetryRead={!locked && Boolean(order.linkedWorkItemId) && (sectorId === "PRODUCCION" || sectorId === "DIRECCION")}
             session={session}
             onApplied={load}
           />

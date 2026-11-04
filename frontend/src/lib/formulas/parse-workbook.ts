@@ -57,20 +57,6 @@ function round6(n: number): number {
   return Number(n.toFixed(6));
 }
 
-function sheetLooksLikeOe(matrix: string[][]): boolean {
-  const blob = matrix
-    .slice(0, 40)
-    .flat()
-    .join(" ")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-  const hasMp = blob.includes("materia prima");
-  const hasPct = blob.includes("formula") && blob.includes("%");
-  const hasProc = blob.includes("procedimiento");
-  return hasMp && (hasPct || hasProc);
-}
-
 function isNumericOnly(raw: string): boolean {
   return /^\d+([.,]\d+)?$/.test(raw.replace(/\s/g, ""));
 }
@@ -104,14 +90,93 @@ function findLabelValue(
   return "";
 }
 
-function findHeaderRow(matrix: string[][]): number {
-  for (let r = 0; r < Math.min(matrix.length, 60); r++) {
-    const joined = matrix[r]!.map((c) => normalizeSearchKey(c)).join("|");
-    if (joined.includes("materia prima") && (joined.includes("formula") || joined.includes("%"))) {
-      return r;
+type Merge = { s: { r: number; c: number }; e: { r: number; c: number } };
+
+/** Encabezados válidos de la columna de materia prima (cada planilla usa su propio rótulo). */
+const NAME_HEADERS = ["materia prima", "materias primas", "ingrediente", "ingredientes", "componente", "componentes", "insumo", "insumos"];
+
+const isPctHeader = (h: string) => h.includes("formula") || h.includes("porcentaje") || h.includes("%") || h === "pp" || h.includes("p p");
+const isCodeHeader = (h: string) => h.includes("codigo") || h.includes("fase") || h === "cod";
+const isQtyHeader = (h: string) => QTY_HEADER_TOKENS.some((t) => h.includes(t));
+
+type TableLoc = {
+  headerStart: number;
+  headerEnd: number;
+  nameCols: number[];
+  codeCols: number[];
+  pctCols: number[];
+  qtyCols: number[];
+};
+
+/** Columnas que ocupa una celda de encabezado combinada (si no está combinada, solo la suya). */
+function spanCols(merges: Merge[], r: number, c: number): number[] {
+  const m = merges.find((x) => r >= x.s.r && r <= x.e.r && c >= x.s.c && c <= x.e.c);
+  if (!m) return [c];
+  const out: number[] = [];
+  for (let k = m.s.c; k <= m.e.c; k++) out.push(k);
+  return out;
+}
+
+const rowHasNumber = (row: string[]) => row.some((c) => /^\d+([.,]\d+)?\s*%?$/.test(cellStr(c).replace(/\s/g, "")));
+
+/**
+ * Ubica la tabla de materias primas SIN suponer una estructura fija: el encabezado puede estar en cualquier fila (primeras 80),
+ * partido en 2–3 filas (p. ej. «Fórmula» arriba y «%» abajo), con celdas combinadas y con rótulos distintos
+ * («Materia prima», «Ingrediente», «Componente»…).
+ */
+function locateTable(matrix: string[][], merges: Merge[]): { loc: TableLoc | null; why: string } {
+  const norm = matrix.map((row) => row.map((c) => normalizeSearchKey(c)));
+  let sawName = false;
+  for (let r = 0; r < Math.min(matrix.length, 80); r++) {
+    const row = norm[r]!;
+    const nameC = row.findIndex((h) => h !== "" && NAME_HEADERS.some((t) => h === t || h.startsWith(t + " ") || h.endsWith(" " + t)));
+    if (nameC < 0) continue;
+    sawName = true;
+    const pct = new Set<number>();
+    const qty = new Set<number>();
+    const code = new Set<number>();
+    let headerStart = r;
+    let headerEnd = r;
+    for (let k = -2; k <= 2; k++) {
+      const rr = r + k;
+      if (rr < 0 || rr >= matrix.length) continue;
+      // Las filas vecinas solo cuentan como encabezado si no tienen números (si no, ya son datos).
+      if (k !== 0 && rowHasNumber(matrix[rr]!)) continue;
+      norm[rr]!.forEach((h, c) => {
+        if (!h || (rr === r && c === nameC)) return;
+        const cols = spanCols(merges, rr, c);
+        if (isPctHeader(h)) cols.forEach((x) => pct.add(x));
+        else if (isCodeHeader(h)) cols.forEach((x) => code.add(x));
+        else if (isQtyHeader(h)) cols.forEach((x) => qty.add(x));
+        else return;
+        headerStart = Math.min(headerStart, rr);
+        headerEnd = Math.max(headerEnd, rr);
+      });
     }
+    pct.delete(nameC);
+    qty.delete(nameC);
+    code.delete(nameC);
+    // Una columna no puede ser a la vez porcentaje y cantidad: si el rótulo es ambiguo gana el porcentaje.
+    for (const c of pct) qty.delete(c);
+    if (pct.size === 0 && qty.size === 0) continue;
+    return {
+      loc: {
+        headerStart,
+        headerEnd,
+        nameCols: spanCols(merges, r, nameC),
+        codeCols: [...code].sort((a, b) => a - b),
+        pctCols: [...pct].sort((a, b) => a - b),
+        qtyCols: [...qty].sort((a, b) => a - b),
+      },
+      why: "",
+    };
   }
-  return -1;
+  return {
+    loc: null,
+    why: sawName
+      ? "Se encontró la columna de materias primas pero no una columna de porcentaje («Fórmula %») ni de cantidades."
+      : "No se encontró la tabla de materias primas (columna «Materia prima»).",
+  };
 }
 
 type RawRow = {
@@ -121,34 +186,65 @@ type RawRow = {
   rawQty: number | null;
 };
 
-function extractRawRows(matrix: string[][], headerRow: number) {
-  const header = matrix[headerRow]!.map((c) => normalizeSearchKey(c));
-  const idxName = header.findIndex((h) => h.includes("materia prima"));
-  const idxCode = header.findIndex(
-    (h) => h.includes("codigo") || h.includes("fase") || h === "cod"
-  );
-  const idxPct = header.findIndex((h) => h.includes("formula") || h === "%" || h.includes("%"));
-  const idxQty = header.findIndex(
-    (h, i) => i !== idxPct && QTY_HEADER_TOKENS.some((t) => h.includes(t))
-  );
+const firstNum = (row: string[], cols: number[]): number | null => {
+  for (const c of cols) {
+    const n = parseLooseNumber(row[c]);
+    if (n != null) return n;
+  }
+  return null;
+};
+const firstText = (row: string[], cols: number[]): string => {
+  for (const c of cols) {
+    const t = cellStr(row[c]);
+    if (t) return t;
+  }
+  return "";
+};
+
+/** Fin de la tabla: lo que sigue ya no son materias primas. */
+const STOP_RE = /^(procedimiento|especificacion|control de (proceso|calidad)|firma|limpieza|observaciones? generales)/;
+/** Filas de total/subtotal (el total final cierra la tabla; un subtotal intermedio de fase se omite). */
+const TOTAL_RE = /^(total|subtotal|sub total|suma)\b/;
+/** Títulos de fase/sección e instrucciones: no son ingredientes. */
+const HEADING_RE = /^(fase|etapa|parte|grupo|seccion|nota|notas|obs|observacion|agregar|mezclar|pesar|calentar|disolver|incorporar|enfriar)\b/;
+
+function extractRawRows(matrix: string[][], loc: TableLoc, merges: Merge[]) {
   const rows: RawRow[] = [];
-  if (idxName < 0) return { rows, idxPct, idxQty };
-  for (let r = headerRow + 1; r < matrix.length; r++) {
+  const skipped: string[] = [];
+  const hasNumbers = (row: string[]) => firstNum(row, loc.pctCols) != null || firstNum(row, loc.qtyCols) != null;
+  const nameOf = (row: string[]) => firstText(row, loc.nameCols);
+  for (let r = loc.headerEnd + 1; r < matrix.length; r++) {
     const row = matrix[r]!;
-    const name = cellStr(row[idxName]);
-    if (!name) continue;
+    const name = nameOf(row);
+    if (!name) continue; // fila intermedia vacía: no corta la tabla
     const lower = normalizeSearchKey(name);
-    if (lower.includes("procedimiento") || lower.includes("total") || lower.includes("especific")) {
+    if (STOP_RE.test(lower) || lower.includes("procedimiento de elaboracion")) break;
+    if (TOTAL_RE.test(lower)) {
+      // ¿Siguen ingredientes con valores antes del cierre? Entonces era un subtotal de fase: se omite y se continúa.
+      let more = false;
+      for (let k = r + 1; k < matrix.length; k++) {
+        const nx = matrix[k]!;
+        const nn = nameOf(nx);
+        const low = normalizeSearchKey(nn);
+        if (nn && (STOP_RE.test(low) || low.includes("procedimiento de elaboracion"))) break;
+        if (nn && !TOTAL_RE.test(low) && hasNumbers(nx)) { more = true; break; }
+      }
+      if (more) { skipped.push(name); continue; }
       break;
     }
-    rows.push({
-      materialName: name,
-      materialCodeOrPhase: idxCode >= 0 ? cellStr(row[idxCode]) : "",
-      rawPct: idxPct >= 0 ? parseLooseNumber(row[idxPct]) : null,
-      rawQty: idxQty >= 0 ? parseLooseNumber(row[idxQty]) : null,
-    });
+    const pct = firstNum(row, loc.pctCols);
+    const qty = firstNum(row, loc.qtyCols);
+    const code = firstText(row, loc.codeCols);
+    if (pct == null && qty == null) {
+      // Sin ningún valor: título de fase, instrucción o nota (nunca un ingrediente inventado). Un ingrediente real sin % sigue
+      // marcándose como faltante (revisión) salvo que su texto sea claramente un título.
+      const spansTable = merges.some((m) => r >= m.s.r && r <= m.e.r && m.e.c > m.s.c && (loc.pctCols.length ? m.e.c >= loc.pctCols[0]! : true) && m.s.c <= loc.nameCols[0]!);
+      const headingLike = HEADING_RE.test(lower) || /:\s*$/.test(name) || name.length > 70 || spansTable;
+      if (headingLike) { skipped.push(name); continue; }
+    }
+    rows.push({ materialName: name, materialCodeOrPhase: code, rawPct: pct, rawQty: qty });
   }
-  return { rows, idxPct, idxQty };
+  return { rows, skipped, hasQtyCol: loc.qtyCols.length > 0 };
 }
 
 type ClassifiedFormula = {
@@ -322,6 +418,133 @@ function resolveProduct(
   return { displayProduct: PRODUCT_PENDING, sourceConfidence: "PENDING" };
 }
 
+/** Motivo por el que una hoja no aportó una fórmula (para explicarlo al usuario en vez de mostrar una tabla vacía). */
+export type SheetDiagnostic = { sheet: string; ok: boolean; reason: string };
+
+const REVIEW_TEXT: Record<string, string> = {
+  QUANTITY_NEGATIVE: "hay cantidades negativas",
+  QUANTITY_NON_NUMERIC: "las cantidades no son números",
+  QUANTITY_SUM_ZERO: "las cantidades suman 0",
+  QUANTITY_INCOMPLETE: "faltan cantidades en algunas materias primas",
+  NO_NUMERIC_COLUMN: "no hay porcentajes ni cantidades numéricas",
+  PCT_ROW_MISSING: "hay materias primas sin porcentaje",
+  QUANTITY_PCT_MISMATCH: "las cantidades de la hoja no son proporcionales a los porcentajes (base de cálculo ambigua)",
+};
+export const reviewReasonText = (codes: string[]): string => codes.map((c) => REVIEW_TEXT[c] ?? c).join("; ");
+
+// ───── Valores calculados: celdas con fórmula de Excel pero sin resultado guardado (archivo generado por script/otra herramienta) ─────
+type XCell = { t?: string; v?: unknown; f?: string };
+
+function colToNum(letters: string): number {
+  let n = 0;
+  for (const ch of letters.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+/** Evalúa fórmulas aritméticas simples (+ − × ÷, paréntesis, referencias, SUM, %). Cualquier otra cosa → null (no se inventa). */
+function evalFormula(sheet: Record<string, unknown>, expr: string, memo: Map<string, number | null>, depth: number): number | null {
+  if (depth > 12 || expr.includes("!") || /[A-Za-z]{2,}\(/.test(expr.replace(/SUM\(/gi, ""))) return null;
+  const tokens = expr.replace(/\s+/g, "").match(/SUM|\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?|\d+\.?\d*|\.\d+|[()+\-*/,%]/gi);
+  if (!tokens || tokens.join("") !== expr.replace(/\s+/g, "")) return null;
+  let i = 0;
+  const addrNum = (ref: string): number | null => cellNum(sheet, ref.replace(/\$/g, "").toUpperCase(), memo, depth + 1);
+  const rangeVals = (ref: string): number[] | null => {
+    const [a, b] = ref.replace(/\$/g, "").toUpperCase().split(":");
+    const ma = /^([A-Z]+)(\d+)$/.exec(a!);
+    const mb = /^([A-Z]+)(\d+)$/.exec(b!);
+    if (!ma || !mb) return null;
+    const out: number[] = [];
+    for (let c = colToNum(ma[1]!); c <= colToNum(mb[1]!); c++) {
+      for (let r = Number(ma[2]); r <= Number(mb[2]); r++) {
+        const addr = `${XLSX.utils.encode_col(c)}${r}`;
+        const v = cellNum(sheet, addr, memo, depth + 1);
+        if (v == null && (sheet[addr] as XCell | undefined)?.f) return null;
+        if (v != null) out.push(v);
+      }
+    }
+    return out;
+  };
+  const primary = (): number | null => {
+    const t = tokens[i++];
+    if (t == null) return null;
+    if (t === "(") { const v = sum(); if (tokens[i++] !== ")") return null; return v; }
+    if (t === "-") { const v = primary(); return v == null ? null : -v; }
+    if (t === "+") return primary();
+    if (/^SUM$/i.test(t)) {
+      if (tokens[i++] !== "(") return null;
+      let total = 0;
+      while (tokens[i] !== ")") {
+        const a = tokens[i++];
+        if (a == null) return null;
+        if (a === ",") continue;
+        if (a.includes(":")) { const vals = rangeVals(a); if (!vals) return null; total += vals.reduce((x, y) => x + y, 0); }
+        else if (/^\$?[A-Za-z]{1,3}\$?\d+$/.test(a)) { const v = addrNum(a); if (v == null) return null; total += v; }
+        else if (/^[\d.]+$/.test(a)) total += Number(a);
+        else return null;
+      }
+      i++;
+      return total;
+    }
+    if (/^\$?[A-Za-z]{1,3}\$?\d+$/.test(t)) return addrNum(t);
+    if (/^[\d.]+$/.test(t)) { const n = Number(t); return tokens[i] === "%" ? (i++, n / 100) : n; }
+    return null;
+  };
+  const prod = (): number | null => {
+    let v = primary();
+    while (v != null && (tokens[i] === "*" || tokens[i] === "/")) {
+      const op = tokens[i++];
+      const w = primary();
+      if (w == null) return null;
+      if (op === "/") { if (w === 0) return null; v = v / w; } else v = v * w;
+    }
+    return v;
+  };
+  const sum = (): number | null => {
+    let v = prod();
+    while (v != null && (tokens[i] === "+" || tokens[i] === "-")) {
+      const op = tokens[i++];
+      const w = prod();
+      if (w == null) return null;
+      v = op === "+" ? v + w : v - w;
+    }
+    return v;
+  };
+  const out = sum();
+  return i === tokens.length && out != null && Number.isFinite(out) ? out : null;
+}
+
+function cellNum(sheet: Record<string, unknown>, addr: string, memo: Map<string, number | null>, depth: number): number | null {
+  if (memo.has(addr)) return memo.get(addr) ?? null;
+  const cell = sheet[addr] as XCell | undefined;
+  let out: number | null = null;
+  if (!cell) out = 0;
+  else if (cell.t === "e") out = null;
+  else if (typeof cell.v === "number") out = cell.v;
+  else if (typeof cell.v === "string" && cell.v.trim() !== "") out = parseLooseNumber(cell.v);
+  else if (cell.f) { memo.set(addr, null); out = evalFormula(sheet, cell.f, memo, depth); }
+  else out = 0;
+  memo.set(addr, out);
+  return out;
+}
+
+/** Completa el valor de las celdas con fórmula que no tienen resultado guardado y vacía las que dieron error (#DIV/0!, etc.). */
+export function fillCalculatedCells(sheet: Record<string, unknown>): { unresolved: number } {
+  const memo = new Map<string, number | null>();
+  let unresolved = 0;
+  for (const addr of Object.keys(sheet)) {
+    if (addr.startsWith("!")) continue;
+    const cell = sheet[addr] as XCell;
+    if (!cell || typeof cell !== "object") continue;
+    if (cell.t === "e") { cell.t = "z"; cell.v = undefined; continue; }
+    if (cell.f && (cell.v === undefined || cell.v === null || cell.v === "")) {
+      const v = cellNum(sheet, addr, new Map(memo), 0);
+      if (v != null) { cell.t = "n"; cell.v = v; memo.set(addr, v); }
+      else unresolved++;
+    }
+  }
+  return { unresolved };
+}
+
 export function parseWorkbookBuffer(
   buffer: Buffer,
   meta: {
@@ -329,15 +552,21 @@ export function parseWorkbookBuffer(
     sourceModifiedAt: string | null;
     folderClient?: string;
     knownClients?: string[];
+    /** Recibe, por hoja, por qué se aceptó o se descartó (para explicarlo al usuario). */
+    onDiagnostic?: (d: SheetDiagnostic) => void;
   }
 ): ParsedFormulaDraft[] {
   const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
   const fileHash = createHash("sha256").update(buffer).digest("hex");
   const drafts: ParsedFormulaDraft[] = [];
+  const diag = (sheet: string, ok: boolean, reason: string) => meta.onDiagnostic?.({ sheet, ok, reason });
+  if (wb.SheetNames.length === 0) diag("", false, "El archivo no tiene hojas.");
 
   for (const sheetName of wb.SheetNames) {
     const sheet = wb.Sheets[sheetName];
     if (!sheet) continue;
+    const { unresolved } = fillCalculatedCells(sheet as unknown as Record<string, unknown>);
+    const merges = ((sheet as unknown as { "!merges"?: Merge[] })["!merges"] ?? []) as Merge[];
     const aoa = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
       header: 1,
       defval: "",
@@ -346,16 +575,39 @@ export function parseWorkbookBuffer(
     const matrix = aoa.map((row) =>
       (Array.isArray(row) ? row : []).map((c) => cellStr(c))
     );
-    if (!sheetLooksLikeOe(matrix)) continue;
+    // Las celdas combinadas solo guardan el valor en su esquina: se replica dentro del rango de filas del texto (nombre/valor).
+    for (const m of merges) {
+      const top = matrix[m.s.r]?.[m.s.c];
+      if (!top) continue;
+      // Un valor numérico combinado en vertical NO se replica (sería inventar el mismo % en cada fila); el texto sí (fase/nombre).
+      const numeric = parseLooseNumber(top) != null;
+      for (let c = m.s.c; c <= m.e.c; c++) {
+        for (let r = m.s.r; r <= m.e.r; r++) {
+          if (numeric && r !== m.s.r) continue;
+          if (matrix[r] && !matrix[r]![c]) matrix[r]![c] = top;
+        }
+      }
+    }
 
-    const headerRow = findHeaderRow(matrix);
-    const { rows, idxQty } = headerRow >= 0
-      ? extractRawRows(matrix, headerRow)
-      : { rows: [] as RawRow[], idxQty: -1 };
+    const located = locateTable(matrix, merges);
+    if (!located.loc) {
+      diag(sheetName, false, located.why);
+      continue;
+    }
+    const { rows, skipped, hasQtyCol } = extractRawRows(matrix, located.loc, merges);
     const procedureSteps = extractProcedure(matrix);
     // Una fórmula requiere ingredientes; hojas sin materia prima (p.ej. solo
     // procedimiento) no representan una fórmula importable.
-    if (rows.length === 0) continue;
+    if (rows.length === 0) {
+      diag(sheetName, false, "La tabla de materias primas está vacía (no hay filas con materia prima debajo del encabezado).");
+      continue;
+    }
+    if (unresolved > 0 && rows.every((r) => r.rawPct == null && r.rawQty == null)) {
+      diag(sheetName, false, "Los porcentajes son fórmulas de Excel sin resultado guardado: abrí el archivo en Excel o Google Sheets y guardalo para que se calculen.");
+      continue;
+    }
+    diag(sheetName, true, `${rows.length} materias primas.`);
+    const idxQty = hasQtyCol ? 1 : -1;
 
     // Cliente: CELL → FOLDER → FILENAME → CLIENTE_PENDIENTE.
     // La celda "Cliente" de la plantilla es ruidosa (puede traer "Envase…", etc.),
@@ -389,6 +641,7 @@ export function parseWorkbookBuffer(
     if (displayClient === CLIENT_PENDING) warnings.push("Cliente no determinado");
     if (sourceConfidence === "PENDING") warnings.push("Producto no determinado");
     if (procedureSteps.length === 0) warnings.push("Procedimiento faltante");
+    if (skipped.length) warnings.push(`Filas omitidas por no ser materias primas (títulos, subtotales o notas): ${skipped.slice(0, 6).join(" · ")}`);
 
     if (classified.baseWarnings.includes("PCT_BASE_NOT_100")) {
       warnings.push(

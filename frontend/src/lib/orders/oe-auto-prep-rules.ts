@@ -83,14 +83,6 @@ export function formulaContentFingerprint(content: OeContent): string {
   });
 }
 
-function hasFormulaContent(content: OeContent): boolean {
-  return (
-    content.materials.some(
-      (m) => m.materiaPrima.trim() !== "" || m.codigo.trim() !== "" || m.formulaPct != null
-    ) || content.procedureSteps.some((s) => s.text.trim() !== "")
-  );
-}
-
 /**
  * ¿Empezó la elaboración? Desde ese momento la preparación automática no reemplaza nada
  * (fórmula, lotes ni cantidades): solo una acción explícita con revisión.
@@ -208,7 +200,12 @@ export function buildAutoPreparedOe(input: BuildAutoPrepInput): BuildAutoPrepRes
   const currentFp = formulaContentFingerprint(content);
   const materialsCameFromAuto =
     Boolean(prev?.formula.fingerprint) && prev!.formula.fingerprint === currentFp;
-  const manualContent = hasFormulaContent(content) && !materialsCameFromAuto;
+  // «Cargada a mano» = materias primas escritas por una persona. Una OE sin materias primas (p. ej. quedó vacía porque la
+  // lectura falló) NO está bloqueada: solo tiene, a lo sumo, un procedimiento escrito, que se conserva.
+  const hasManualMaterials = content.materials.some((m) => m.materiaPrima.trim() !== "" || m.codigo.trim() !== "" || m.formulaPct != null);
+  const manualContent = hasManualMaterials && !materialsCameFromAuto;
+  const keepManualProcedure =
+    !hasManualMaterials && !materialsCameFromAuto && !input.replaceManual && content.procedureSteps.some((s) => s.text.trim() !== "");
 
   // La OE ya tiene la fórmula de ESTE producto cargada automáticamente y aparece otra versión/archivo: una preparación
   // automática (reasignación, corrección del trabajo, vinculación) NO la reemplaza. Solo «Actualizar desde fórmula».
@@ -283,7 +280,7 @@ export function buildAutoPreparedOe(input: BuildAutoPrepInput): BuildAutoPrepRes
               : next.header.code || formula.ref.productCode || "",
         },
         materials: input.mpCatalog ? fillCodigoMpSuggestions(materials, input.mpCatalog) : materials,
-        procedureSteps: formula.procedureSteps.map((s) => ({ id: s.id, text: s.text })),
+        procedureSteps: keepManualProcedure ? content.procedureSteps : formula.procedureSteps.map((s) => ({ id: s.id, text: s.text })),
       };
       formulaMeta = {
         status: "ok",
