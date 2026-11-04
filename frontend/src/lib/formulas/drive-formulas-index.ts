@@ -542,7 +542,7 @@ export function parseDriveFormulaBuffer(args: {
     const missing = draft.ingredients.filter((i) => i.percentage == null).map((i) => i.materialName);
     return {
       found: false,
-      message: `${FORMULA_UNREADABLE} Hoja «${draft.sourceSheet}»: ${reviewReasonText(draft.reviewReasons)}${missing.length ? ` (${missing.slice(0, 5).join(", ")})` : ""}. Corregí el archivo de Drive y usá «Reintentar lectura».`,
+      message: `${FORMULA_UNREADABLE} Hoja «${draft.sourceSheet}»: ${reviewReasonText(draft.reviewReasons ?? [])}${missing.length ? ` (${missing.slice(0, 5).join(", ")})` : ""}. Corregí el archivo de Drive y usá «Reintentar lectura».`,
     };
   }
 
