@@ -138,7 +138,7 @@ describe.skipIf(Boolean(PROBLEM))(`Pedidos desde email en Postgres real${PROBLEM
   });
 
   it("re-analizar el mismo correo no duplica (ID de Gmail) y reintenta solo los que fallaron", async () => {
-    aiFor.set(`m-${RUN}-3`, { kind: "consulta", confidence: "media", summary: "", cliente: "", nroPedido: "", fechaSolicitud: "", fechaEntrega: "", observaciones: "", unclearFields: [], items: [] });
+    aiFor.set(`m-${RUN}-3`, { kind: "consulta", confidence: "alta", summary: "", cliente: "", nroPedido: "", fechaSolicitud: "", fechaEntrega: "", observaciones: "", unclearFields: [], items: [] });
     const callsBefore = aiCalls;
     const r = await svc().analyze(prod, { max: 10 });
     expect(r.drafts).toBe(0);

@@ -37,6 +37,11 @@ export type DraftPayload = {
   summary: string;
   items: DraftItem[];
   doubts: string[];
+  /** Estado de la interpretación de la IA (alta / media / baja) y cómo clasificó el correo; null en borradores viejos. */
+  confidence?: "alta" | "media" | "baja" | null;
+  classification?: string | null;
+  /** true = la IA no estaba segura de que fuera un pedido: Producción decide (aprobar completando datos o descartar). */
+  uncertain?: boolean;
 };
 
 export type RawExtraction = {
@@ -132,5 +137,6 @@ export function sanitizeDraftPayload(raw: unknown, fallback: DraftPayload): Draf
     cliente: str(o.cliente, 160), clienteMatched: fallback.clienteMatched && str(o.cliente, 160) === fallback.cliente, clienteSuggestions: fallback.clienteSuggestions,
     nroPedido: str(o.nroPedido, 60), fechaSolicitud: normalizeFecha(str(o.fechaSolicitud, 20)) ?? "", fechaEntrega: normalizeFecha(str(o.fechaEntrega, 20)) ?? "",
     observaciones: str(o.observaciones, 500), summary: fallback.summary, items, doubts: fallback.doubts,
+    confidence: fallback.confidence ?? null, classification: fallback.classification ?? null, uncertain: fallback.uncertain ?? false, // los decide la interpretación, no el navegador
   };
 }

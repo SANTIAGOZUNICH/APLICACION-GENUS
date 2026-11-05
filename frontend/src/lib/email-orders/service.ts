@@ -7,7 +7,7 @@ import "server-only";
  */
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
-import { emailIntegrations, emailOrderDrafts, emailOrderMessages, productionPedidos } from "@/lib/db/schema";
+import { emailIntegrations, emailOrderDrafts, emailOrderMessages, emailOrderSyncRuns, productionPedidos } from "@/lib/db/schema";
 import { extractionConfig } from "@/lib/inventory/receipt-extraction";
 import { OrdersForbiddenError, OrdersNotFoundError, OrdersUnavailableError, OrdersValidationError } from "@/lib/orders/types";
 import { canAccessProductionPedidos, type ProductionPedidosActor } from "@/lib/production-pedidos/types";
@@ -19,6 +19,7 @@ import { createGmailGateway, MAX_MESSAGES_PER_RUN, MAX_SCAN_PER_RUN, type GmailG
 import { connectAccount, oauthConfigStatus, ordersAddress, revokeToken } from "./gmail-oauth";
 import { senderDomain, verifyOriginalRecipient } from "./recipient";
 import { matchName } from "./matching";
+import { afterDateForWindow, decideOutcome, describeGmailError, parseWindowDays, summarizeRun, type RunStatus, type SyncTrigger } from "./sync";
 import { parseMl, sanitizeDraftPayload, validateForApproval, type DraftItem, type DraftKind, type DraftPayload, type DraftStatus, type RawExtraction } from "./types";
 
 /** Conflicto de estado (409): el borrador ya cambió, la casilla no está conectada, etc. */
@@ -40,7 +41,30 @@ export type DraftRow = {
   version: number; wasEdited: boolean; reviewedBy: string | null; reviewedAt: string | null; discardReason: string | null; createdAt: string; updatedAt: string;
 };
 
+export type AnalyzeOptions = {
+  max?: number;
+  scan?: number;
+  afterDate?: string;
+  beforeDate?: string;
+  recheckExcluded?: boolean;
+  /** Origen de la corrida (queda en el historial). */
+  trigger?: SyncTrigger;
+  /** Ventana de búsqueda: 2, 7, 15 o 30 días hacia atrás (recuperar correos que llegaron mientras no funcionaba). */
+  windowDays?: number;
+  /** Reintento de correos con error: 0 = siempre (manual); N ms = solo si el último intento tiene más de N ms (automático, para no insistir en cada corrida). */
+  retryErrorsAfterMs?: number;
+};
+
 export type AnalyzeResult = {
+  /** Identificador de la corrida en el historial y su estado REAL (nunca «éxito» sin borradores sin explicarlo). */
+  runId: string | null;
+  status: RunStatus;
+  reason: string;
+  windowDays: number | null;
+  /** Correos que Gmail devolvió para la búsqueda (antes de cualquier filtro). */
+  found: number;
+  /** Excluidos + sin pedido: correos que se leyeron y se dejaron de lado (con su motivo). */
+  omitted: number;
   /** Correos revisados (solo encabezados) para encontrar los dirigidos a la casilla de pedidos. */
   scanned: number;
   /** Correos descartados por no poder verificar que originalmente iban a pedidos@ (no se descargaron adjuntos ni se enviaron a la IA). */
@@ -112,9 +136,59 @@ export class EmailOrdersService {
     if (!isDatabaseConfigured()) return { ...base, connected: false, dbReady: false, connectedAt: null, connectedBy: null, lastError: null, lastAnalyzedAt: null, metrics: null };
     const [row] = await getDb().select().from(emailIntegrations).where(eq(emailIntegrations.id, INTEGRATION_ID));
     return {
-      ...base, dbReady: true, connected: row?.status === "conectado", connectedAt: row?.connectedAt?.toISOString() ?? null, connectedBy: row?.connectedBy ?? null,
+      ...base, account: row?.accountEmail || base.account, dbReady: true, connected: row?.status === "conectado", connectedAt: row?.connectedAt?.toISOString() ?? null, connectedBy: row?.connectedBy ?? null,
       lastError: row?.lastError ?? null, lastAnalyzedAt: row?.lastAnalyzedAt?.toISOString() ?? null, metrics: await this.metrics(),
+      lastRun: await this.lastRun().catch(() => null), recent: await this.recentMessages(25).catch(() => []),
+      /** El sistema revisa Gmail solo cada pocos minutos (cron) además del botón manual; la pantalla lo indica. */
+      automatic: { everyMinutes: 15, windowDays: 3 },
     };
+  }
+
+  /** Última corrida del historial (manual, automática o de recuperación) con sus números reales. */
+  async lastRun() {
+    const [r] = await requireDb().select().from(emailOrderSyncRuns).orderBy(desc(emailOrderSyncRuns.startedAt)).limit(1);
+    if (!r) return null;
+    const stale = r.status === "en_curso" && Date.now() - r.startedAt.getTime() > CLAIM_STALE_MS;
+    return {
+      id: r.id, trigger: r.trigger, actor: r.actor, startedAt: r.startedAt.toISOString(), finishedAt: r.finishedAt?.toISOString() ?? null, windowDays: r.windowDays,
+      status: (stale ? "error" : r.status) as RunStatus | "en_curso", reason: stale ? "La corrida se interrumpió antes de terminar." : r.reason, account: r.accountEmail,
+      found: r.found, scanned: r.scanned, analyzed: r.analyzed, drafts: r.drafts, omitted: r.omitted, excluded: r.excluded, withoutOrder: r.withoutOrder, alreadyProcessed: r.alreadyProcessed,
+      errors: r.errors, errorItems: (r.errorItems ?? []) as Array<{ messageId: string; subject: string; message: string }>,
+    };
+  }
+
+  /** Últimos correos revisados con su resultado y motivo. De los excluidos NO se guarda remitente ni asunto (puede ser personal). */
+  async recentMessages(limit = 25) {
+    const rows = await requireDb().select().from(emailOrderMessages).orderBy(desc(emailOrderMessages.analyzedAt)).limit(Math.min(Math.max(1, limit), 100));
+    return rows.map((r) => ({
+      id: r.gmailMessageId, outcome: r.outcome, reason: r.outcome === "error" ? r.error : r.classification, receivedAt: r.receivedAt?.toISOString() ?? null, analyzedAt: r.analyzedAt.toISOString(),
+      from: r.outcome === "excluido" ? null : r.fromAddr, subject: r.outcome === "excluido" ? null : r.subject,
+    }));
+  }
+
+  /**
+   * Prueba REAL de la conexión: pide a Gmail el perfil de la cuenta y una muestra de la bandeja. No analiza ni escribe correos. El resultado
+   * (acceso vencido, API deshabilitada, credenciales inválidas…) se informa con su motivo en lugar de mostrar «Conectado» por una marca en la base.
+   */
+  async checkConnection(actor: ProductionPedidosActor) {
+    asActor(actor);
+    const db = requireDb();
+    let gw: GmailGateway;
+    try {
+      gw = await this.gateway();
+    } catch (err) {
+      return { ok: false as const, account: connectAccount(), inboxSample: null, message: err instanceof Error ? err.message : "La casilla no está conectada.", reconnect: true };
+    }
+    try {
+      const account = (await gw.accountEmail()) || connectAccount();
+      const sample = await gw.listCandidates({ scan: 5, label: process.env.GMAIL_ORDERS_LABEL?.trim() || undefined });
+      await db.update(emailIntegrations).set({ lastError: null, updatedAt: new Date() }).where(eq(emailIntegrations.id, INTEGRATION_ID));
+      return { ok: true as const, account, inboxSample: sample.length, message: sample.length ? `Gmail responde: se leyó la bandeja de ${account} (${sample.length}+ correos recientes).` : `Gmail responde, pero la bandeja de ${account} no tiene correos recientes.`, reconnect: false };
+    } catch (err) {
+      const d = describeGmailError(err);
+      await db.update(emailIntegrations).set({ lastError: d.message.slice(0, 300), updatedAt: new Date() }).where(eq(emailIntegrations.id, INTEGRATION_ID));
+      return { ok: false as const, account: connectAccount(), inboxSample: null, message: d.message, reconnect: d.reconnect };
+    }
   }
 
   /** Guarda la conexión (token CIFRADO). Solo se acepta la casilla autorizada. */
@@ -152,27 +226,50 @@ export class EmailOrdersService {
 
   // ── Análisis manual ──
 
-  async analyze(actor: ProductionPedidosActor, opts: { max?: number; scan?: number; afterDate?: string; beforeDate?: string; recheckExcluded?: boolean } = {}): Promise<AnalyzeResult> {
+  async analyze(actor: ProductionPedidosActor, opts: AnalyzeOptions = {}): Promise<AnalyzeResult> {
     asActor(actor);
     const db = requireDb();
+    const trigger: SyncTrigger = opts.trigger ?? "manual";
+    const windowDays = parseWindowDays(opts.windowDays);
+    const windowLabel = windowDays ? `de los últimos ${windowDays} días` : "reciente";
+    // El historial NUNCA puede impedir procesar correos: si la tabla no está disponible (migración pendiente) la corrida sigue sin registro.
+    const runId: string | null = await db.insert(emailOrderSyncRuns).values({ trigger: windowDays && windowDays > 2 && trigger === "manual" ? "backfill" : trigger, actor: actor.email, windowDays, status: "en_curso" }).returning({ id: emailOrderSyncRuns.id }).then((r) => r[0]?.id ?? null, () => null);
+    const finish = async (status: RunStatus, reason: string, counts: Partial<Record<"found" | "scanned" | "analyzed" | "drafts" | "omitted" | "excluded" | "withoutOrder" | "alreadyProcessed" | "errors", number>> = {}, errorItems: Array<{ messageId: string; subject: string; message: string }> = [], account?: string) => {
+      if (!runId) return;
+      await db.update(emailOrderSyncRuns).set({ status, reason: reason.slice(0, 500), finishedAt: new Date(), accountEmail: account ?? null, ...counts, errorItems: errorItems.slice(0, 20) }).where(eq(emailOrderSyncRuns.id, runId)).catch(() => undefined);
+    };
     const ai = (this.deps.aiAvailable ?? (() => extractionConfig()))();
-    if (!ai.available) throw new OrdersConflictError(`La lectura con IA no está disponible: ${ai.reason}`);
+    if (!ai.available) {
+      const reason = `La lectura con IA no está disponible: ${ai.reason}`;
+      await finish("error_ia", reason);
+      throw new OrdersConflictError(reason);
+    }
     const max = Math.min(Math.max(1, Math.floor(opts.max ?? MAX_MESSAGES_PER_RUN)), MAX_MESSAGES_PER_RUN);
     const dateOk = (d?: string) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : undefined);
-    const gw = await this.gateway();
+    const afterDate = dateOk(opts.afterDate) ?? (windowDays ? afterDateForWindow(windowDays) : undefined);
+    let gw: GmailGateway;
+    try {
+      gw = await this.gateway();
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "La casilla de pedidos no está conectada.";
+      await finish("no_conectada", reason);
+      throw err;
+    }
     const account = (await gw.accountEmail().catch(() => connectAccount())) || connectAccount();
     const target = ordersAddress();
     let refs: Array<{ id: string; threadId: string }>;
     try {
-      refs = await gw.listCandidates({ scan: Math.min(Math.max(max, Math.floor(opts.scan ?? 60)), MAX_SCAN_PER_RUN), afterDate: dateOk(opts.afterDate), beforeDate: dateOk(opts.beforeDate), label: process.env.GMAIL_ORDERS_LABEL?.trim() || undefined });
+      refs = await gw.listCandidates({ scan: Math.min(Math.max(max, Math.floor(opts.scan ?? 60)), MAX_SCAN_PER_RUN), afterDate, beforeDate: dateOk(opts.beforeDate), label: process.env.GMAIL_ORDERS_LABEL?.trim() || undefined });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "error";
-      await db.update(emailIntegrations).set({ lastError: msg.slice(0, 300), updatedAt: new Date() }).where(eq(emailIntegrations.id, INTEGRATION_ID));
-      throw new OrdersConflictError("No se pudo leer Gmail. Si el problema sigue, reconectá la cuenta.");
+      const d = describeGmailError(err);
+      await db.update(emailIntegrations).set({ lastError: d.message.slice(0, 300), updatedAt: new Date() }).where(eq(emailIntegrations.id, INTEGRATION_ID));
+      await finish("error_gmail", d.message, {}, [], account);
+      throw new OrdersConflictError(d.message);
     }
     const catalog = this.deps.catalog ?? defaultCatalog();
-    const result: AnalyzeResult = { scanned: 0, excluded: 0, excludedItems: [], requested: 0, analyzed: 0, drafts: 0, withoutOrder: 0, alreadyProcessed: 0, errors: [], items: [] };
+    const result: AnalyzeResult = { runId, status: "sin_borradores", reason: "", windowDays, found: refs.length, omitted: 0, scanned: 0, excluded: 0, excludedItems: [], requested: 0, analyzed: 0, drafts: 0, withoutOrder: 0, alreadyProcessed: 0, errors: [], items: [] };
     let verifiedCount = 0;
+    const retryMs = Math.max(0, Math.floor(opts.retryErrorsAfterMs ?? 0));
     for (const ref of refs) {
       if (verifiedCount >= max) break; // ya se encontraron los pedidos que se pidieron analizar
       result.scanned++;
@@ -183,10 +280,18 @@ export class EmailOrdersService {
         .onConflictDoUpdate({
           target: emailOrderMessages.gmailMessageId,
           set: { outcome: "procesando", error: null, analyzedBy: actor.email, analyzedAt: new Date() },
-          setWhere: sql`${emailOrderMessages.outcome} = 'error' or (${emailOrderMessages.outcome} = 'procesando' and ${emailOrderMessages.analyzedAt} < now() - (${CLAIM_STALE_MS} * interval '1 millisecond')) or (${opts.recheckExcluded === true} and ${emailOrderMessages.outcome} = 'excluido')`,
+          setWhere: sql`(${emailOrderMessages.outcome} = 'error' and (${retryMs} = 0 or ${emailOrderMessages.analyzedAt} < now() - (${retryMs} * interval '1 millisecond'))) or (${emailOrderMessages.outcome} = 'procesando' and ${emailOrderMessages.analyzedAt} < now() - (${CLAIM_STALE_MS} * interval '1 millisecond')) or (${opts.recheckExcluded === true} and ${emailOrderMessages.outcome} = 'excluido')`,
         })
         .returning({ id: emailOrderMessages.id });
       if (!claimed[0]) {
+        result.alreadyProcessed++;
+        result.items.push({ messageId: ref.id, subject: "", outcome: "ya_procesado" });
+        continue;
+      }
+      // Ya existe un borrador (aprobado o no) de ESTE correo de Gmail: no se vuelve a importar ni se duplica.
+      const [prior] = await db.select({ id: emailOrderDrafts.id }).from(emailOrderDrafts).where(eq(emailOrderDrafts.gmailMessageId, ref.id)).limit(1);
+      if (prior) {
+        await db.update(emailOrderMessages).set({ outcome: "borrador", error: null }).where(eq(emailOrderMessages.gmailMessageId, ref.id));
         result.alreadyProcessed++;
         result.items.push({ messageId: ref.id, subject: "", outcome: "ya_procesado" });
         continue;
@@ -230,13 +335,14 @@ export class EmailOrdersService {
         result.analyzed++;
         const ex = out.data;
         const base = { fromAddr: msg.from, subject: msg.subject, receivedAt: msg.date ? new Date(msg.date) : null, classification: ex.kind, attachments: attachmentsMeta, aiMs: out.ms };
-        if ((ex.kind === "consulta" || ex.kind === "no_relacionado") || (ex.items.length === 0 && !ex.cliente)) {
-          await db.update(emailOrderMessages).set({ ...base, outcome: "sin_pedido" }).where(eq(emailOrderMessages.gmailMessageId, ref.id));
+        const decision = decideOutcome(ex);
+        if (decision.action === "omitir") {
+          await db.update(emailOrderMessages).set({ ...base, classification: decision.reason, outcome: "sin_pedido" }).where(eq(emailOrderMessages.gmailMessageId, ref.id));
           result.withoutOrder++;
-          result.items.push({ messageId: ref.id, subject, outcome: "sin_pedido", classification: ex.kind });
+          result.items.push({ messageId: ref.id, subject, outcome: "sin_pedido", classification: decision.reason });
           continue;
         }
-        const built = await this.buildDraft(ref.id, ref.threadId, msg, ex, catalog, out.skippedAttachments);
+        const built = await this.buildDraft(ref.id, ref.threadId, msg, ex, catalog, out.skippedAttachments, decision.uncertain ? decision.reason : null);
         const inserted = await db
           .insert(emailOrderDrafts)
           .values({ gmailMessageId: ref.id, gmailThreadId: ref.threadId, kind: built.kind, payload: built.payload, original: built.payload, related: built.related, source: { from: msg.from, subject: msg.subject, receivedAt: msg.date, attachments: docs.map((d) => ({ filename: d.meta.filename, used: d.meta.used, note: d.meta.note })), links: msg.links } })
@@ -254,7 +360,12 @@ export class EmailOrdersService {
         result.items.push({ messageId: ref.id, subject, outcome: "error" });
       }
     }
-    await db.update(emailIntegrations).set({ lastAnalyzedAt: new Date(), lastError: null, updatedAt: new Date() }).where(eq(emailIntegrations.id, INTEGRATION_ID));
+    result.omitted = result.excluded + result.withoutOrder;
+    const summary = summarizeRun({ found: result.found, scanned: result.scanned, analyzed: result.analyzed, drafts: result.drafts, excluded: result.excluded, withoutOrder: result.withoutOrder, alreadyProcessed: result.alreadyProcessed, errors: result.errors.length }, windowLabel);
+    result.status = summary.status;
+    result.reason = summary.reason;
+    await db.update(emailIntegrations).set({ lastAnalyzedAt: new Date(), lastError: result.errors.length ? `${result.errors.length} correo(s) con error en la última búsqueda.` : null, updatedAt: new Date() }).where(eq(emailIntegrations.id, INTEGRATION_ID));
+    await finish(summary.status, summary.reason, { found: result.found, scanned: result.scanned, analyzed: result.analyzed, drafts: result.drafts, omitted: result.omitted, excluded: result.excluded, withoutOrder: result.withoutOrder, alreadyProcessed: result.alreadyProcessed, errors: result.errors.length }, result.errors, account);
     return result;
   }
 
@@ -280,9 +391,10 @@ export class EmailOrdersService {
   }
 
   /** Arma el borrador: coincidencias con el catálogo, detección de hilo/pedido existente. No inventa nada. */
-  private async buildDraft(messageId: string, threadId: string, msg: { date: string | null }, ex: RawExtraction, catalog: Catalog, skippedAttachments: string[] = []) {
+  private async buildDraft(messageId: string, threadId: string, msg: { date: string | null }, ex: RawExtraction, catalog: Catalog, skippedAttachments: string[] = [], uncertainReason: string | null = null) {
     const db = getDb();
     const doubts: string[] = [];
+    if (uncertainReason) doubts.push(`No se sabe con certeza si es un pedido (${uncertainReason}). Revisá el correo original: si lo es, completá cliente, productos y cantidades; si no, descartalo.`);
     if (skippedAttachments.length) doubts.push(`La IA no pudo leer estos archivos adjuntos (${skippedAttachments.join(", ")}): el borrador se armó solo con el texto del correo y de Excel/Word. Revisá cantidades y productos contra el original.`);
     if (ex.confidence === "baja") doubts.push("La IA indicó baja confianza en esta interpretación.");
     for (const u of ex.unclear) doubts.push(`Dato poco claro: ${u}.`);
@@ -303,7 +415,7 @@ export class EmailOrdersService {
       if (it.presentacion && ml == null) idoubts.push("La presentación no está en ml: completá el volumen por unidad si hace falta.");
       return { id: `i${n}`, include: true, producto: pm.value ?? it.producto, codigo: it.codigo, cantidad: it.cantidad, unidad: it.unidad, presentacion: it.presentacion, ml, observaciones: it.observaciones, productSuggestions: pm.suggestions, productMatched: pm.exact, doubts: idoubts };
     });
-    if (ex.items.length === 0) doubts.push("No se detectaron productos.");
+    if (ex.items.length === 0) doubts.push("No se detectaron productos: si el correo pide repetir un pedido anterior o trae el detalle en un archivo que no se pudo leer, cargalo a mano. No se inventó ninguna cantidad.");
     if (!ex.fechaSolicitud) doubts.push(`No hay fecha de solicitud: al aprobar se usa la fecha del correo (${(msg.date ?? "").slice(0, 10) || "sin fecha"}).`);
 
     // Hilo y pedidos existentes (referencia estable, nunca se sobrescribe nada).
@@ -321,7 +433,7 @@ export class EmailOrdersService {
     if (kind === "MODIFICACION") doubts.push("Posible MODIFICACIÓN de un pedido anterior: no se modifica nada automáticamente; revisá y cargá los cambios a mano.");
     const payload: DraftPayload = {
       cliente, clienteMatched: cm.exact, clienteSuggestions: cm.suggestions, nroPedido: ex.nroPedido, fechaSolicitud: ex.fechaSolicitud, fechaEntrega: ex.fechaEntrega,
-      observaciones: ex.observaciones, summary: ex.summary, items, doubts,
+      observaciones: ex.observaciones, summary: ex.summary, items, doubts, confidence: ex.confidence, classification: ex.kind, uncertain: Boolean(uncertainReason) || ex.confidence === "baja",
     };
     return { kind, payload, related: { draftIds: sameThread.map((s) => s.id), pedidoIds, reason: reasons.join(" ") } };
   }
