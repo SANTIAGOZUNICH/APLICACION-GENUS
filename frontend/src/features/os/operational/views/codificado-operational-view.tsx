@@ -23,6 +23,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
 import { fetchDeliveryProgress, type DeliveryProgress } from "../adapters/circuit-client";
 import { DeliverWorkDialog, type DeliverWorkPayload } from "../components/deliver-work-dialog";
+import { WorkDeliveriesList } from "../components/work-deliveries-list";
 import { MarkReadyPanel } from "../components/mark-ready-panel";
 import { resolveDeliveryTarget } from "@/lib/planning/circuit/delivery-math";
 import { summarizePackingGroups } from "@/lib/remitos/packing-math";
@@ -89,6 +90,8 @@ export function CodificadoOperationalView() {
   const [draft, setDraft] = useState<PackagingDraft | null>(null);
   const [obs, setObs] = useState("");
   const [confirmDeliver, setConfirmDeliver] = useState(false);
+  const [deliverMode, setDeliverMode] = useState<"final" | "partial">("final");
+  const [deliveriesTick, setDeliveriesTick] = useState(0);
   const [deliveryProgress, setDeliveryProgress] = useState<DeliveryProgress | null>(null);
   const [missingWarn, setMissingWarn] = useState(false);
   const [packagingError, setPackagingError] = useState<string | null>(null);
@@ -249,13 +252,14 @@ export function CodificadoOperationalView() {
     showToast("Avance de Codificado guardado.");
   }, [persistPackaging, showToast]);
 
-  const tryDeliver = useCallback(() => {
+  const tryDeliver = useCallback((mode: "final" | "partial" = "final") => {
     if (!selected || !draft) return;
     const gate = canDeliverFromCodificado(selected.status, { sector: selected.sector });
     if (!gate.ok) {
       showToast(gate.error, "info");
       return;
     }
+    setDeliverMode(mode);
     setMissingWarn(!draft.packagingLote.trim() || !draft.packagingVto.trim());
     void fetchDeliveryProgress(session, selected.id)
       .then(setDeliveryProgress)
@@ -280,14 +284,18 @@ export function CodificadoOperationalView() {
   const confirmDeliverAction = useCallback(
     async (payload: DeliverWorkPayload) => {
       if (!selected || !draft) return;
+      // «Entregar parcial»: solo viaja lo de ESTA entrega (cantidad, cajas, observaciones, lote/VTO). El cierre del trabajo
+      // (total embalado, distribución del trabajo, muestras) queda para la entrega final; en un trabajo que recibe de Envasado,
+      // el total declarado tampoco se toca (su «realizadas» es lo codificado, no lo entregado).
+      const isPartial = payload.partial === true;
       const server = await postCodificadoHandoff(session, selected.id, {
         action: "deliver",
         observation: payload.observations || obs,
         packagingLote: draft.packagingLote.trim() || null,
         packagingVto: draft.packagingVto.trim() || null,
-        packagingTotalUnits: draft.packagingTotalUnits,
-        packingGroups: draft.packingGroups,
-        sampleUnits: draft.sampleUnits,
+        packagingTotalUnits: isPartial && receivedView ? null : draft.packagingTotalUnits,
+        packingGroups: isPartial ? null : draft.packingGroups,
+        sampleUnits: isPartial ? null : draft.sampleUnits,
         expectedVersion: null,
         idempotencyKey: payload.idempotencyKey,
         deliverQuantity: payload.deliverQuantity,
@@ -299,6 +307,7 @@ export function CodificadoOperationalView() {
       });
       if (server.replayed) {
         showToast(WORK_TRANSFER.alreadyDeliveredFromCodificado, "info");
+        setDeliveriesTick((n) => n + 1);
         await refresh();
         return;
       }
@@ -321,9 +330,11 @@ export function CodificadoOperationalView() {
         showToast(`Entrega parcial registrada. Saldo pendiente: ${server.delivery?.pending ?? "—"}.`);
         setSelected(server.workItem);
       }
+      setDeliveriesTick((n) => n + 1);
+      void transfer.refresh();
       await refresh();
     },
-    [selected, draft, session, obs, deliverFromCodificado, actorName, showToast, refresh]
+    [selected, draft, session, obs, deliverFromCodificado, actorName, showToast, refresh, receivedView, transfer]
   );
 
   const confirmReopenAction = useCallback(async () => {
@@ -566,6 +577,8 @@ export function CodificadoOperationalView() {
                   />
                 ) : null}
 
+                <WorkDeliveriesList workItemId={selected.id} tick={deliveriesTick} />
+
                 <PackagingQuantitiesBlock
                   key={selected.id}
                   item={selected}
@@ -601,8 +614,15 @@ export function CodificadoOperationalView() {
                     Guardar avance
                   </Button>
                   <Button
+                    variant="secondary"
+                    onClick={() => tryDeliver("partial")}
+                    data-testid="codificado-deliver-partial"
+                  >
+                    {WORK_TRANSFER.deliverPartialAction}
+                  </Button>
+                  <Button
                     variant="primary"
-                    onClick={tryDeliver}
+                    onClick={() => tryDeliver("final")}
                     data-testid="codificado-deliver"
                   >
                     {WORK_TRANSFER.deliverFromCodificadoAction}
@@ -629,8 +649,11 @@ export function CodificadoOperationalView() {
           open={confirmDeliver}
           onOpenChange={setConfirmDeliver}
           item={selected}
-          title="Entregar"
-          target={deliverTarget}
+          title={deliverMode === "partial" ? WORK_TRANSFER.deliverPartialAction : "Entregar"}
+          mode={deliverMode}
+          partialDescription="Registra una entrega parcial a Producción: el trabajo sigue pendiente en Codificado hasta entregar todo lo recibido."
+          target={deliverMode === "partial" && receivedView ? receivedView.summary.received : deliverTarget}
+          produced={deliverMode === "partial" ? (receivedView ? receivedView.summary.received : deliverTarget) : null}
           unit={selected.unit}
           progress={deliveryProgress}
           notice={
