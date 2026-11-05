@@ -61,6 +61,8 @@ type Props = {
   mode?: "final" | "partial";
   /** Unidades terminadas según los registros (realizadas); limita lo que se puede entregar en una parcial. */
   produced?: number | null;
+  /** Texto de «Entregar parcial» (por defecto el de Envasado; Codificado informa el suyo). */
+  partialDescription?: string;
   onConfirm: (payload: DeliverWorkPayload) => Promise<void>;
 };
 
@@ -95,6 +97,7 @@ export function DeliverWorkDialog({
   submitLabel = "Confirmar entrega",
   mode = "final",
   produced = null,
+  partialDescription = "Registra una entrega parcial a Producción: el trabajo sigue pendiente en Envasado hasta completar la cantidad.",
   onConfirm,
 }: Props) {
   const isPartialMode = mode === "partial";
@@ -235,7 +238,7 @@ export function DeliverWorkDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             {isPartialMode ? (
-              "Registra una entrega parcial a Producción: el trabajo sigue pendiente en Envasado hasta completar la cantidad."
+              partialDescription
             ) : (
               <>
                 {displayField(productLabel ?? item?.product)} · {displayField(clientLabel ?? item?.client)}. Registra la
