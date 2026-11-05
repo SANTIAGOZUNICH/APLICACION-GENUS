@@ -12,6 +12,7 @@ const payload = (over = {}) => ({ cliente: "FIRMEA", clienteMatched: true, clien
 const draft = (over = {}) => ({ id: "d1", gmailMessageId: "m1", gmailThreadId: "t1", kind: "NUEVO", status: "PENDIENTE", payload: payload(), original: payload(), source: { from: "compras@firmea.com", subject: "Pedido octubre", receivedAt: null, attachments: [{ filename: "oc.pdf", used: true }], links: ["https://x.y"] }, related: { draftIds: [], pedidoIds: [], reason: "" }, version: 1, wasEdited: false, reviewedBy: null, reviewedAt: null, discardReason: null, createdAt: "", updatedAt: "", ...over });
 const status = (over = {}) => ({ account: "pedidos@laboratoriogenus.com.ar", oauth: { ready: true, missing: [], invalid: [], keyFormat: "base64" }, aiAvailable: true, aiReason: "", dbReady: true, connected: true, connectedAt: null, connectedBy: "prod@x", lastError: null, lastAnalyzedAt: null, metrics: { mensajes: 3, sinPedido: 1, conError: 0, borradores: 2, pendientes: 1, aprobados: 1, aprobadosSinCambios: 1, aprobadosCorregidos: 0, descartados: 0, renglonesCargados: 2 }, ...over });
 
+let analyzeResult: object = { runId: "r1", status: "ok", reason: "1 borrador(es) creado(s) para revisar.", windowDays: null, found: 3, omitted: 1, requested: 2, analyzed: 2, drafts: 1, withoutOrder: 1, excluded: 0, alreadyProcessed: 0, errors: [], items: [] };
 function mockApi(s: object, drafts: object[], calls: Array<{ url: string; body?: unknown }> = []) {
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
@@ -21,7 +22,8 @@ function mockApi(s: object, drafts: object[], calls: Array<{ url: string; body?:
     if (u.includes("/status")) return json(s);
     if (u.includes("/drafts/")) return json({ ok: true, item: draft({ version: 2 }) });
     if (u.includes("/drafts")) return json({ items: drafts });
-    return json({ result: { requested: 2, analyzed: 2, drafts: 1, withoutOrder: 1, alreadyProcessed: 0, errors: [], items: [] } });
+    if (u.includes("/probe")) return json({ ok: false, account: "agzunich@gmail.com", inboxSample: null, message: "El acceso a Gmail venció o fue revocado: reconectá la cuenta de pedidos.", reconnect: true });
+    return json({ result: analyzeResult });
   }));
   return calls;
 }
@@ -85,5 +87,43 @@ describe("panel de pedidos por email", () => {
     expect(t).toMatch(/Gemini falló/);
     expect(t).toMatch(/Habilitá «Generative Language API»/);
     expect(t).toMatch(/gemini-3\.5-flash → permission \(HTTP 403 · SERVICE_DISABLED\)/);
+  });
+
+  it("estado REAL: cuenta, última sincronización con sus números y motivo; sin borradores no dice «correcto»", async () => {
+    const lastRun = { id: "r0", trigger: "cron", actor: "cron@genus-os", startedAt: "2026-11-05T18:30:00Z", finishedAt: "2026-11-05T18:30:05Z", windowDays: null, status: "sin_borradores", reason: "No se creó ningún borrador: de 12 correo(s) encontrados, 9 ya estaban procesado(s), 3 excluido(s) por no poder verificar que iban a la casilla de pedidos.", account: "agzunich@gmail.com", found: 12, scanned: 12, analyzed: 8, drafts: 0, omitted: 3, excluded: 3, withoutOrder: 0, alreadyProcessed: 9, errors: 1, errorItems: [] };
+    mockApi(status({ account: "agzunich@gmail.com", connectedAt: "2026-11-01T12:00:00Z", lastRun, automatic: { everyMinutes: 15, windowDays: 3 }, recent: [{ id: "m9", outcome: "error", reason: "Gemini 403", receivedAt: "2026-11-05T18:00:00Z", analyzedAt: "2026-11-05T18:30:00Z", from: "a@b.com", subject: "Hola" }, { id: "m8", outcome: "excluido", reason: "sin_destinatario_original", receivedAt: null, analyzedAt: "2026-11-05T18:30:00Z", from: null, subject: null }] }), []);
+    await open();
+    expect(screen.getByTestId("email-pedidos-estado").textContent).toMatch(/Cuenta conectada: agzunich@gmail.com/);
+    expect(screen.getByTestId("email-pedidos-estado").textContent).toMatch(/automática/);
+    expect(screen.getByTestId("email-pedidos-contadores").textContent).toBe("Correos encontrados: 12 · Analizados: 8 · Borradores creados: 0 · Omitidos: 3 · Ya procesados: 9 · Con error: 1");
+    expect(screen.getByTestId("email-pedidos-motivo").textContent).toMatch(/No se creó ningún borrador/);
+    expect(screen.getByTestId("email-pedidos-ultima-sync").textContent).toMatch(/Sin borradores nuevos/);
+    expect(screen.getByTestId("email-pedidos-ultima-sync").textContent).not.toMatch(/correctamente|exitosa/i);
+    fireEvent.click(screen.getByText(/Últimos correos revisados/));
+    expect(screen.getByTestId("email-pedidos-recientes").textContent).toMatch(/Con error.*a@b\.com.*Hola.*Gemini 403/);
+    expect(screen.getByTestId("email-pedidos-recientes").textContent).toMatch(/Omitido \(no iba a pedidos@\)/); // del excluido no se muestra remitente ni asunto
+  });
+  it("sin sincronizaciones previas lo dice; «Buscar pedidos nuevos» envía la ventana y muestra el resultado real; «Verificar conexión» muestra el error de Gmail", async () => {
+    analyzeResult = { runId: "r2", status: "sin_borradores", reason: "No se creó ningún borrador: de 4 correo(s) encontrados, 4 ya estaban procesado(s).", windowDays: 15, found: 4, omitted: 0, requested: 0, analyzed: 0, drafts: 0, withoutOrder: 0, excluded: 0, alreadyProcessed: 4, errors: [], items: [] };
+    const calls = mockApi(status({ lastRun: null }), []);
+    await open();
+    expect(screen.getByTestId("email-pedidos-sin-sync").textContent).toMatch(/Todavía no se hizo ninguna sincronización/);
+    fireEvent.change(screen.getByTestId("email-pedidos-ventana"), { target: { value: "15" } });
+    fireEvent.click(screen.getByTestId("email-pedidos-analizar"));
+    await waitFor(() => screen.getByTestId("email-pedidos-resultado"));
+    expect(calls.find((c) => c.url.includes("/analyze"))!.body).toMatchObject({ windowDays: 15 });
+    const res = screen.getByTestId("email-pedidos-resultado");
+    expect(res.getAttribute("data-status")).toBe("sin_borradores");
+    expect(res.textContent).toMatch(/Encontrados 4 · Analizados 0 · Borradores creados 0/);
+    expect(res.textContent).not.toMatch(/correctamente/i);
+    fireEvent.click(screen.getByTestId("email-pedidos-verificar-conexion"));
+    await waitFor(() => screen.getByTestId("email-pedidos-conexion"));
+    expect(screen.getByTestId("email-pedidos-conexion").textContent).toMatch(/✖.*reconectá la cuenta/);
+  });
+  it("el borrador muestra fecha del correo y el estado de la interpretación (a revisar si no es seguro que sea pedido)", async () => {
+    mockApi(status(), [draft({ source: { from: "x@y.com", subject: "Hola", receivedAt: "2026-11-04T15:30:00Z", attachments: [], links: [] }, payload: payload({ confidence: "baja", classification: "consulta", uncertain: true, items: [] }) })]);
+    await open();
+    expect(screen.getByTestId("email-borrador-confianza").textContent).toMatch(/confianza baja.*A REVISAR/);
+    expect(screen.getByTestId("email-borrador-origen").textContent).toMatch(/4\/11/);
   });
 });

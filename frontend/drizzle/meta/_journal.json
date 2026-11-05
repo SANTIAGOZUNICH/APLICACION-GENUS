@@ -547,6 +547,13 @@
       "when": 1793900009000,
       "tag": "0080_delivery_boxes",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1793900010000,
+      "tag": "0081_email_order_sync_runs",
+      "breakpoints": true
     }
   ]
 }

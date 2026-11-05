@@ -1,6 +1,6 @@
 # Pedidos desde email (piloto) — Gmail + IA
 
-**Estado:** piloto manual. Producción presiona **ANALIZAR CORREOS** (≤ 10 correos recientes); la IA interpreta y quedan **borradores pendientes** en *Pedidos → Pedidos recibidos por email*. Nada se crea hasta **APROBAR Y CREAR PEDIDO**, que usa el servicio de pedidos existente. No se generan trabajos, OE/OA, movimientos de stock ni entregas. **No hay procesamiento automático.**
+**Estado:** revisión **automática cada 15 minutos** (Vercel Cron `/api/cron/email-orders-sync`, correos de los últimos 3 días) **más** el botón manual **Buscar pedidos nuevos** (≤ 10 correos nuevos por búsqueda; ventana opcional de 7/15/30 días para recuperar correos anteriores); la IA interpreta y quedan **borradores pendientes** en *Pedidos → Pedidos recibidos por email*. Nada se crea hasta **APROBAR Y CREAR PEDIDO**, que usa el servicio de pedidos existente. No se generan trabajos, OE/OA, movimientos de stock ni entregas. **No hay procesamiento automático.**
 
 ## Filtro obligatorio: solo lo que originalmente iba a `pedidos@laboratoriogenus.com.ar`
 `agzunich@gmail.com` recibe también correos personales. Por eso, **antes de leer el cuerpo, descargar adjuntos o enviar algo a la IA**, cada correo se verifica del lado del servidor mirando **solo sus encabezados** (Gmail `format=metadata`: sin asunto ni cuerpo):
@@ -57,11 +57,23 @@
 4. Tocar **Verificar filtro (sin analizar)** y comprobar que los de pedidos@ figuran ✔ y los personales ✖. Recién entonces **Analizar correos** (3, 5 o 10) y revisar: cliente/productos detectados, dudas, origen (remitente, asunto, archivos). Corregir, **Aprobar y crear pedido** o **Descartar**.
 > Hasta completar estos pasos la conexión real NO está probada: las pruebas automáticas usan un Gmail y una IA simulados.
 
-## Arquitectura preparada para la revisión automática (NO activa)
-`EmailOrdersService.analyze` ya es idempotente, reclama cada mensaje por su ID (con reclamo vencido a los 5 min por si la función muere) y registra errores reintentables, usuario y tiempos. Para automatizar: una ruta protegida con `CRON_SECRET` invocada por **Vercel Cron** (cada N minutos) que llame al mismo servicio con un actor de sistema, `max` ≤ 10 y solo correos nuevos (`after:` de `last_analyzed_at`), más una bandera de activación en `email_integrations`. Se puede pasar a notificaciones `users.watch` + Pub/Sub más adelante. Nada de esto se habilitó.
+## Sincronización automática y estado REAL (antes el piloto solo funcionaba al apretar el botón)
+**Causa del problema reportado («dice conectado y nunca aparece ningún pedido»):** el piloto era 100 % manual (no había ningún cron: nada revisaba Gmail solo) y «Conectado» era solo una marca en la base (`email_integrations.status`), nunca una consulta a Gmail; además una corrida sin correos se mostraba igual que una exitosa y los correos dudosos («consulta» con poca confianza) se descartaban sin dejar rastro.
+
+Ahora:
+- **Cron** `/api/cron/email-orders-sync` (cada 15 min, protegido con `CRON_SECRET`, solo lectura): llama a `EmailOrdersService.analyze` con `trigger: "cron"`, ventana de 2 días y reintento de correos con error cada ≥ 30 min. Nunca crea pedidos definitivos.
+- **Cada corrida** (manual, automática o de recuperación) queda en `email_order_sync_runs` (migración 0081) con: correos **encontrados**, **analizados**, **borradores creados**, **omitidos** (excluidos + sin pedido), **ya procesados**, **con error** y un **motivo** en palabras («No se creó ningún borrador: de 12 correos encontrados, 9 ya estaban procesados, 3 excluidos…»). Estados: `ok`, `parcial`, `sin_borradores`, `sin_correos`, `error`, `error_gmail`, `error_ia`, `no_conectada`. **Nunca se muestra «correcto» si no se creó ningún borrador.**
+- **Pantalla** (Pedidos → Pedidos recibidos por email): cuenta conectada, última sincronización con los números, motivo, últimos correos revisados con su resultado (de los excluidos no se guarda remitente ni asunto), **Verificar conexión con Gmail** (consulta real: perfil + muestra de la bandeja; informa «acceso vencido/revocado», «API no habilitada», credenciales inválidas, cuota o red) y **Buscar pedidos nuevos** con ventana **7/15/30 días** y «volver a revisar los excluidos».
+- **Clasificación:** el prompt ya no depende del asunto (pedido en el cuerpo, en Excel/PDF/Word/imagen, «repetir el último pedido», «te paso el pedido de noviembre adjunto»). Solo se **omite** un correo cuando la IA está segura de que no es un pedido; ante la duda queda un **borrador «A REVISAR»** (sin productos ni cantidades inventadas) que Producción completa o descarta.
+- **Errores de Gemini / Gmail:** el correo queda `error` (no procesado, no se pierde), se reintenta en la próxima búsqueda sin duplicar borradores; el motivo real queda registrado (sin tokens ni contenido de correos).
+- **Duplicados:** ID estable de mensaje de Gmail (`email_order_messages`, único) + un borrador por mensaje (único). Una búsqueda de 7/15/30 días no vuelve a importar correos ya procesados ni pedidos aprobados.
+
+### Verificación en producción (lo que NO se puede asegurar desde el código)
+La conexión real a Gmail no se probó desde el entorno de desarrollo (sin credenciales de producción). En producción: (1) ¿responde `/api/cron/email-orders-sync` 401 sin credenciales? (500 = falta `CRON_SECRET`); (2) en el panel, **Verificar conexión con Gmail**; (3) **Verificar filtro (sin analizar)** para confirmar que los correos de pedidos@ pasan el filtro de destinatario original; (4) **Buscar pedidos nuevos** con «Últimos 7 días».
 
 ## Pruebas
-- Unitarias: `src/lib/email-orders/email-orders.test.ts`, `src/features/os/operational/components/email-order-drafts-panel.test.tsx`.
+- Unitarias: `src/lib/email-orders/email-orders.test.ts`, `src/lib/email-orders/sync.test.ts`, `src/features/os/operational/components/email-order-drafts-panel.test.tsx`.
+- Sincronización real con Gmail/IA simulados: `src/integration/email-orders-sync.db.integration.test.ts` (cuerpo, Excel, PDF, asunto sin «pedido», no-pedido, incertidumbre, error de Gemini y de Gmail, reintento, repetición sin duplicados, 7/15/30 días, aprobación manual, cron).
 - Postgres descartable (Gmail e IA simulados): `bash scripts/e2e/run-email-orders-db-local.sh`.
 
 ## Diagnóstico si el panel dice que falta configuración

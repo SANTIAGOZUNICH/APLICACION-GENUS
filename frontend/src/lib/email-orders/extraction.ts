@@ -21,7 +21,10 @@ Reglas estrictas:
 - "cliente" es quien COMPRA (empresa del remitente o del documento), nunca «Laboratorio Genus». "nroPedido" es el número de orden de compra / pedido del cliente si figura.
 - Un correo puede traer varios productos: un elemento de "items" por producto o renglón. "cantidad" es la cantidad de unidades pedidas (número); "presentacion" el contenido por unidad (p. ej. «250 ml»). Fechas en ISO; si una fecha es ambigua dejala "" y anotala en unclearFields.
 - NUNCA inventes ni completes datos que no estén escritos: dejá "" o null y agregá el nombre del campo a "unclearFields".
-- Si no hay nada relacionado con un pedido, devolvé kind "consulta" o "no_relacionado" con "items": [].`;
+- NO dependas del asunto: un pedido puede venir sin la palabra «pedido» en el asunto, escrito en el cuerpo («necesitamos 1.000 unidades del serum de vitamina C»), en un Excel/PDF/Word/imagen adjunto («adjunto el pedido de noviembre», «te paso la planilla con productos y cantidades») o como pedido de repetición («repetir el último pedido, pero esta vez 500 unidades»). Leé el cuerpo Y los adjuntos.
+- Si el correo claramente pide productos o dice que adjunta/repite un pedido pero NO se pueden leer los productos o cantidades (p. ej. «repetir el último pedido» sin detalle, o el adjunto no se pudo leer), devolvé kind "pedido_nuevo" (o "modificacion" si cambia uno existente) con los "items" que sí se lean (o []), confidence "baja", y explicá en "observaciones" y "unclearFields" qué falta. NUNCA inventes productos ni cantidades.
+- Distinguí un pedido de una consulta (pregunta por precios, estado o plazos), de un presupuesto o cotización que pide el cliente sin comprometer cantidades, y de mensajes comerciales o publicitarios. Si dudás entre pedido y consulta, usá confidence "baja" y dejá constancia en "summary".
+- Si no hay nada relacionado con un pedido, devolvé kind "consulta" o "no_relacionado" con "items": [] y confidence "alta".`;
 
 export function buildEmailParts(msg: Pick<GmailMessage, "from" | "subject" | "date" | "bodyText" | "links">, docs: DocContent[]): Array<Record<string, unknown>> {
   const parts: Array<Record<string, unknown>> = [{ text: EMAIL_PROMPT }];

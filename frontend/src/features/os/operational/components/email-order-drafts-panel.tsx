@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Pedidos recibidos por email (PILOTO) — sección compacta dentro de Pedidos. «ANALIZAR CORREOS» lee hasta 10 correos de la casilla de pedidos,
+ * Pedidos recibidos por email (PILOTO) — sección compacta dentro de Pedidos. «Buscar pedidos nuevos» (y la revisión automática cada 15 min) lee hasta 10 correos nuevos de la casilla de pedidos,
  * la IA los interpreta y quedan BORRADORES pendientes: nada se crea hasta que Producción aprueba. Ver docss/PEDIDOS_EMAIL_GMAIL.md.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -9,6 +9,18 @@ import { Button } from "@/components/ui/button";
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/auth/header-names";
 import type { DraftRow, AnalyzeResult } from "@/lib/email-orders/service";
 import type { DraftItem, DraftPayload } from "@/lib/email-orders/types";
+import { RUN_STATUS_LABEL, type RunStatus } from "@/lib/email-orders/sync";
+
+type LastRun = {
+  id: string; trigger: string; actor: string | null; startedAt: string; finishedAt: string | null; windowDays: number | null; status: RunStatus | "en_curso"; reason: string | null; account: string | null;
+  found: number; scanned: number; analyzed: number; drafts: number; omitted: number; excluded: number; withoutOrder: number; alreadyProcessed: number; errors: number;
+  errorItems: Array<{ messageId: string; subject: string; message: string }>;
+};
+type RecentMessage = { id: string; outcome: string; reason: string | null; receivedAt: string | null; analyzedAt: string; from: string | null; subject: string | null };
+type Probe = { ok: boolean; account: string; inboxSample: number | null; message: string; reconnect: boolean };
+const fmtDateTime = (iso: string | null) => (iso ? new Intl.DateTimeFormat("es-AR", { timeZone: "America/Argentina/Buenos_Aires", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(iso)) : "—");
+const TRIGGER_LABEL: Record<string, string> = { manual: "manual", cron: "automática", backfill: "recuperación de correos anteriores" };
+const OUTCOME_LABEL: Record<string, string> = { borrador: "Borrador creado", sin_pedido: "Omitido (no es un pedido)", excluido: "Omitido (no iba a pedidos@)", error: "Con error", procesando: "Procesando" };
 
 type Status = {
   account: string;
@@ -22,6 +34,9 @@ type Status = {
   connectedBy: string | null;
   lastError: string | null;
   lastAnalyzedAt: string | null;
+  lastRun?: LastRun | null;
+  recent?: RecentMessage[];
+  automatic?: { everyMinutes: number; windowDays: number };
   metrics: { mensajes: number; sinPedido: number; conError: number; excluidos?: number; borradores: number; pendientes: number; aprobados: number; aprobadosSinCambios: number; aprobadosCorregidos: number; descartados: number; renglonesCargados: number } | null;
 };
 
@@ -38,6 +53,9 @@ export function EmailOrderDraftsPanel({ email, sector, onPedidosCreated }: { ema
   const [max, setMax] = useState(10);
   const [after, setAfter] = useState("");
   const [before, setBefore] = useState("");
+  const [windowDays, setWindowDays] = useState("");
+  const [recheck, setRecheck] = useState(false);
+  const [probe, setProbe] = useState<Probe | null>(null);
   const [result, setResult] = useState<AnalyzeResult | null>(null);
   const [gem, setGem] = useState<null | { ok: boolean; message: string; effectiveModel: string | null; listing: { ok: boolean; status: number | null; count: number }; text: { ok: boolean; kind?: string; message: string }; image: null | { ok: boolean; kind?: string; message: string }; attempts: Array<{ model: string; status: number | null; kind: string; reason?: string }> }>(null);
   const [diag, setDiag] = useState<null | { target: string; scanned: number; verified: number; rows: Array<{ date: string | null; senderDomain: string; verified: boolean; strength: string | null; evidence: string[]; reason: string; recipientHeadersPresent: string[] }> }>(null);
@@ -76,11 +94,23 @@ export function EmailOrderDraftsPanel({ email, sector, onPedidosCreated }: { ema
     setError(null);
     setNotice(null);
     try {
-      const r = await api<{ result: AnalyzeResult }>("/api/v1/email-orders/analyze", { method: "POST", body: JSON.stringify({ max, afterDate: after || undefined, beforeDate: before || undefined }) });
+      const r = await api<{ result: AnalyzeResult }>("/api/v1/email-orders/analyze", { method: "POST", body: JSON.stringify({ max, afterDate: after || undefined, beforeDate: before || undefined, windowDays: windowDays ? Number(windowDays) : undefined, recheckExcluded: recheck || undefined }) });
       setResult(r.result);
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo analizar");
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function checkConnection() {
+    setBusy("verificando-conexion");
+    setError(null);
+    try {
+      setProbe(await api<Probe>("/api/v1/email-orders/probe", { method: "POST", body: "{}" }));
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo verificar la conexión");
     } finally {
       setBusy(null);
     }
@@ -134,6 +164,28 @@ export function EmailOrderDraftsPanel({ email, sector, onPedidosCreated }: { ema
           {notice ? <p className="rounded border border-emerald-400/60 bg-emerald-400/10 px-2.5 py-1.5 text-xs" role="status">{notice}</p> : null}
           {error ? <p className="rounded border border-rose-500/60 bg-rose-500/10 px-2.5 py-1.5 text-xs" role="alert" data-testid="email-pedidos-error">{error}</p> : null}
           {status && !status.dbReady ? <p className="text-xs">Requiere la base de datos configurada.</p> : null}
+          {status?.connected ? (
+            <div className="rounded border border-[var(--os-border)] px-2.5 py-1.5 text-xs" data-testid="email-pedidos-estado">
+              <p>Cuenta conectada: <b>{status.account}</b>{status.connectedAt ? ` (desde ${fmtDateTime(status.connectedAt)}, por ${status.connectedBy ?? "—"})` : ""} · Recibe pedidos para <b>{status.ordersAddress ?? "pedidos@laboratoriogenus.com.ar"}</b>.</p>
+              {status.automatic ? <p className="text-[var(--os-text-muted)]">Revisión automática de Gmail cada {status.automatic.everyMinutes} min (correos de los últimos {status.automatic.windowDays} días), además del botón. Solo lectura: no borra, no mueve y no responde correos.</p> : null}
+              {probe ? (
+                <p className={probe.ok ? "text-emerald-700" : "text-rose-700"} role={probe.ok ? "status" : "alert"} data-testid="email-pedidos-conexion">{probe.ok ? "✔ " : "✖ "}{probe.message}</p>
+              ) : status.lastError ? (
+                <p className="text-rose-700" data-testid="email-pedidos-ultimo-error">Último problema: {status.lastError}</p>
+              ) : null}
+              {status.lastRun ? (
+                <div className="mt-1" data-testid="email-pedidos-ultima-sync">
+                  <p>
+                    <b>Última sincronización: {fmtDateTime(status.lastRun.startedAt)}</b> ({TRIGGER_LABEL[status.lastRun.trigger] ?? status.lastRun.trigger}{status.lastRun.windowDays ? `, últimos ${status.lastRun.windowDays} días` : ""}) ·{" "}
+                    <span className={status.lastRun.status === "ok" ? "text-emerald-700" : status.lastRun.status === "sin_borradores" || status.lastRun.status === "sin_correos" ? "text-amber-700" : "text-rose-700"}>{status.lastRun.status === "en_curso" ? "En curso" : RUN_STATUS_LABEL[status.lastRun.status as RunStatus] ?? status.lastRun.status}</span>
+                  </p>
+                  <p data-testid="email-pedidos-contadores">Correos encontrados: {status.lastRun.found} · Analizados: {status.lastRun.analyzed} · Borradores creados: {status.lastRun.drafts} · Omitidos: {status.lastRun.omitted} · Ya procesados: {status.lastRun.alreadyProcessed} · Con error: {status.lastRun.errors}</p>
+                  {status.lastRun.reason ? <p className="text-[var(--os-text-muted)]" data-testid="email-pedidos-motivo">{status.lastRun.reason}</p> : null}
+                </div>
+              ) : <p className="mt-1 text-amber-700" data-testid="email-pedidos-sin-sync">Todavía no se hizo ninguna sincronización: tocá «Buscar pedidos nuevos» (o esperá la revisión automática).</p>}
+            </div>
+          ) : null}
+
           {status && !status.oauth.ready ? (
             <p className="rounded border border-amber-400/60 bg-amber-400/10 px-2.5 py-1.5 text-xs" data-testid="email-pedidos-config">
               {status.oauth.missing.length ? <>No llegan al servidor (revisá el entorno Production y hacé un redeploy después de crearlas): {status.oauth.missing.join(", ")}. </> : null}
@@ -149,16 +201,26 @@ export function EmailOrderDraftsPanel({ email, sector, onPedidosCreated }: { ema
           ) : null}
           {status?.connected ? (
             <div className="flex flex-wrap items-end gap-2 text-xs">
-              <label>Correos recientes (máx. 10)
+              <label>Buscar en
+                <select className={`${field} min-h-10`} value={windowDays} onChange={(e) => setWindowDays(e.target.value)} data-testid="email-pedidos-ventana">
+                  <option value="">Correos recientes</option>
+                  <option value="7">Últimos 7 días</option>
+                  <option value="15">Últimos 15 días</option>
+                  <option value="30">Últimos 30 días</option>
+                </select>
+              </label>
+              <label>Máx. por búsqueda
                 <select className={`${field} min-h-10`} value={max} onChange={(e) => setMax(Number(e.target.value))} data-testid="email-pedidos-max">
                   {[3, 5, 10].map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
               </label>
               <label>Desde<input type="date" className={`${field} min-h-10`} value={after} onChange={(e) => setAfter(e.target.value)} /></label>
               <label>Hasta<input type="date" className={`${field} min-h-10`} value={before} onChange={(e) => setBefore(e.target.value)} /></label>
-              <Button type="button" className="min-h-10 font-bold uppercase" onClick={() => void analyze()} disabled={Boolean(busy) || !status.aiAvailable} data-testid="email-pedidos-analizar">
-                {busy === "analizando" ? "Analizando…" : "Analizar correos"}
+              <label className="flex min-h-10 items-center gap-1"><input type="checkbox" checked={recheck} onChange={(e) => setRecheck(e.target.checked)} />Volver a revisar los excluidos</label>
+              <Button type="button" className="min-h-10 font-bold" onClick={() => void analyze()} disabled={Boolean(busy) || !status.aiAvailable} data-testid="email-pedidos-analizar">
+                {busy === "analizando" ? "Buscando…" : "Buscar pedidos nuevos"}
               </Button>
+              <button type="button" className="min-h-10 text-xs underline" onClick={() => void checkConnection()} disabled={Boolean(busy)} data-testid="email-pedidos-verificar-conexion">{busy === "verificando-conexion" ? "Verificando…" : "Verificar conexión con Gmail"}</button>
               <button type="button" className="min-h-10 text-xs underline" onClick={() => void probeGemini()} disabled={Boolean(busy)} data-testid="email-pedidos-probar-gemini">{busy === "probando-gemini" ? "Probando…" : "Probar Gemini"}</button>
               <button type="button" className="min-h-10 text-xs underline" onClick={() => void runDiagnose()} disabled={Boolean(busy)} data-testid="email-pedidos-diagnosticar">{busy === "diagnosticando" ? "Verificando…" : "Verificar filtro (sin analizar)"}</button>
               <button type="button" className="min-h-10 text-xs underline" onClick={() => void disconnect()} disabled={Boolean(busy)} data-testid="email-pedidos-desconectar">Desconectar</button>
@@ -184,18 +246,30 @@ export function EmailOrderDraftsPanel({ email, sector, onPedidosCreated }: { ema
             </div>
           ) : null}
           {result ? (
-            <p className="rounded border border-[var(--os-border)] px-2.5 py-1.5 text-xs" data-testid="email-pedidos-resultado">
-              Revisados {result.scanned} correo(s) (solo encabezados): {result.excluded} excluido(s) por no poder verificar que iban a la casilla de pedidos (no se leyeron ni se enviaron a la IA); de los {result.requested} dirigidos a pedidos: {result.drafts} borrador(es) nuevo(s), {result.withoutOrder} sin pedido (consultas u otros), {result.alreadyProcessed} ya procesado(s)
-              {result.errors.length ? `, ${result.errors.length} con error (se reintentan al analizar de nuevo)` : ""}.
-              {result.errors.map((er) => <span key={er.messageId} className="block text-rose-700">«{er.subject || er.messageId}»: {er.message}</span>)}
-            </p>
+            <div className={`rounded border px-2.5 py-1.5 text-xs ${result.status === "ok" ? "border-emerald-400/60" : result.status === "parcial" ? "border-amber-400/60" : "border-amber-500/60"}`} data-testid="email-pedidos-resultado" data-status={result.status}>
+              <p><b>{RUN_STATUS_LABEL[result.status]}</b> · Encontrados {result.found} · Analizados {result.analyzed} · Borradores creados {result.drafts} · Omitidos {result.omitted} · Ya procesados {result.alreadyProcessed} · Con error {result.errors.length}</p>
+              <p className="text-[var(--os-text-muted)]">{result.reason}</p>
+              {result.errors.map((er) => <span key={er.messageId} className="block text-rose-700">«{er.subject || er.messageId}»: {er.message} (se reintenta al volver a buscar)</span>)}
+            </div>
+          ) : null}
+          {status?.recent?.length ? (
+            <details className="rounded border border-[var(--os-border)] px-2.5 py-1.5 text-xs" data-testid="email-pedidos-recientes">
+              <summary className="cursor-pointer font-medium">Últimos correos revisados ({status.recent.length})</summary>
+              <ul className="mt-1 space-y-0.5">
+                {status.recent.map((m) => (
+                  <li key={m.id} className={m.outcome === "error" ? "text-rose-700" : ""} data-outcome={m.outcome}>
+                    {fmtDateTime(m.receivedAt ?? m.analyzedAt)} · {OUTCOME_LABEL[m.outcome] ?? m.outcome}{m.from ? ` · ${m.from}` : ""}{m.subject ? ` · «${m.subject}»` : ""}{m.reason ? ` — ${m.reason}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </details>
           ) : null}
           {status?.metrics && status.metrics.borradores > 0 ? (
             <p className="text-[11px] text-[var(--os-text-muted)]" data-testid="email-pedidos-metricas">
               Piloto: {status.metrics.borradores} borradores · {status.metrics.aprobadosSinCambios} aprobados sin correcciones · {status.metrics.aprobadosCorregidos} aprobados con correcciones · {status.metrics.descartados} descartados · {status.metrics.renglonesCargados} renglones cargados automáticamente.
             </p>
           ) : null}
-          {pending.length === 0 && status?.connected ? <p className="text-xs text-[var(--os-text-muted)]">No hay borradores pendientes. Tocá «Analizar correos».</p> : null}
+          {pending.length === 0 && status?.connected ? <p className="text-xs text-[var(--os-text-muted)]">No hay borradores pendientes. Tocá «Buscar pedidos nuevos».</p> : null}
           <ul className="space-y-2">
             {pending.map((d) => (
               <DraftCard key={`${d.id}-${d.version}`} draft={d} api={api} disabled={Boolean(busy)} onChanged={async (created) => { await refresh(); if (created) onPedidosCreated(); }} />
@@ -239,9 +313,10 @@ function DraftCard({ draft, api, disabled, onChanged }: { draft: DraftRow; api: 
         <b className="text-sm">{p.cliente || "(cliente sin identificar)"}</b>
         <span className={`rounded px-1.5 py-0.5 ${isMod ? "bg-amber-500/20" : "bg-emerald-500/15"}`}>{isMod ? "POSIBLE MODIFICACIÓN" : "PEDIDO NUEVO"}</span>
         <span className="text-[var(--os-text-muted)]">Estado: pendiente de revisión</span>
+        {draft.payload.confidence ? <span className={`rounded px-1.5 py-0.5 ${draft.payload.confidence === "alta" ? "bg-emerald-500/15" : "bg-amber-500/20"}`} data-testid="email-borrador-confianza">Interpretación: confianza {draft.payload.confidence}{draft.payload.uncertain ? " · A REVISAR (no es seguro que sea un pedido)" : ""}</span> : null}
       </div>
       <p className="mt-0.5 text-[var(--os-text-muted)]" data-testid="email-borrador-origen">
-        Origen: {draft.source.from} · «{draft.source.subject}»{draft.source.attachments.length ? ` · Archivos: ${draft.source.attachments.map((a) => `${a.filename}${a.used ? "" : " (no leído)"}`).join(", ")}` : ""}
+        Origen: {draft.source.from} · {fmtDateTime(draft.source.receivedAt)} · «{draft.source.subject}»{draft.source.attachments.length ? ` · Archivos: ${draft.source.attachments.map((a) => `${a.filename}${a.used ? "" : " (no leído)"}`).join(", ")}` : ""}
         {draft.source.links.length ? ` · ${draft.source.links.length} enlace(s) en el correo (no se abren)` : ""}
       </p>
       {isMod ? <p className="mt-1 rounded bg-amber-500/10 px-2 py-1" data-testid="email-borrador-modificacion">{draft.related.reason} No se modifica nada automáticamente: ajustá el pedido existente a mano y marcala como revisada, o creala como pedido nuevo.</p> : null}

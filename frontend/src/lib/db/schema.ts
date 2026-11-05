@@ -2032,6 +2032,33 @@ export const emailOrderDrafts = pgTable(
   ]
 );
 
+/** Una fila por corrida de sincronización de pedidos por email (manual, automática o de recuperación): lo que REALMENTE pasó (migración 0081). */
+export const emailOrderSyncRuns = pgTable(
+  "email_order_sync_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    trigger: text("trigger").notNull(),
+    actor: text("actor"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    windowDays: integer("window_days"),
+    status: text("status").notNull(),
+    reason: text("reason"),
+    accountEmail: text("account_email"),
+    found: integer("found").notNull().default(0),
+    scanned: integer("scanned").notNull().default(0),
+    analyzed: integer("analyzed").notNull().default(0),
+    drafts: integer("drafts").notNull().default(0),
+    omitted: integer("omitted").notNull().default(0),
+    excluded: integer("excluded").notNull().default(0),
+    withoutOrder: integer("without_order").notNull().default(0),
+    alreadyProcessed: integer("already_processed").notNull().default(0),
+    errors: integer("errors").notNull().default(0),
+    errorItems: jsonb("error_items").notNull().default([]),
+  },
+  (t) => [index("email_order_sync_runs_started_idx").on(t.startedAt)]
+);
+
 
 // ───────────────────────── Control inteligente de ME (migración 0076) ─────────────────────────
 
