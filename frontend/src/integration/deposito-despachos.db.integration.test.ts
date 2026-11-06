@@ -12,7 +12,7 @@ const RUN = Date.now().toString().slice(-6);
 const MARK = `IT-DESP-${RUN}`;
 const dep = { email: "it-desp-dep@laboratoriogenus.com.ar", sector: "DEPOSITO" as const, displayName: MARK };
 const prod = { email: "it-desp-prod@laboratoriogenus.com.ar", sector: "PRODUCCION" as const, displayName: `${MARK}-prod` };
-const base = { fecha: "2032-05-10", remito: "0001-00000045", cliente: `CLI ${MARK}`, producto: `PROD ${MARK}`, bultos: 5, cantidadTotal: 120 };
+const base = { fecha: "2032-05-10", remito: "0001-00000045", cliente: `CLI ${MARK}`, producto: `PROD ${MARK}`, egreso: "B001", bultos: 5, cantidad: 24 };
 
 describe.skipIf(Boolean(PROBLEM))(`Entregas Producción en Postgres real${PROBLEM ? ` — saltado: ${PROBLEM}` : ""}`, () => {
   let pool: import("@neondatabase/serverless").Pool;
@@ -40,7 +40,7 @@ describe.skipIf(Boolean(PROBLEM))(`Entregas Producción en Postgres real${PROBLE
     vi.resetModules(); // «recarga»: nueva instancia del servicio, los datos salen de la base
     const rows = await mine();
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: record.id, remito: "0001-00000045", fecha: "2032-05-10", bultos: 5, cantidadTotal: 120, createdBy: MARK });
+    expect(rows[0]).toMatchObject({ id: record.id, remito: "0001-00000045", fecha: "2032-05-10", egreso: "B001", bultos: 5, cantidad: 24, cantidadTotal: 120, createdBy: MARK });
     const raw = await q("select remito, fecha::text f from deposito_despachos where id = $1", [record.id]);
     expect(raw[0]).toMatchObject({ remito: "0001-00000045", f: "2032-05-10" });
   });
@@ -57,8 +57,8 @@ describe.skipIf(Boolean(PROBLEM))(`Entregas Producción en Postgres real${PROBLE
 
   it("dos despachos parciales del mismo pedido: dos filas, ninguna reemplaza a la otra", async () => {
     const s = await svc();
-    await s.create(dep, { ...base, remito: "P-1", pedidoOp: `OP-${RUN}`, cantidadTotal: 100 });
-    await s.create(dep, { ...base, remito: "P-2", pedidoOp: `OP-${RUN}`, cantidadTotal: 60 });
+    await s.create(dep, { ...base, remito: "P-1", pedidoOp: `OP-${RUN}`, bultos: 10, cantidad: 10 });
+    await s.create(dep, { ...base, remito: "P-2", pedidoOp: `OP-${RUN}`, bultos: 6, cantidad: 10 });
     const rows = (await mine()).filter((r) => r.pedidoOp === `OP-${RUN}`);
     expect(rows.map((r) => r.cantidadTotal).sort((a, b) => a - b)).toEqual([60, 100]);
   });
@@ -91,10 +91,10 @@ describe.skipIf(Boolean(PROBLEM))(`Entregas Producción en Postgres real${PROBLE
   it("alta masiva: una sola operación, idempotente por clave, filas incompletas (sin fecha) y filas inválidas informadas", async () => {
     const s = await svc();
     const rows = [
-      { fecha: "2032-06-01", remito: "000900", cliente: base.cliente, producto: "A", bultos: 1, cantidadTotal: 10, idempotencyKey: `bulk-${RUN}-0` },
+      { fecha: "2032-06-01", remito: "000900", cliente: base.cliente, producto: "A", bultos: 1, cantidad: 10, idempotencyKey: `bulk-${RUN}-0` },
       { fecha: "", remito: "000901", cliente: base.cliente, producto: "B", idempotencyKey: `bulk-${RUN}-1` }, // incompleta: sin fecha ni cantidades
       { fecha: "no-es-fecha", remito: "x", cliente: base.cliente, idempotencyKey: `bulk-${RUN}-2` }, // inválida
-      { fecha: "2032-06-03", remito: "000902", cliente: base.cliente, producto: "C", bultos: 2, cantidadTotal: 20, idempotencyKey: `bulk-${RUN}-3` },
+      { fecha: "2032-06-03", remito: "000902", cliente: base.cliente, producto: "C", bultos: 2, cantidad: 10, idempotencyKey: `bulk-${RUN}-3` },
     ];
     const r1 = await s.createMany(dep, rows);
     expect(r1.map((r) => r.ok)).toEqual([true, true, false, true]);
@@ -107,6 +107,57 @@ describe.skipIf(Boolean(PROBLEM))(`Entregas Producción en Postgres real${PROBLE
     expect(Number(audits[0]!.n)).toBe(3);
     const [ed] = await s.patchCells(dep, [{ id: got[0]!.id, field: "fecha", value: "", expectedVersion: got[0]!.updatedAt }]);
     expect(ed.ok).toBe(true); // vaciar la fecha de una fila existente
+  });
+
+  it("planilla: egreso B001 con varias filas, TOTAL = BULTOS × CANTIDAD y recálculo al editar", async () => {
+    const s = await svc();
+    const mk = (producto: string, bultos: number, cantidad: number) => s.create(dep, { ...base, remito: "2938", producto, bultos, cantidad, idempotencyKey: `b001-${RUN}-${producto}-${bultos}` });
+    const a = (await mk("CREMA EXFOLIANTE PARA MANOS", 17, 56)).record;
+    const b = (await mk("ACEITE PARA MANOS", 18, 56)).record;
+    const c = (await mk("CREMA EXFOLIANTE PARA MANOS", 1, 28)).record;
+    expect([a.cantidadTotal, b.cantidadTotal, c.cantidadTotal]).toEqual([952, 1008, 28]);
+    const [r] = await s.patchCells(dep, [{ id: a.id, field: "bultos", value: "20", expectedVersion: a.updatedAt }]);
+    expect(r.ok).toBe(true);
+    expect(Number((await q("select cantidad_total t from deposito_despachos where id = $1", [a.id]))[0]!.t)).toBe(1120);
+    const [neg] = await s.patchCells(dep, [{ id: b.id, field: "cantidad", value: "-3", expectedVersion: b.updatedAt }]);
+    expect(neg.ok).toBe(false);
+    const [dec] = await s.patchCells(dep, [{ id: b.id, field: "cantidad", value: "2,5", expectedVersion: b.updatedAt }]);
+    expect(dec.ok).toBe(false);
+  });
+
+  it("CONTROL y ENTREGADO independientes, con quién/cuándo, persistentes y sin tocar stock", async () => {
+    const s = await svc();
+    const { record } = await s.create(dep, { ...base, remito: "CHK", bultos: 2, cantidad: 5 });
+    const [c1] = await s.patchCells(dep, [{ id: record.id, field: "control", value: "TRUE", expectedVersion: record.updatedAt }]);
+    expect(c1.ok).toBe(true);
+    vi.resetModules();
+    const row = (await mine()).find((x) => x.id === record.id)!;
+    expect(row).toMatchObject({ control: true, controlBy: MARK, entregado: false });
+    expect(row.controlAt).toBeTruthy();
+    const s2 = await svc();
+    const [c2] = await s2.patchCells(dep, [{ id: record.id, field: "entregado", value: "TRUE", expectedVersion: row.updatedAt }]);
+    expect(c2.ok).toBe(true);
+    const raw = await q("select control, entregado, entregado_by from deposito_despachos where id = $1", [record.id]);
+    expect(raw[0]).toMatchObject({ control: true, entregado: true, entregado_by: MARK });
+  });
+
+  it("migración 0082: fila previa conserva su total; sin cantidad queda pendiente", async () => {
+    const id = randomUUID();
+    await q("insert into deposito_despachos (id, fecha, remito, cliente, producto, bultos, cantidad_total, created_by, created_by_sector) values ($1,'2032-01-01','LEG',$2,'X',3,250,$3,'DEPOSITO')", [id, base.cliente, MARK]);
+    const id2 = randomUUID();
+    await q("insert into deposito_despachos (id, fecha, remito, cliente, producto, bultos, cantidad_total, created_by, created_by_sector) values ($1,'2032-01-02','LEG2',$2,'Y',17,952,$3,'DEPOSITO')", [id2, base.cliente, MARK]);
+    // Re-ejecuta el backfill de la migración sobre las filas previas: solo completa CANTIDAD cuando el cociente es exacto.
+    const { readFileSync } = await import("node:fs");
+    const sql = readFileSync("drizzle/0082_despachos_planilla.sql", "utf8");
+    const upd = /UPDATE "deposito_despachos"[\s\S]*?;/.exec(sql)![0];
+    await q(upd);
+    const row = (await mine()).find((x) => x.id === id)!;
+    expect(row.cantidadTotal).toBe(250);
+    expect(row.cantidad).toBeNull(); // 250 / 3 no es entero: no se inventa
+    const row2 = (await mine()).find((x) => x.id === id2)!;
+    expect(row2).toMatchObject({ cantidad: 56, cantidadTotal: 952 });
+    const cols = await q("select column_name from information_schema.columns where table_name = 'deposito_despachos' and column_name in ('egreso','cantidad','comentarios','control','entregado','control_by','entregado_at')");
+    expect(cols).toHaveLength(7);
   });
 
   it("el CHECK de la base rechaza cantidades negativas", async () => {
@@ -127,7 +178,7 @@ describe.skipIf(Boolean(PROBLEM))(`Entregas Producción en Postgres real${PROBLE
     });
     const before = await count();
     const { record } = await s.create(dep, { ...base, remito: "NOSTOCK" });
-    await s.patchCells(dep, [{ id: record.id, field: "cantidadTotal", value: "7", expectedVersion: record.updatedAt }]);
+    await s.patchCells(dep, [{ id: record.id, field: "cantidad", value: "7", expectedVersion: record.updatedAt }]);
     await s.delete(dep, record.id);
     expect(await count()).toEqual(before);
   });

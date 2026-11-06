@@ -99,7 +99,7 @@ export interface OperationalTableColumn<T> {
    * (seleccionable y copiable). Requiere `onCellsCommit` y `canEditCells` en la tabla.
    */
   edit?: {
-    kind?: "text" | "number" | "date";
+    kind?: "text" | "number" | "date" | "bool";
     /** Motivo por el que NO es editable para esta fila (permisos/estados/registros cerrados). null = editable. */
     protection?: (row: T) => string | null;
     validate?: (raw: string, row: T) => string | null;
@@ -119,6 +119,8 @@ export interface OperationalTableColumn<T> {
   cellNote?: (row: T) => string | null;
   /** Clase extra por celda en la planilla (p. ej. semáforo de disponibilidad). Aditivo: sin esto no cambia nada. */
   cellClassName?: (row: T) => string | undefined;
+  /** Columna calculada que ocupa su lugar al pegar filas completas sin encabezados (ver GenusGridColumn.pasteSkip). */
+  pasteSkip?: boolean;
 }
 
 type CollapseBelow = "md" | "lg" | "xl" | "2xl";
@@ -423,6 +425,7 @@ function ExcelView<T>({
         key: c.key,
         title: c.header,
         kind: c.edit?.kind ?? "text",
+        pasteSkip: c.pasteSkip,
         basis: (sheet ? prefs.widths[c.key] : undefined) ?? widths.get(c.key) ?? 150,
         fixedWidth: sheet && prefs.widths[c.key] != null,
         sensitive: c.edit?.sensitive,

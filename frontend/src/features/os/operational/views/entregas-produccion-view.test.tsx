@@ -28,7 +28,7 @@ vi.mock("@/features/os/shell/twin-shell", () => ({
 import { EntregasProduccionView, draftToCreateInput } from "./entregas-produccion-view";
 
 const rec = (o: Partial<DespachoRecord>): DespachoRecord => ({
-  id: "1", fecha: "2026-10-20", remito: "000123", cliente: "ACME", producto: "Crema", bultos: 3, cantidadTotal: 60, pedidoOp: "",
+  id: "1", fecha: "2026-10-20", egreso: "", remito: "000123", cliente: "ACME", producto: "Crema", bultos: 3, cantidad: 20, cantidadTotal: 60, pedidoOp: "", comentarios: "", control: false, controlBy: null, controlAt: null, entregado: false, entregadoBy: null, entregadoAt: null,
   createdBy: "Depósito", createdBySector: "DEPOSITO", createdAt: "2026-10-20T10:00:00.000Z", updatedBy: null, updatedAt: "2026-10-20T10:00:00.000Z", ...o,
 });
 
@@ -65,17 +65,17 @@ describe("EntregasProduccionView (planilla)", () => {
     render(<EntregasProduccionView />);
     await screen.findAllByText("000123");
     fireEvent.change(screen.getByTestId("despachos-f-cliente"), { target: { value: "beta" } });
-    await waitFor(() => expect(screen.getByTestId("despachos-totals").textContent).toContain("1 entrega(s)"));
+    await waitFor(() => expect(screen.getByTestId("despachos-totals").textContent).toContain("1 fila(s)"));
     fireEvent.change(screen.getByTestId("despachos-f-cliente"), { target: { value: "" } });
     fireEvent.change(screen.getByTestId("despachos-f-remito"), { target: { value: "000123" } });
-    await waitFor(() => expect(screen.getByTestId("despachos-totals").textContent).toContain("1 entrega(s)"));
+    await waitFor(() => expect(screen.getByTestId("despachos-totals").textContent).toContain("1 fila(s)"));
   });
 
   it("fila sin fecha se muestra y se puede filtrar/exportar", async () => {
     fetchMock.mockResolvedValue([rec({ id: "1", fecha: null })]);
     render(<EntregasProduccionView />);
     await screen.findAllByText("000123");
-    expect(screen.getByTestId("despachos-totals").textContent).toContain("1 entrega(s)");
+    expect(screen.getByTestId("despachos-totals").textContent).toContain("1 fila(s)");
   });
 
   it("muestra las entregas parciales agrupadas por pedido", async () => {
@@ -89,9 +89,9 @@ describe("EntregasProduccionView (planilla)", () => {
 
 describe("filas nuevas de la planilla → alta", () => {
   it("conserva ceros del remito, acepta incompletas y valida números/fecha", () => {
-    const ok = draftToCreateInput("abc", { remito: "000123", bultos: "5", cantidadTotal: "1.234,5", fecha: "5/1/2026" });
-    expect(ok).toMatchObject({ ok: true, input: { remito: "000123", bultos: 5, cantidadTotal: 1234.5, fecha: "2026-01-05", idempotencyKey: "despacho-abc" } });
-    expect(draftToCreateInput("x", { cliente: "ACME" })).toMatchObject({ ok: true, input: { fecha: "", bultos: 0, cantidadTotal: 0 } });
+    const ok = draftToCreateInput("abc", { remito: "000123", egreso: "b001", bultos: "5", cantidad: "56", fecha: "5/1/2026", control: "TRUE" });
+    expect(ok).toMatchObject({ ok: true, input: { remito: "000123", egreso: "B001", bultos: 5, cantidad: 56, control: true, fecha: "2026-01-05", idempotencyKey: "despacho-abc" } });
+    expect(draftToCreateInput("x", { cliente: "ACME" })).toMatchObject({ ok: true, input: { fecha: "", bultos: 0, cantidad: null } });
     expect(draftToCreateInput("x", { bultos: "-2" }).ok).toBe(false);
     expect(draftToCreateInput("x", { fecha: "ayer" }).ok).toBe(false);
   });

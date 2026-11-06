@@ -77,4 +77,19 @@ describe("pegar varias filas en las filas en blanco", () => {
     expect(r.drafts[2]!.values.LOTE).toBe("2");
     expect(r.touchedIds).toEqual([base[1]!.id, r.drafts[2]!.id]);
   });
+
+  it("pegado desde Google Sheets sin encabezados: una columna calculada (TOTAL) ocupa su lugar y no corre las demás", () => {
+    const cols = [
+      { key: "fecha", title: "FECHA", editable: true }, { key: "egreso", title: "EGRESO N°", editable: true }, { key: "cliente", title: "CLIENTE", editable: true },
+      { key: "remito", title: "REMITO N°", editable: true }, { key: "producto", title: "DESCRIPCIÓN", editable: true }, { key: "bultos", title: "BULTOS", editable: true },
+      { key: "cantidad", title: "CANTIDAD", editable: true }, { key: "total", title: "TOTAL", editable: false, positional: true },
+      { key: "control", title: "CONTROL", editable: true }, { key: "entregado", title: "ENTREGADO", editable: true }, { key: "comentarios", title: "COMENTARIOS", editable: true },
+    ];
+    const row = ["05/01/2026", "B001", "LIETA", "2938", "CREMA", "17", "56", "952", "TRUE", "FALSE", "ok"];
+    expect(mapPastedToDrafts([row], cols, 0)[0]).toEqual({ fecha: "05/01/2026", egreso: "B001", cliente: "LIETA", remito: "2938", producto: "CREMA", bultos: "17", cantidad: "56", control: "TRUE", entregado: "FALSE", comentarios: "ok" });
+    // con encabezados se mapea por nombre y TOTAL se ignora
+    const withHead = [["FECHA", "EGRESO N°", "CLIENTE", "REMITO N°", "DESCRIPCIÓN", "BULTOS", "CANTIDAD", "TOTAL", "CONTROL", "ENTREGADO", "COMENTARIOS"], row];
+    expect(mapPastedToDrafts(withHead, cols, 0)[0]).toMatchObject({ bultos: "17", cantidad: "56", control: "TRUE" });
+    expect(mapPastedToDrafts(withHead, cols, 0)[0]).not.toHaveProperty("total");
+  });
 });
