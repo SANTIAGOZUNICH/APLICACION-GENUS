@@ -115,5 +115,5 @@ export function useDepositoDelete({
     </>
   ) : null;
 
-  return { rowCheck, bar, selectedCount: checked.size, clear };
+  return { rowCheck, bar, selectedCount: checked.size, selectedIds: [...checked], clear };
 }

@@ -62,7 +62,13 @@ import { DRAFT_PREFIX, applyPastedToDrafts, isDraftRowId, mapPastedToDrafts, mis
 export interface GenusGridColumn<T> {
   key: string;
   title: string;
-  kind?: "text" | "number" | "date";
+  /** "bool" = casilla (se copia/pega como TRUE/FALSE, igual que Google Sheets; nunca como texto libre). */
+  kind?: "text" | "number" | "date" | "bool";
+  /**
+   * Columna calculada que OCUPA su lugar al pegar filas completas desde Excel/Sheets sin encabezados (su valor pegado se descarta,
+   * pero no corre las demás columnas).
+   */
+  pasteSkip?: boolean;
   /** Ancho base en px. */
   basis?: number;
   minWidth?: number;
@@ -284,6 +290,15 @@ const cellKey = (rowId: string, columnKey: string) => `${rowId}\u0000${columnKey
 /** Celdas por solicitud al guardar (el servidor acepta hasta 1000). */
 const COMMIT_CHUNK = 400;
 
+/** TRUE / VERDADERO / SI / 1 → marcado (Google Sheets exporta las casillas como TRUE/FALSE). */
+export const isTrueText = (v: unknown): boolean => /^(true|verdadero|si|sí|1|x|✓|✔)$/i.test(String(v ?? "").trim());
+const isFalseText = (v: string): boolean => /^(false|falso|no|0)?$/i.test(v.trim());
+/** Valor pegado en una columna de casillas: TRUE / FALSE (lo que no se reconoce se conserva para que la validación lo rechace). */
+export const normalizeBoolText = (v: unknown): string => {
+  const t = String(v ?? "").trim();
+  return isTrueText(t) ? "TRUE" : isFalseText(t) ? "FALSE" : t;
+};
+
 /** Celda: texto del motor + bloqueo visual/funcional si el registro/columna está protegido. */
 function GenusCell({
   base,
@@ -294,7 +309,7 @@ function GenusCell({
 }: CellProps<GenusGridRow, unknown> & {
   base: Column<string, unknown, string>;
   colKey: string;
-  kind: "text" | "number" | "date";
+  kind: "text" | "number" | "date" | "bool";
   ctx: { current: CellCtx };
 }) {
   const { rowData, setRowData, focus, stopEditing } = props;
@@ -316,6 +331,45 @@ function GenusCell({
     }
   }, [reason, focus, stopEditing, ctx]);
 
+  // Casilla (CONTROL / ENTREGADO…): se tilda con un toque o con Espacio; el valor viaja como TRUE/FALSE por el mismo guardado de cualquier celda.
+  const checked = isTrueText(rowData[colKey]);
+  const toggle = useCallback(() => {
+    if (reason) {
+      ctx.current.noteTouch(reason);
+      return;
+    }
+    setRowData({ ...rowData, [colKey]: checked ? "FALSE" : "TRUE" });
+  }, [reason, checked, rowData, colKey, setRowData, ctx]);
+  useEffect(() => {
+    if (kind !== "bool" || !focus) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key === " " || e.key === "Enter") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggle();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [kind, focus, toggle]);
+
+  if (kind === "bool") {
+    return (
+      <div ref={wrapRef} className="genus-cell-wrap genus-cell-wrap-bool" title={reason ?? note ?? undefined}>
+        <input
+          type="checkbox"
+          className="size-4 cursor-pointer accent-[var(--os-teal)] disabled:cursor-not-allowed"
+          checked={checked}
+          disabled={Boolean(reason)}
+          onChange={toggle}
+          onMouseDown={(e) => e.stopPropagation()}
+          aria-label={colKey}
+          data-testid={`cell-bool-${colKey}`}
+        />
+        {note ? <span className="genus-cell-note" aria-label={note} data-genus-note="1" /> : null}
+      </div>
+    );
+  }
   const Base = base.component as unknown as ComponentType<CellProps<string, unknown>>;
   return (
     <div ref={wrapRef} className="genus-cell-wrap" title={reason ?? note ?? undefined}>
@@ -662,14 +716,14 @@ export function GenusGrid<T>({
         component: ((props: CellProps<GenusGridRow, unknown>) => (
           <GenusCell {...props} base={base} colKey={col.key} kind={kind} ctx={ctx} />
         )) as Column<GenusGridRow, unknown, string>["component"],
-        copyValue: ({ rowData }) => String(rowData[col.key] ?? ""),
+        copyValue: ({ rowData }) => (kind === "bool" ? (isTrueText(rowData[col.key]) ? "TRUE" : "FALSE") : String(rowData[col.key] ?? "")),
         deleteValue: ({ rowData }) => {
           const reason = rowData.__prot[col.key];
           if (reason) {
             touch(rowData, reason);
             return rowData;
           }
-          return { ...rowData, [col.key]: "" };
+          return { ...rowData, [col.key]: kind === "bool" ? "FALSE" : "" };
         },
         pasteValue: ({ rowData, value }) => {
           const reason = rowData.__prot[col.key];
@@ -677,9 +731,10 @@ export function GenusGrid<T>({
             touch(rowData, reason);
             return rowData;
           }
-          return { ...rowData, [col.key]: String(value ?? "").replace(/[\r\n]+/g, " ").trim() };
+          const cleaned = String(value ?? "").replace(/[\r\n]+/g, " ").trim();
+          return { ...rowData, [col.key]: kind === "bool" ? normalizeBoolText(cleaned) : cleaned };
         },
-        isCellEmpty: ({ rowData }) => !String(rowData[col.key] ?? ""),
+        isCellEmpty: ({ rowData }) => (kind === "bool" ? !isTrueText(rowData[col.key]) : !String(rowData[col.key] ?? "")),
         cellClassName: ({ rowData, columnId }) => {
           const key = columnId ?? col.key;
           const classes: string[] = [`genus-col-${colIndex}`];
@@ -687,6 +742,7 @@ export function GenusGrid<T>({
           if (rowData.__st[key] === "saving") classes.push("genus-cell-saving");
           if (rowData.__st[key] === "error") classes.push("genus-cell-error");
           if (kind === "number") classes.push("genus-cell-num");
+          if (kind === "bool") classes.push("genus-cell-bool");
           const extra = rowData.__cls?.[key];
           if (extra) classes.push(extra);
           return classes.join(" ") || undefined;
@@ -1114,7 +1170,7 @@ export function GenusGrid<T>({
       const sourceIds = rowsSrc.map((r) => r.__id);
       const candidates: Array<{ row: number; key: string; value: string }> = [];
       let usedMode: FillMode = "copy";
-      const kindOf = (key: string) => columnByKey.get(key)?.kind ?? "text";
+      const kindOf = (key: string): "text" | "number" | "date" => { const k = columnByKey.get(key)?.kind ?? "text"; return k === "bool" ? "text" : k; };
       if (plan.axis === "v") {
         const count = plan.target.max.row - plan.target.min.row + 1;
         for (const key of srcColKeys) {
@@ -1438,7 +1494,7 @@ export function GenusGrid<T>({
       const startIndex = active.row - realCount;
       const records = mapPastedToDrafts(
         matrix,
-        columns.map((c) => ({ key: c.key, title: c.title, editable: draftRows.createKeys.includes(c.key) })),
+        columns.map((c) => ({ key: c.key, title: c.title, editable: draftRows.createKeys.includes(c.key), positional: c.pasteSkip === true })),
         active.col
       );
       if (records.every((r) => Object.keys(r).length === 0)) return false;

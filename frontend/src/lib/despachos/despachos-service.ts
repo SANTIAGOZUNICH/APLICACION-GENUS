@@ -10,7 +10,7 @@ import "server-only";
 
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
-import { depositoDespachos, depositoDespachosAudit } from "@/lib/db/schema";
+import { depositoDespachos, depositoDespachosAudit, remitos } from "@/lib/db/schema";
 import { OrdersForbiddenError, OrdersNotFoundError, OrdersValidationError } from "@/lib/orders/types";
 import type { SectorId } from "@/types/operational/sector";
 import { canAccessDespachos, canMutateDespachos } from "./despachos-rbac";
@@ -18,6 +18,7 @@ import {
   MAX_DESPACHO_BULK_ROWS,
   MAX_DESPACHO_CELL_CHANGES,
   despachoCellProtection,
+  despachoTotal,
   isDespachoCellField,
   validateDespachoValue,
   type DespachoCellChange,
@@ -54,11 +55,20 @@ function rowToDomain(r: typeof depositoDespachos.$inferSelect): DespachoRecord {
   return {
     id: r.id,
     fecha: r.fecha,
+    egreso: r.egreso,
     remito: r.remito,
     cliente: r.cliente,
     producto: r.producto,
     bultos: num(r.bultos),
+    cantidad: r.cantidad == null ? null : num(r.cantidad),
     cantidadTotal: num(r.cantidadTotal),
+    comentarios: r.comentarios,
+    control: r.control,
+    controlBy: r.controlBy,
+    controlAt: r.controlAt?.toISOString() ?? null,
+    entregado: r.entregado,
+    entregadoBy: r.entregadoBy,
+    entregadoAt: r.entregadoAt?.toISOString() ?? null,
     pedidoOp: r.pedidoOp,
     createdBy: r.createdBy,
     createdBySector: r.createdBySector,
@@ -118,7 +128,7 @@ async function audit(
   });
 }
 
-/** Normaliza y valida un alta (el remito se conserva como texto). */
+/** Normaliza y valida un alta (el remito se conserva como texto). TOTAL siempre = BULTOS × CANTIDAD cuando hay CANTIDAD. */
 function normalizeInput(input: CreateDespachoInput) {
   const fecha = validateDespachoValue("fecha", input.fecha ?? "");
   if (!fecha.ok) throw new OrdersValidationError(fecha.message);
@@ -127,21 +137,47 @@ function normalizeInput(input: CreateDespachoInput) {
     if (!r.ok) throw new OrdersValidationError(r.message);
     return String(r.value);
   };
-  const numeric = (f: DespachoCellField, v: unknown) => {
-    const r = validateDespachoValue(f, v == null ? "" : v);
+  const bultosV = validateDespachoValue("bultos", input.bultos == null ? "" : input.bultos);
+  if (!bultosV.ok) throw new OrdersValidationError(`Bultos: ${bultosV.message}`);
+  const cantV = validateDespachoValue("cantidad", input.cantidad == null ? "" : input.cantidad);
+  if (!cantV.ok) throw new OrdersValidationError(`Cantidad: ${cantV.message}`);
+  const bultos = Number(bultosV.value);
+  const cantidad = cantV.value === "" ? null : Number(cantV.value);
+  // Compatibilidad: un cliente anterior a la planilla manda solo CANTIDAD TOTAL (sin desglose); se conserva tal cual.
+  let legacy = 0;
+  if (cantidad == null && input.cantidadTotal != null) {
+    const lt = Number(input.cantidadTotal);
+    if (!Number.isFinite(lt) || lt < 0 || lt > 1_000_000_000) throw new OrdersValidationError("Cantidad total inválida: debe ser ≥ 0.");
+    legacy = lt;
+  }
+  const bool = (f: "control" | "entregado", v: unknown) => {
+    const r = validateDespachoValue(f, v ?? false);
     if (!r.ok) throw new OrdersValidationError(r.message);
-    return Number(r.value);
+    return r.value === true;
   };
   return {
     fecha: fecha.value === "" ? null : String(fecha.value),
+    egreso: text("egreso", input.egreso),
     remito: text("remito", input.remito),
     cliente: text("cliente", input.cliente),
     producto: text("producto", input.producto),
-    bultos: numeric("bultos", input.bultos),
-    cantidadTotal: numeric("cantidadTotal", input.cantidadTotal),
+    bultos,
+    cantidad,
+    cantidadTotal: despachoTotal(bultos, cantidad, legacy),
+    comentarios: text("comentarios", input.comentarios),
+    control: bool("control", input.control),
+    entregado: bool("entregado", input.entregado),
     pedidoOp: text("pedidoOp", input.pedidoOp),
   };
 }
+
+/** Quién y cuándo marcó cada casilla en el alta (si la fila nace tildada). */
+const stamp = (v: { control: boolean; entregado: boolean }, who: string, at: Date) => ({
+  controlBy: v.control ? who : null,
+  controlAt: v.control ? at : null,
+  entregadoBy: v.entregado ? who : null,
+  entregadoAt: v.entregado ? at : null,
+});
 
 export type DespachoCellResult =
   | { ok: true; record: DespachoRecord }
@@ -156,9 +192,28 @@ export class DespachosService {
         .from(depositoDespachos)
         .where(isNull(depositoDespachos.deletedAt))
         .orderBy(sql`${depositoDespachos.fecha} desc nulls last`, desc(depositoDespachos.createdAt));
-      return rows.map(rowToDomain);
+      return this.withRemitoLinks(rows.map(rowToDomain));
     }
     return sortRecords(mem().items.filter((i) => !i.deleted).map(stripMem));
+  }
+
+  /** Vincula (solo lectura) cada fila con el remito de GENUS OS que tenga el mismo N°. Nunca crea ni modifica remitos. */
+  private async withRemitoLinks(items: DespachoRecord[]): Promise<DespachoRecord[]> {
+    const numbers = [...new Set(items.map((i) => i.remito.trim()).filter(Boolean))];
+    if (numbers.length === 0) return items;
+    try {
+      const found = new Map<string, { id: string; number: string; status: string }>();
+      for (let i = 0; i < numbers.length; i += 500) {
+        const rows = await getDb()
+          .select({ id: remitos.id, number: remitos.remitoNumber, status: remitos.status })
+          .from(remitos)
+          .where(and(inArray(remitos.remitoNumber, numbers.slice(i, i + 500)), sql`${remitos.status} <> 'ANULADO'`));
+        for (const r of rows) if (r.number) found.set(r.number, { id: r.id, number: r.number, status: r.status });
+      }
+      return items.map((it) => ({ ...it, remitoLink: found.get(it.remito.trim()) ?? null }));
+    } catch {
+      return items; // el vínculo es informativo: si la consulta falla, la planilla igual se muestra
+    }
   }
 
   async get(actor: DespachosActor, id: string): Promise<DespachoRecord | null> {
@@ -217,9 +272,14 @@ export class DespachosService {
     }
     const v = normalizeInput(input);
     const now = new Date();
+    const st = stamp(v, actor.displayName, now);
     const record: DespachoRecord = {
       id: neon() ? crypto.randomUUID() : memId(),
       ...v,
+      controlBy: st.controlBy,
+      controlAt: st.controlAt?.toISOString() ?? null,
+      entregadoBy: st.entregadoBy,
+      entregadoAt: st.entregadoAt?.toISOString() ?? null,
       createdBy: actor.displayName,
       createdBySector: actor.sector,
       createdAt: now.toISOString(),
@@ -231,11 +291,20 @@ export class DespachosService {
         await getDb().insert(depositoDespachos).values({
           id: record.id,
           fecha: record.fecha,
+          egreso: record.egreso,
           remito: record.remito,
           cliente: record.cliente,
           producto: record.producto,
           bultos: String(record.bultos),
+          cantidad: record.cantidad == null ? null : String(record.cantidad),
           cantidadTotal: String(record.cantidadTotal),
+          comentarios: record.comentarios,
+          control: record.control,
+          controlBy: st.controlBy,
+          controlAt: st.controlAt,
+          entregado: record.entregado,
+          entregadoBy: st.entregadoBy,
+          entregadoAt: st.entregadoAt,
           pedidoOp: record.pedidoOp,
           idempotencyKey: key,
           createdBy: record.createdBy,
@@ -301,8 +370,10 @@ export class DespachosService {
       if (key && seen.has(key)) { out[i] = { ok: false, message: "Fila repetida en el mismo envío." }; return; }
       try {
         const v = normalizeInput(input);
+        const st = stamp(v, actor.displayName, now);
         const record: DespachoRecord = {
-          id: crypto.randomUUID(), ...v, createdBy: actor.displayName, createdBySector: actor.sector,
+          id: crypto.randomUUID(), ...v, controlBy: st.controlBy, controlAt: st.controlAt?.toISOString() ?? null,
+          entregadoBy: st.entregadoBy, entregadoAt: st.entregadoAt?.toISOString() ?? null, createdBy: actor.displayName, createdBySector: actor.sector,
           createdAt: now.toISOString(), updatedBy: null, updatedAt: now.toISOString(),
         };
         if (key) seen.add(key);
@@ -316,8 +387,11 @@ export class DespachosService {
       const inserted = await db
         .insert(depositoDespachos)
         .values(chunk.map(({ record: r, key }) => ({
-          id: r.id, fecha: r.fecha, remito: r.remito, cliente: r.cliente, producto: r.producto, bultos: String(r.bultos),
-          cantidadTotal: String(r.cantidadTotal), pedidoOp: r.pedidoOp, idempotencyKey: key, createdBy: r.createdBy,
+          id: r.id, fecha: r.fecha, egreso: r.egreso, remito: r.remito, cliente: r.cliente, producto: r.producto, bultos: String(r.bultos),
+          cantidad: r.cantidad == null ? null : String(r.cantidad), cantidadTotal: String(r.cantidadTotal), comentarios: r.comentarios,
+          control: r.control, controlBy: r.controlBy, controlAt: r.controlAt ? new Date(r.controlAt) : null,
+          entregado: r.entregado, entregadoBy: r.entregadoBy, entregadoAt: r.entregadoAt ? new Date(r.entregadoAt) : null,
+          pedidoOp: r.pedidoOp, idempotencyKey: key, createdBy: r.createdBy,
           createdBySector: r.createdBySector, createdAt: now, updatedAt: now,
         })))
         .onConflictDoNothing()
@@ -326,7 +400,7 @@ export class DespachosService {
       const created = chunk.filter((c) => ok.has(c.record.id));
       if (created.length > 0) {
         await db.insert(depositoDespachosAudit).values(created.map(({ record: r }) => ({
-          despachoId: r.id, action: "create", afterValue: JSON.stringify({ fecha: r.fecha, remito: r.remito, cliente: r.cliente, producto: r.producto, bultos: r.bultos, cantidadTotal: r.cantidadTotal }),
+          despachoId: r.id, action: "create", afterValue: JSON.stringify({ fecha: r.fecha, egreso: r.egreso, remito: r.remito, cliente: r.cliente, producto: r.producto, bultos: r.bultos, cantidad: r.cantidad, cantidadTotal: r.cantidadTotal, control: r.control, entregado: r.entregado }),
           actorEmail: actor.email, actorSector: actor.sector, actorName: actor.displayName, createdAt: now,
         })));
       }
@@ -346,7 +420,7 @@ export class DespachosService {
       throw new OrdersValidationError(`Entre 1 y ${MAX_DESPACHO_CELL_CHANGES} celdas por operación.`);
     }
     const results: DespachoCellResult[] = [];
-    const parsed: Array<{ change: DespachoCellChange; value: string | number }> = [];
+    const parsed: Array<{ change: DespachoCellChange; value: string | number | boolean }> = [];
     for (const c of changes) {
       const cur = await this.get(actor, c.id);
       if (!cur) { results.push({ ok: false, code: "NOT_FOUND", message: "Registro no encontrado (puede haber sido eliminado)." }); continue; }
@@ -377,24 +451,37 @@ export class DespachosService {
     return out;
   }
 
-  private async applyField(actor: DespachosActor, cur: DespachoRecord, field: DespachoCellField, value: string | number): Promise<DespachoRecord> {
+  private async applyField(actor: DespachosActor, cur: DespachoRecord, field: DespachoCellField, value: string | number | boolean): Promise<DespachoRecord> {
     const before = String(cur[field] ?? "");
-    if (before === String(value)) return cur; // sin cambio: no toca la versión ni deja auditoría
+    const stored: string | number | boolean | null = field === "fecha" && value === "" ? null : field === "cantidad" && value === "" ? null : value;
+    if (before === String(stored ?? "")) return cur; // sin cambio: no toca la versión ni deja auditoría
     // La versión (updatedAt) debe crecer SIEMPRE: dos cambios en el mismo milisegundo no pueden dejar la misma versión.
     const now = new Date(Math.max(Date.now(), new Date(cur.updatedAt).getTime() + 1));
-    const stored = field === "fecha" && value === "" ? null : value;
     const next: DespachoRecord = { ...cur, [field]: stored, updatedBy: actor.displayName, updatedAt: now.toISOString() };
+    // TOTAL = BULTOS × CANTIDAD: se recalcula en el servidor apenas cambia alguno. Con CANTIDAD pendiente se conserva el total anterior.
+    const recalcTotal = field === "bultos" || field === "cantidad";
+    if (recalcTotal) next.cantidadTotal = despachoTotal(next.bultos, next.cantidad, cur.cantidadTotal);
+    // Casillas: quién y cuándo (también al desmarcar); la auditoría guarda cada cambio con antes/después.
+    if (field === "control") { next.controlBy = actor.displayName; next.controlAt = now.toISOString(); }
+    if (field === "entregado") { next.entregadoBy = actor.displayName; next.entregadoAt = now.toISOString(); }
     if (neon()) {
       const set: Partial<typeof depositoDespachos.$inferInsert> = { updatedAt: now, updatedBy: actor.displayName };
-      if (field === "bultos" || field === "cantidadTotal") set[field] = String(value);
+      if (field === "bultos") set.bultos = String(value);
+      else if (field === "cantidad") set.cantidad = stored == null ? null : String(stored);
       else (set as Record<string, unknown>)[field] = stored;
+      if (recalcTotal) set.cantidadTotal = String(next.cantidadTotal);
+      if (field === "control") { set.controlBy = actor.displayName; set.controlAt = now; }
+      if (field === "entregado") { set.entregadoBy = actor.displayName; set.entregadoAt = now; }
       await getDb().update(depositoDespachos).set(set).where(eq(depositoDespachos.id, cur.id));
     } else {
       const idx = mem().items.findIndex((i) => i.id === cur.id);
       if (idx < 0) throw new OrdersNotFoundError("Registro no encontrado.");
       mem().items[idx] = { ...mem().items[idx], ...next };
     }
-    await audit(actor, { despachoId: cur.id, action: "update", field, before, after: String(value) });
+    await audit(actor, { despachoId: cur.id, action: "update", field, before, after: String(stored ?? "") });
+    if (recalcTotal && next.cantidadTotal !== cur.cantidadTotal) {
+      await audit(actor, { despachoId: cur.id, action: "update", field: "cantidadTotal", before: String(cur.cantidadTotal), after: String(next.cantidadTotal) });
+    }
     return next;
   }
 
@@ -413,7 +500,7 @@ export class DespachosService {
       const m = mem().items.find((i) => i.id === id);
       if (m) m.deleted = true;
     }
-    await audit(actor, { despachoId: id, action: "delete", before: JSON.stringify({ fecha: cur.fecha, remito: cur.remito, cliente: cur.cliente, producto: cur.producto, bultos: cur.bultos, cantidadTotal: cur.cantidadTotal }) });
+    await audit(actor, { despachoId: id, action: "delete", before: JSON.stringify({ fecha: cur.fecha, egreso: cur.egreso, remito: cur.remito, cliente: cur.cliente, producto: cur.producto, bultos: cur.bultos, cantidad: cur.cantidad, cantidadTotal: cur.cantidadTotal, control: cur.control, entregado: cur.entregado }) });
     return true;
   }
 

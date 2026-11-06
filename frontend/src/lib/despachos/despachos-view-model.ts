@@ -2,12 +2,17 @@
 import { formatDespachoFecha } from "./cell-edit";
 import type { DespachoRecord } from "./types";
 
+export type DespachoEstadoFilter = "" | "sin_control" | "controlado" | "sin_entregar" | "entregado";
+
 export interface DespachoFilters {
   desde?: string;
   hasta?: string;
   cliente?: string;
   producto?: string;
   remito?: string;
+  egreso?: string;
+  /** Estado de las casillas: sin controlar / controlado / sin entregar / entregado. */
+  estado?: DespachoEstadoFilter;
   q?: string;
 }
 
@@ -17,6 +22,7 @@ export function filterDespachos(items: DespachoRecord[], f: DespachoFilters): De
   const cliente = norm(f.cliente ?? "");
   const producto = norm(f.producto ?? "");
   const remito = norm(f.remito ?? "");
+  const egreso = norm(f.egreso ?? "");
   const q = norm(f.q ?? "");
   return items.filter((r) => {
     if (f.desde && (!r.fecha || r.fecha < f.desde)) return false;
@@ -24,7 +30,12 @@ export function filterDespachos(items: DespachoRecord[], f: DespachoFilters): De
     if (cliente && !norm(r.cliente).includes(cliente)) return false;
     if (producto && !norm(r.producto).includes(producto)) return false;
     if (remito && !norm(r.remito).includes(remito)) return false;
-    if (q && !norm([r.remito, r.cliente, r.producto, r.pedidoOp, formatDespachoFecha(r.fecha)].join(" ")).includes(q)) return false;
+    if (egreso && !norm(r.egreso).includes(egreso)) return false;
+    if (f.estado === "sin_control" && r.control) return false;
+    if (f.estado === "controlado" && !r.control) return false;
+    if (f.estado === "sin_entregar" && r.entregado) return false;
+    if (f.estado === "entregado" && !r.entregado) return false;
+    if (q && !norm([r.egreso, r.remito, r.cliente, r.producto, r.pedidoOp, r.comentarios, formatDespachoFecha(r.fecha)].join(" ")).includes(q)) return false;
     return true;
   });
 }
@@ -53,20 +64,25 @@ export function resumenPorPedido(items: DespachoRecord[]): PedidoParcial[] {
     .sort((a, b) => a.pedidoOp.localeCompare(b.pedidoOp, "es", { numeric: true }));
 }
 
-export const DESPACHO_EXPORT_HEADERS = ["Fecha", "N.º de remito", "Cliente", "Producto", "Bultos", "Cantidad total"];
+/** Las 11 columnas de la hoja «SALIDAS PROD.», en su orden. */
+export const DESPACHO_EXPORT_HEADERS = ["FECHA", "EGRESO N°", "CLIENTE", "REMITO N°", "DESCRIPCIÓN", "BULTOS", "CANTIDAD", "TOTAL", "CONTROL", "ENTREGADO", "COMENTARIOS"];
 
-/** Filas para Excel: fecha DD/MM/AAAA y remito como texto (la hoja lo recibe tal cual, con ceros a la izquierda). */
+/** Filas para Excel: fecha DD/MM/AAAA, remito como texto (ceros a la izquierda) y las casillas como TRUE/FALSE (como Google Sheets). */
 export function despachosToRows(items: DespachoRecord[]): string[][] {
-  return items.map((r) => [formatDespachoFecha(r.fecha), r.remito, r.cliente, r.producto, String(r.bultos), String(r.cantidadTotal)]);
+  return items.map((r) => [formatDespachoFecha(r.fecha), r.egreso, r.cliente, r.remito, r.producto, String(r.bultos), r.cantidad == null ? "" : String(r.cantidad), String(r.cantidadTotal), r.control ? "TRUE" : "FALSE", r.entregado ? "TRUE" : "FALSE", r.comentarios]);
 }
 
 /** Normaliza una fila pegada desde Excel (claves de ExcelPasteDialog) a un alta. El remito NUNCA se convierte a número. */
 export const DESPACHO_PASTE_ALIASES: Record<string, string[]> = {
   fecha: ["fecha", "fecha de entrega", "fecha despacho"],
-  remito: ["n° de remito", "nº de remito", "n.º de remito", "n de remito", "nro remito", "n° remito", "nº remito", "remito", "numero de remito"],
+  egreso: ["egreso n", "egreso n°", "egreso nº", "egreso", "nro egreso"],
+  remito: ["remito n", "remito n°", "remito nº", "n° de remito", "nº de remito", "n.º de remito", "n de remito", "nro remito", "n° remito", "nº remito", "remito", "numero de remito"],
   cliente: ["cliente"],
-  producto: ["producto", "descripcion", "descripción"],
+  producto: ["descripcion", "descripción", "producto"],
   bultos: ["bultos", "cant bultos", "cantidad de bultos"],
-  cantidadTotal: ["cantidad total", "cantidad", "total", "unidades"],
+  cantidad: ["cantidad", "unidades por bulto", "unidades por caja"],
+  control: ["control"],
+  entregado: ["entregado"],
+  comentarios: ["comentarios", "comentario", "observaciones"],
   pedidoOp: ["pedido", "op", "pedido/op", "orden de pedido"],
 };

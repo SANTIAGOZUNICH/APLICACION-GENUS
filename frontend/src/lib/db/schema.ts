@@ -1839,6 +1839,16 @@ export const depositoDespachos = pgTable(
     bultos: numeric("bultos").notNull().default("0"),
     cantidadTotal: numeric("cantidad_total").notNull().default("0"),
     pedidoOp: text("pedido_op").notNull().default(""),
+    // Migración 0082 (planilla «SALIDAS PROD.»): EGRESO N°, CANTIDAD por bulto (null = pendiente), COMENTARIOS y casillas CONTROL / ENTREGADO.
+    egreso: text("egreso").notNull().default(""),
+    cantidad: numeric("cantidad"),
+    comentarios: text("comentarios").notNull().default(""),
+    control: boolean("control").notNull().default(false),
+    controlBy: text("control_by"),
+    controlAt: timestamp("control_at", { withTimezone: true }),
+    entregado: boolean("entregado").notNull().default(false),
+    entregadoBy: text("entregado_by"),
+    entregadoAt: timestamp("entregado_at", { withTimezone: true }),
     idempotencyKey: text("idempotency_key"),
     createdBy: text("created_by").notNull(),
     createdBySector: text("created_by_sector").notNull(),
@@ -1849,6 +1859,7 @@ export const depositoDespachos = pgTable(
     deletedBy: text("deleted_by"),
   },
   (table) => [
+    index("deposito_despachos_egreso_idx").on(table.egreso),
     uniqueIndex("deposito_despachos_idem_uidx")
       .on(table.idempotencyKey)
       .where(sql`${table.idempotencyKey} is not null`),

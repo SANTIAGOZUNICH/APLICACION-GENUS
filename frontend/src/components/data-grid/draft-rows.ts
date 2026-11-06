@@ -60,7 +60,13 @@ export function parseDrafts(raw: string | null): DraftRow[] {
   }
 }
 
-export type PasteCol = { key: string; title: string; editable: boolean };
+export type PasteCol = {
+  key: string;
+  title: string;
+  editable: boolean;
+  /** Columna calculada que ocupa su lugar al pegar sin encabezados (su valor se descarta y las demás no se corren). */
+  positional?: boolean;
+};
 
 const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
@@ -91,12 +97,14 @@ export function mapPastedToDrafts(matrix: string[][], columns: PasteCol[], start
       return rec;
     });
   }
-  const editable = columns.slice(startCol).filter((c) => c.editable);
+  const tail = columns.slice(startCol);
+  // Con columnas calculadas «posicionales» (p. ej. TOTAL) el pegado de filas completas conserva el orden de la hoja de origen.
+  const editable = tail.some((c) => c.positional) ? tail : tail.filter((c) => c.editable);
   return matrix.map((cells) => {
     const rec: Record<string, string> = {};
     cells.forEach((v, i) => {
       const c = editable[i];
-      if (c && v !== "") rec[c.key] = v;
+      if (c && c.editable && v !== "") rec[c.key] = v;
     });
     return rec;
   });
