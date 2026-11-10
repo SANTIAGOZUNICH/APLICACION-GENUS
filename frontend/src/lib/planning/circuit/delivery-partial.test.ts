@@ -55,6 +55,7 @@ describe("planPartialDelivery (saldo = asignada − entregado)", () => {
   });
 });
 
+// Regla: lo solicitado es referencia de planificación; el límite operativo es lo realmente realizado y aún no entregado.
 describe("cantidad solicitada = referencia, no tope (1.200 pedidas, 1.235 realizadas)", () => {
   const b = { assigned: 1200, unit: "un." };
   it("605 + 630: el acumulado llega a 1.235, completa y el pendiente nunca es negativo", () => {
