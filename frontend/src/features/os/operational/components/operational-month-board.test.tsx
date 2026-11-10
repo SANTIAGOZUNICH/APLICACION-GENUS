@@ -56,4 +56,38 @@ describe("OperationalMonthBoard", () => {
     board({ showUndated: false });
     expect(screen.queryByTestId("month-sin-fecha")).toBeNull();
   });
+  describe("feriados de la planta (PBA)", () => {
+    const dayEl = (d: string) => screen.getAllByTestId("month-day").find((x) => x.getAttribute("data-day") === d)!;
+    it("marca los feriados con «FERIADO», diferencia nacional/provincial y muestra el nombre al tocar", () => {
+      board({ monthStart: "2026-11-01" });
+      expect(dayEl("2026-11-09").getAttribute("data-holiday")).toBe("nacional");
+      expect(dayEl("2026-11-10").getAttribute("data-holiday")).toBeNull();
+      expect(dayEl("2026-11-11").getAttribute("data-holiday")).toBe("provincial");
+      expect(dayEl("2026-11-23").getAttribute("data-holiday")).toBe("nacional");
+      const label = within(dayEl("2026-11-11")).getByTestId("month-holiday-label");
+      expect(label.textContent).toMatch(/feriado/i);
+      fireEvent.click(label);
+      expect(within(dayEl("2026-11-11")).getByTestId("month-holiday-detail").textContent).toMatch(/Feriado provincial · Provincia de Buenos Aires/);
+      fireEvent.click(dayEl("2026-11-09")); // tocar el día también muestra el nombre
+      expect(within(dayEl("2026-11-09")).getByTestId("month-holiday-detail").textContent).toMatch(/Visita del Papa/);
+    });
+    it("diciembre: 07/12 sin marca; 08/12 y 25/12 marcados; cambiar de mes actualiza", () => {
+      board({ monthStart: "2026-12-01" });
+      expect(dayEl("2026-12-07").getAttribute("data-holiday")).toBeNull();
+      expect(dayEl("2026-12-08").getAttribute("data-holiday")).toBe("nacional");
+      expect(dayEl("2026-12-25").getAttribute("data-holiday")).toBe("nacional");
+      expect(screen.getAllByTestId("month-holiday-label")).toHaveLength(3); // + 01/01/2027, visible en la última semana de la grilla
+    });
+    it("no bloquea la planificación: el trabajo sigue visible y se puede programar/reprogramar en un feriado", () => {
+      const onCreateSlot = vi.fn();
+      const onRequestDate = vi.fn();
+      const feriado: MonthItem = { ...it1, id: "wf", plannedDate: "2026-11-09" };
+      board({ items: [feriado], allItems: [feriado, sin], onCreateSlot, onRequestDate });
+      expect(within(dayEl("2026-11-09")).getByTestId("month-chip").textContent).toMatch(/Crema/);
+      fireEvent.click(within(dayEl("2026-11-09")).getByTestId("month-add"));
+      expect(onCreateSlot).toHaveBeenCalledWith("2026-11-09");
+      fireEvent.change(within(screen.getByTestId("month-sin-fecha")).getByTestId("month-sin-fecha-date"), { target: { value: "2026-11-11" } });
+      expect(onRequestDate).toHaveBeenCalledWith(sin, "2026-11-11");
+    });
+  });
 });
