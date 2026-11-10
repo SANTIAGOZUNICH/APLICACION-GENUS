@@ -24,7 +24,7 @@ describe.skipIf(Boolean(PROBLEM))(`Cantidades reales (sobreproducción) en Postg
 
   beforeAll(async () => {
     process.env.VITEST = "false";
-    process.env.NODE_ENV = "development";
+    (process.env as Record<string, string | undefined>).NODE_ENV = "development";
     delete process.env.GENUS_FEATURE_MEMORY;
     process.env.DATABASE_URL = process.env.GENUS_E2E_DATABASE_URL!;
     const { Pool, neonConfig } = await import("@neondatabase/serverless");
@@ -66,7 +66,7 @@ describe.skipIf(Boolean(PROBLEM))(`Cantidades reales (sobreproducción) en Postg
     expect(String((await item(id)).planned_quantity)).toBe("1200"); // lo solicitado no se toca
     const ls = await lines(id);
     expect(ls.map((l) => l.q)).toEqual([605, 630]);
-    expect(ls.map((l) => l.pend).every((p) => p >= 0)).toBe(true);
+    expect(ls.map((l) => l.pend).every((p) => Number(p) >= 0)).toBe(true);
     expect(ls.map((l) => l.cum)).toEqual([605, 1235]);
     expect(ls[0]!.packing_groups).toEqual(B1);
     expect(ls[1]!.packing_groups).toEqual(B2);
