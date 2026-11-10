@@ -61,6 +61,8 @@ type Props = {
   mode?: "final" | "partial";
   /** Unidades terminadas según los registros (realizadas); limita lo que se puede entregar en una parcial. */
   produced?: number | null;
+  /** Entrega final tras entregas parciales: las cajas son las de ESTA entrega (obligatorias en Envasado), nunca las del trabajo completo. */
+  requireBoxes?: boolean;
   /** Texto de «Entregar parcial» (por defecto el de Envasado; Codificado informa el suyo). */
   partialDescription?: string;
   onConfirm: (payload: DeliverWorkPayload) => Promise<void>;
@@ -97,6 +99,7 @@ export function DeliverWorkDialog({
   submitLabel = "Confirmar entrega",
   mode = "final",
   produced = null,
+  requireBoxes = false,
   partialDescription = "Registra una entrega parcial a Producción: el trabajo sigue pendiente en Envasado hasta completar la cantidad.",
   onConfirm,
 }: Props) {
@@ -127,7 +130,7 @@ export function DeliverWorkDialog({
     setBulkKg("");
     setBulkObs("");
     setBoxes([]);
-    setShowBoxes(false);
+    setShowBoxes(requireBoxes && !isPartialMode);
     setError(null);
     setBusy(false);
     // Solo al abrir: el saldo cambia recién cuando se cierra/confirma.
@@ -197,6 +200,10 @@ export function DeliverWorkDialog({
         return;
       }
       deliveryPackingGroups = packing.groups.length > 0 ? packing.groups : null;
+    }
+    if (requireBoxes && !isPartialMode && !deliveryPackingGroups) {
+      setError("Cargá las cajas de ESTA entrega (cajas × unidades por caja): deben sumar las unidades que entregás ahora.");
+      return;
     }
     let bulk: ReturnType<typeof parseBulkRemainderKg> | null = null;
     if (showBulkRemainder && !isPartialMode) {

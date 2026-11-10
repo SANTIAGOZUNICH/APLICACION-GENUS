@@ -4,8 +4,8 @@
  *
  * Reglas:
  *  - La CANTIDAD OBJETIVO de un trabajo es lo físicamente entregable: lo embalado en cajas (deliverableUnits) si el
- *    cierre de packaging lo fijó; si no, el total declarado (packagingTotalUnits), la cantidad final (finishedQty) o,
- *    en último caso, la planificada. Nunca se infiere ni se inventa.
+ *    cierre de packaging lo fijó; si no, lo MAYOR entre el total declarado (packagingTotalUnits) y la cantidad realizada
+ *    (finishedQty) o, en último caso, la planificada. La planificada es referencia, nunca tope. Nunca se inventa.
  *  - Una entrega puede ser menor al objetivo (parcial): queda un SALDO y el trabajo NO se marca entregado.
  *  - Nunca se entrega más que el saldo (no hay «stock negativo» por error de tipeo).
  *  - Tolerancia de 1e-6 para decimales (kg) al comparar contra el objetivo.
@@ -34,20 +34,15 @@ export interface DeliveryTargetInput {
 
 /** Cantidad total a entregar de un trabajo, o null si no es numérica (entrega sin seguimiento de saldo, comportamiento histórico). */
 export function resolveDeliveryTarget(input: DeliveryTargetInput): number | null {
-  const candidates: Array<number | null> = [
-    input.deliverableUnits != null && Number.isFinite(input.deliverableUnits)
-      ? Number(input.deliverableUnits)
-      : null,
-    input.packagingTotalUnits != null && Number.isFinite(input.packagingTotalUnits)
-      ? Number(input.packagingTotalUnits)
-      : null,
-    parseQuantity(input.finishedQty, input.unit),
-    parseQuantity(input.plannedQuantity, input.unit),
-  ];
-  for (const c of candidates) {
-    if (c != null && c > 0) return c;
-  }
-  return null;
+  const num = (n: number | null | undefined) => (n != null && Number.isFinite(Number(n)) && Number(n) > 0 ? Number(n) : null);
+  const deliverable = num(input.deliverableUnits);
+  if (deliverable != null) return deliverable;
+  // La cantidad SOLICITADA es solo una referencia: el «total declarado» suele arrancar igual a lo pedido (1.200) y las unidades realmente
+  // terminadas pueden ser más (1.235). Lo entregable es lo mayor entre ambos: nunca se recorta lo realizado a lo pedido.
+  const declared = num(input.packagingTotalUnits);
+  const finished = num(parseQuantity(input.finishedQty, input.unit));
+  if (declared != null || finished != null) return Math.max(declared ?? 0, finished ?? 0);
+  return num(parseQuantity(input.plannedQuantity, input.unit));
 }
 
 export type DeliveryStepResult =
@@ -166,7 +161,10 @@ export function planPartialDelivery(input: {
         };
   }
   const cumulative = alreadyDelivered + requested;
-  const pending = Math.max(0, assigned - cumulative);
+  // El saldo se mide contra lo MAYOR entre lo asignado y lo realizado: si se hicieron 1.235 de 1.200, entregar 1.200 deja 35 reales
+  // por entregar (no se ocultan ni se da por terminado); si se entregan 1.235 el pendiente es 0, nunca negativo.
+  const reference = Math.max(assigned, produced ?? 0);
+  const pending = Math.max(0, reference - cumulative);
   const complete = pending <= DELIVERY_EPSILON;
   return { ok: true, quantity: requested, cumulative, pending: complete ? 0 : pending, complete };
 }

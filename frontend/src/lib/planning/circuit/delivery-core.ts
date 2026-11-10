@@ -354,7 +354,14 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
   // Cajas: Envasado entrega SU trabajo → distribución obligatoria y validada. Codificado (recibe solo el total) y
   // Producción/Dirección (registran sobre trabajos históricos) no la exigen; si hay distribución REAL consistente se
   // conserva y fija lo embalado.
-  const enforceBoxes = !params.skipBoxValidation && !params.partial && ENVASADO.has(actor.sector.toUpperCase());
+  // Si ya hubo entregas parciales, esta es la ÚLTIMA: sus cajas son las de ESTA entrega (deliveryPackingGroups), no las del trabajo completo.
+  const finalAfterPartials = alreadyDelivered > 0 && !params.partial;
+  const enforceBoxes = !params.skipBoxValidation && !params.partial && !finalAfterPartials && ENVASADO.has(actor.sector.toUpperCase());
+  if (finalAfterPartials && !params.skipBoxValidation && ENVASADO.has(actor.sector.toUpperCase()) && !hasRealPackingGroups(params.deliveryPackingGroups)) {
+    throw new PlanningValidationError(
+      "Para entregar desde Envasado cargá la distribución en cajas de ESTA entrega (cajas × unidades por caja). Si no tenés el desglose, enviá el trabajo a Codificado indicando solo la cantidad total."
+    );
+  }
   const finishedNum =
     parseQuantity(nextFinishedText, unit) ?? (nextTotal != null ? Number(nextTotal) : null);
   if (enforceBoxes) {
@@ -367,7 +374,7 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
     patch.deliverableUnits = close.packedUnits;
     patch.packagingClosedAt = now;
     patch.packagingClosedBy = actorName;
-  } else if (!params.partial && c && hasRealPackingGroups(nextGroups) && finishedNum != null) {
+  } else if (!params.partial && !finalAfterPartials && c && hasRealPackingGroups(nextGroups) && finishedNum != null) {
     const packed = summarizePackingGroups(normalizePackingGroups(nextGroups as never)).totalEmbalado;
     // Trabajos históricos (Producción registra la entrega): lo entregable es lo físicamente embalado. Trabajos
     // enviados a Codificado sin desglose completo: la cantidad total declarada manda; una distribución parcial NO

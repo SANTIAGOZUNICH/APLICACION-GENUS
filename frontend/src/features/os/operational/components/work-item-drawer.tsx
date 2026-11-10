@@ -352,7 +352,7 @@ export function WorkItemDrawer({
             {!isElaboracion && deliveryProgress && deliveryProgress.delivered > 0 ? (
               <p className="text-xs font-medium text-[var(--os-text)]" data-testid="drawer-delivery-progress">
                 Entregadas a Producción: {deliveryProgress.delivered} {unit}
-                {deliveryProgress.complete ? " · entrega completa" : ` · pendientes de entregar: ${Math.max(0, planned - deliveryProgress.delivered)} ${unit}`}
+                {deliveryProgress.complete ? " · entrega completa" : ` · pendientes de entregar: ${Math.max(0, Math.max(planned, finished) - deliveryProgress.delivered)} ${unit}`}
               </p>
             ) : null}
           </div>
@@ -486,14 +486,15 @@ export function WorkItemDrawer({
           title={deliverMode === "partial" ? WORK_TRANSFER.deliverPartialAction : "Entregar"}
           mode={deliverMode}
           produced={finished > 0 ? finished : null}
+          requireBoxes={deliverMode === "final" && (deliveryProgress?.delivered ?? 0) > 0}
           target={deliverMode === "partial" ? (Number.isFinite(assignedQty) && assignedQty > 0 ? assignedQty : null) : deliveryTarget}
           unit={item.unit}
           progress={deliveryProgress}
           showBulkRemainder
           notice={
             <p className="rounded border border-[var(--os-border)] bg-[var(--os-surface-muted,#f8fafc)] p-2 text-xs" data-testid="deliver-boxes-rule">
-              Entregar desde Envasado exige la distribución en cajas (cajas × unidades por caja) y que coincida con lo
-              producido. Si no tenés el desglose, usá «{WORK_TRANSFER.sendToCodificadoAction}»: ahí alcanza con la
+              Entregar desde Envasado exige la distribución en cajas (cajas × unidades por caja) de lo que entregás en
+              esta entrega (si ya hubo entregas parciales, solo las cajas de esta última). Si no tenés el desglose, usá «{WORK_TRANSFER.sendToCodificadoAction}»: ahí alcanza con la
               cantidad total.
             </p>
           }
