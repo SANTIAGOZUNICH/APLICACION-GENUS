@@ -4,6 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { X } from "lucide-react";
 import { useDesignPreviewPortalContainer } from "@/lib/utils/use-design-preview-portal-container";
+import { holidayScopeLabel, plantHolidaysBetween, type PlantHoliday } from "@/lib/holidays/holiday-calendar";
 import { buildMonthGrid, groupItemsByMonthDay, undatedItems, type MonthItem } from "@/lib/operational/month-grid";
 
 const DOW = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"] as const;
@@ -48,6 +49,9 @@ export function OperationalMonthBoard<T extends MonthItem>({ monthStart, today, 
   const portalContainer = useDesignPreviewPortalContainer();
   const grid = useMemo(() => buildMonthGrid(monthStart), [monthStart]);
   const byDay = useMemo(() => groupItemsByMonthDay(items, grid), [items, grid]);
+  // Feriados de la planta (PBA): informativos, NO bloquean la planificación. Calendario central: mismo resultado en todos los sectores.
+  const holidays = useMemo<Map<string, PlantHoliday>>(() => plantHolidaysBetween(grid[0]![0]!.date, grid[grid.length - 1]![6]!.date), [grid]);
+  const [openHoliday, setOpenHoliday] = useState<string | null>(null);
   const sinFecha = useMemo(() => undatedItems(allItems), [allItems]);
   const [expanded, setExpanded] = useState<string | null>(null);
   /** Chip con la tarjeta abierta: `<día>|<id>` (un trabajo de varios días se ancla al día que se tocó). */
@@ -70,12 +74,16 @@ export function OperationalMonthBoard<T extends MonthItem>({ monthStart, today, 
                   const list = byDay.get(cell.date) ?? [];
                   const open = expanded === cell.date;
                   const shown = open ? list : list.slice(0, MAX_CHIPS);
+                  const holiday = holidays.get(cell.date) ?? null;
+                  const holidayOpen = holiday !== null && openHoliday === cell.date;
                   return (
                     <div
                       key={cell.date}
-                      className={`min-h-[5.5rem] rounded border p-1 ${cell.inMonth ? "bg-[var(--os-surface)]" : "bg-[var(--os-bg)] opacity-60"} ${cell.date === today ? "border-[var(--os-teal)]" : "border-[var(--os-border)]"}`}
+                      className={`min-h-[5.5rem] rounded border p-1 ${holiday ? "bg-[#7f1d1d]/25" : cell.inMonth ? "bg-[var(--os-surface)]" : "bg-[var(--os-bg)]"} ${cell.inMonth ? "" : "opacity-60"} ${cell.date === today ? "border-[var(--os-teal)]" : holiday ? "border-[#b91c1c]/50" : "border-[var(--os-border)]"}`}
                       data-testid="month-day"
                       data-day={cell.date}
+                      data-holiday={holiday ? holiday.scope : undefined}
+                      onClick={holiday ? (e) => { if (e.target === e.currentTarget) setOpenHoliday(holidayOpen ? null : cell.date); } : undefined}
                       data-count={list.length}
                       onDragOver={canEdit && onRequestDate ? (e) => e.preventDefault() : undefined}
                       onDrop={
@@ -97,6 +105,30 @@ export function OperationalMonthBoard<T extends MonthItem>({ monthStart, today, 
                           <button type="button" className="rounded px-1 text-sm leading-none text-[var(--os-teal)] hover:bg-[var(--os-teal)]/15" aria-label={`Asignar trabajo el ${cell.date}`} onClick={() => onCreateSlot(cell.date)} data-testid="month-add">+</button>
                         ) : null}
                       </div>
+                      {holiday ? (
+                        <div className="mb-1" data-testid="month-holiday">
+                          <button
+                            type="button"
+                            className="rounded bg-[#991b1b]/45 px-1 py-px text-[10px] font-bold uppercase tracking-wide text-red-100 hover:bg-[#991b1b]/65"
+                            aria-expanded={holidayOpen}
+                            aria-label={`Feriado: ${holiday.name}`}
+                            title={holiday.name}
+                            onClick={() => setOpenHoliday(holidayOpen ? null : cell.date)}
+                            data-testid="month-holiday-label"
+                          >
+                            Feriado
+                          </button>
+                          {holidayOpen ? (
+                            <p className="mt-0.5 rounded bg-black/25 p-1 text-[11px] leading-snug text-red-50" data-testid="month-holiday-detail">
+                              <strong>{holiday.name}</strong>
+                              <br />
+                              {holidayScopeLabel(holiday.scope)} · {holiday.jurisdiction}
+                              <br />
+                              <span className="text-[10px] opacity-80">{holiday.source}</span>
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
                       <ul className="space-y-0.5">
                         {shown.map((it) => (
                           <li key={`${cell.date}-${it.id}`}>
