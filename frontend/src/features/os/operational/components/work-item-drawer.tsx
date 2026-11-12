@@ -1,5 +1,6 @@
 "use client";
 
+import { MeBadge } from "./me-badge";
 import { WorkItemPriorityBadge } from "./work-item-priority-badge";
 import { useEffect, useRef, useState } from "react";
 import { Download, Eye, FileWarning } from "lucide-react";
@@ -224,6 +225,11 @@ export function WorkItemDrawer({
             <div className="mt-2">
               <WorkItemWarningBadge item={item} onSelectField={focusMissingField} />
             </div>
+            {item.me ? (
+              <div className="mt-2" data-testid="drawer-me">
+                <MeBadge me={item.me} showObservation />
+              </div>
+            ) : null}
             <div className="mt-2">
               <WorkItemEditDeleteActions
                 item={item}
@@ -486,16 +492,14 @@ export function WorkItemDrawer({
           title={deliverMode === "partial" ? WORK_TRANSFER.deliverPartialAction : "Entregar"}
           mode={deliverMode}
           produced={finished > 0 ? finished : null}
-          requireBoxes={deliverMode === "final" && (deliveryProgress?.delivered ?? 0) > 0}
           target={deliverMode === "partial" ? (Number.isFinite(assignedQty) && assignedQty > 0 ? assignedQty : null) : deliveryTarget}
           unit={item.unit}
           progress={deliveryProgress}
           showBulkRemainder
           notice={
             <p className="rounded border border-[var(--os-border)] bg-[var(--os-surface-muted,#f8fafc)] p-2 text-xs" data-testid="deliver-boxes-rule">
-              Entregar desde Envasado exige la distribución en cajas (cajas × unidades por caja) de lo que entregás en
-              esta entrega (si ya hubo entregas parciales, solo las cajas de esta última). Si no tenés el desglose, usá «{WORK_TRANSFER.sendToCodificadoAction}»: ahí alcanza con la
-              cantidad total.
+              Las cajas son opcionales y se registran por entrega (cajas × unidades por caja). Si todavía no las tenés,
+              entregá igual con la cantidad real y detallalas después; si no coinciden se avisa y queda la diferencia por conciliar. Si preferís enviar solo la cantidad total, usá «{WORK_TRANSFER.sendToCodificadoAction}».
             </p>
           }
           onConfirm={async (payload) => {

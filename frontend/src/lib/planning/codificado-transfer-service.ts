@@ -145,7 +145,7 @@ export async function transferToCodificadoDurable(input: TransferInput, actor: P
   if (key.length < 8) throw new PlanningValidationError("idempotencyKey inválida.");
   const requested = Number(input.quantity);
   if (!Number.isFinite(requested) || requested <= 0) throw new PlanningValidationError("La cantidad a entregar debe ser mayor que 0.");
-  const boxes = validateDeliveryPacking(input.packingGroups ?? null, requested);
+  const boxes = validateDeliveryPacking(input.packingGroups ?? null, requested, { lenient: true });
   if (!boxes.ok) throw new PlanningValidationError(boxes.error);
 
   return getDb().transaction(async (tx) => {

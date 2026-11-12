@@ -115,6 +115,7 @@ describe("DEPOSITO acceso y navegación", () => {
       "salidas_me",
       "inventario_me",
       "control_me",
+      "me_envasado",
       "deposito_graneles",
       "entregas_produccion",
       "pedidos_deposito",

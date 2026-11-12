@@ -478,16 +478,16 @@ export async function cancelInternalDelivery(actor: PlanningActor, input: Intern
   return runMutation(actor, { kind: input.kind, id: input.id, mode: "cancel", reason, expectedVersion: input.expectedVersion });
 }
 
-/** Cajas resultantes de una edición: las informadas (deben sumar la cantidad), las de antes si no se tocan, o ninguna. */
+/** Cajas resultantes de una edición: las informadas, las de antes si no se tocan, o ninguna. Si no suman la cantidad no se bloquea: queda una diferencia por conciliar. */
 function resolveNewPacking(raw: unknown, oldPacking: DeliveryPackingGroup[], oldQty: number, newQty: number): DeliveryPackingGroup[] {
   if (raw !== undefined) {
-    const chk = validateDeliveryPacking(raw ?? [], newQty);
+    const chk = validateDeliveryPacking(raw ?? [], newQty, { lenient: true });
     if (!chk.ok) throw new PlanningValidationError(chk.error);
     return chk.groups;
   }
-  if (oldPacking.length > 0 && Math.abs(newQty - oldQty) > DELIVERY_EPSILON) {
-    throw new PlanningValidationError(`Cambiaste la cantidad: actualizá también el desglose de cajas (hoy suma ${packingTotals(oldPacking).unidades} u. y la entrega pasa a ${newQty} u.).`);
-  }
+  // Cambió la cantidad y no se tocaron las cajas: se conservan tal como estaban; la diferencia queda visible para conciliar (no se inventan cajas).
+  void oldQty;
+  void newQty;
   return oldPacking;
 }
 

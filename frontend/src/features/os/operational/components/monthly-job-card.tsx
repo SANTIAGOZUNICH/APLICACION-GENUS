@@ -2,6 +2,7 @@
 
 import type { WeeklyPlanItemDto } from "@/lib/planning/weekly-plan-dto";
 import { JobComments } from "./job-comments";
+import { MeBadge } from "./me-badge";
 
 const UNIT_NAMES: Record<string, string> = { "un.": "unidades", un: "unidades", u: "unidades", unid: "unidades", unidades: "unidades" };
 
@@ -57,6 +58,13 @@ export function MonthlyJobCard({ job }: { job: WeeklyPlanItemDto }) {
             </div>
           ))}
       </dl>
+      {job.me ? (
+        <section className="mt-3 border-t border-white/15 pt-3" aria-label="Material de Envase" data-testid="job-card-me">
+          <h4 className="text-[13px] font-semibold uppercase tracking-wide text-[#9fb4c0]">Material de Envase (Depósito)</h4>
+          <div className="mt-1"><MeBadge me={job.me} showObservation /></div>
+          {job.me.updatedBy ? <p className="mt-0.5 text-[11px] text-[#9fb4c0]">Verificó {job.me.updatedBy}{job.me.updatedAt ? ` · ${new Date(job.me.updatedAt).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })}` : ""}</p> : null}
+        </section>
+      ) : null}
       <section className="mt-3 border-t border-white/15 pt-3" aria-label="Observaciones del trabajo" data-testid="job-card-observations">
         <h4 className="text-[13px] font-semibold uppercase tracking-wide text-[#9fb4c0]">Observaciones del trabajo</h4>
         {job.notes?.trim() ? (

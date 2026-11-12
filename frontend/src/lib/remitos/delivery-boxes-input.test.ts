@@ -8,9 +8,9 @@ describe("resolveBoxesEntry", () => {
   it("cajas incompletas: 8 × 100 + 1 × 50 = 850 unidades en 9 cajas", () => {
     expect(resolveBoxesEntry({ quantity: null, groups: [{ cajas: 8, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 50 }] })).toMatchObject({ ok: true, quantity: 850, cajas: 9 });
   });
-  it("opción B: total informado y cajas que no suman → error con los números exactos (sin redondear)", () => {
+  it("opción B: total informado y cajas que no suman → se registra igual con la diferencia exacta por conciliar (sin redondear ni bloquear)", () => {
     const r = resolveBoxesEntry({ quantity: 850, groups: [{ cajas: 8, unidadesPorCaja: 100 }] });
-    expect(r).toMatchObject({ ok: false, error: expect.stringContaining("800") });
+    expect(r).toMatchObject({ ok: true, quantity: 850, derivedQuantity: false, diff: 50, cajas: 8 });
     expect(resolveBoxesEntry({ quantity: 850, groups: [{ cajas: 8, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 50 }] })).toMatchObject({ ok: true, quantity: 850, derivedQuantity: false });
   });
   it("sin información de cajas es válido (no se obliga a cargar el embalaje); filas vacías del editor se ignoran", () => {
@@ -35,5 +35,14 @@ describe("consolidación de cajas", () => {
   it("samePacking ignora el orden", () => {
     expect(samePacking([{ cajas: 1, unidadesPorCaja: 50 }, { cajas: 20, unidadesPorCaja: 100 }], [{ cajas: 20, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 50 }])).toBe(true);
     expect(samePacking(e1, e3)).toBe(false);
+  });
+
+  it("validateDeliveryPacking lenient: las cajas que no suman se guardan tal cual con la diferencia; sin lenient sigue siendo error", async () => {
+    const { validateDeliveryPacking } = await import("./delivery-packing");
+    expect(validateDeliveryPacking([{ cajas: 3, unidadesPorCaja: 100 }], 305, { lenient: true })).toMatchObject({ ok: true, unidades: 300, diff: 5 });
+    expect(validateDeliveryPacking([{ cajas: 3, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 5 }], 305, { lenient: true })).toMatchObject({ ok: true, unidades: 305 });
+    expect((validateDeliveryPacking([{ cajas: 3, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 5 }], 305, { lenient: true }) as { diff?: number }).diff).toBeUndefined();
+    expect(validateDeliveryPacking([{ cajas: 3, unidadesPorCaja: 100 }], 305).ok).toBe(false);
+    expect(validateDeliveryPacking([{ cajas: 0.5, unidadesPorCaja: 100 }], 305, { lenient: true }).ok).toBe(false); // datos inválidos siguen rechazándose
   });
 });

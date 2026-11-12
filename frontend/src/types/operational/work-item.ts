@@ -1,4 +1,5 @@
 import type { SectorId } from "@/types/operational/sector";
+import type { MeInfo } from "@/lib/me-status/me-status";
 
 export const WORK_ITEM_SOURCES = [
   "semanas_2026",
@@ -111,6 +112,8 @@ export interface WorkItem {
   /** Avance operativo en vivo (Genus OS — no Sheets). */
   finishedQty?: string | null;
   operationalObservation?: string | null;
+  /** Control de ME (Material de Envase) por Depósito — solo trabajos de Envasado. Mismo estado en todas las pantallas. */
+  me?: MeInfo | null;
   /**
    * Concurrencia optimista (solo work items nativos/Neon) — la pantalla debe
    * reenviarla como `expectedVersion` al guardar una edición/eliminación

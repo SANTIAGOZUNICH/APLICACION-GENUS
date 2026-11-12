@@ -275,7 +275,9 @@ export async function prepareRemitoFromDelivery(actor: RemitoActor, input: Prepa
       if (!chk.ok) throw new OrdersValidationError(chk.error);
       groups = chk.groups;
     } else if (Math.abs(quantity - d.delivered) <= EPS && d.remitted <= EPS) {
-      groups = d.packingGroups;
+      // Si las cajas de la entrega no suman lo entregado (diferencia por conciliar), el borrador lleva las unidades reales y las cajas quedan
+      // para completar antes de emitir: el remito no toma unidades «inventadas» de un desglose que no cierra.
+      groups = Math.abs(packingTotals(d.packingGroups).unidades - quantity) <= EPS || d.packingGroups.length === 0 ? d.packingGroups : [];
     } else {
       groups = [];
     }

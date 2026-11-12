@@ -3,16 +3,15 @@
  *
  * Dos maneras de trabajar (ambas válidas):
  *  A) Cargar cajas: «8 cajas × 100» → el total se calcula solo (y puede haber cajas incompletas: 8 × 100 + 1 × 50 = 850).
- *  B) Cargar unidades: el total manda y el desglose de cajas es opcional; si se informa, DEBE sumar exactamente el total.
- * Nunca se inventan cantidades por caja ni se redondea: si no cierran, se avisa con los números exactos.
+ *  B) Cargar unidades: el total manda y el desglose de cajas es opcional; si se informa y no suma el total, se ADVIERTE con los números
+ *     exactos pero NO se bloquea: queda una diferencia por conciliar.
+ * Nunca se inventan cantidades por caja ni se redondea.
  */
 import { validateDeliveryPacking, type DeliveryPackingGroup } from "./delivery-packing";
 
 export type BoxesEntryResult =
-  | { ok: true; quantity: number | null; groups: DeliveryPackingGroup[]; cajas: number; derivedQuantity: boolean }
+  | { ok: true; quantity: number | null; groups: DeliveryPackingGroup[]; cajas: number; derivedQuantity: boolean; /** unidades declaradas − unidades en cajas (≠ 0: diferencia a conciliar; NO bloquea). */ diff?: number }
   | { ok: false; error: string };
-
-const fmt = (n: number) => new Intl.NumberFormat("es-AR").format(n);
 
 export function resolveBoxesEntry(input: { quantity: number | null | undefined; groups: unknown }): BoxesEntryResult {
   const checked = validateDeliveryPacking(input.groups ?? null, null);
@@ -21,7 +20,8 @@ export function resolveBoxesEntry(input: { quantity: number | null | undefined; 
   if (checked.groups.length === 0) return { ok: true, quantity: qty, groups: [], cajas: 0, derivedQuantity: false };
   if (qty == null) return { ok: true, quantity: checked.unidades, groups: checked.groups, cajas: checked.cajas, derivedQuantity: true };
   if (qty !== checked.unidades) {
-    return { ok: false, error: `Las cajas suman ${fmt(checked.unidades)} u. pero la cantidad total es ${fmt(qty)} u. Corregí las cajas o la cantidad.` };
+    // Registro operativo flexible: la cantidad real declarada y las cajas informadas se guardan por separado; la diferencia se muestra y se concilia después.
+    return { ok: true, quantity: qty, groups: checked.groups, cajas: checked.cajas, derivedQuantity: false, diff: qty - checked.unidades };
   }
   return { ok: true, quantity: qty, groups: checked.groups, cajas: checked.cajas, derivedQuantity: false };
 }

@@ -129,6 +129,7 @@ export function PendientesDefinirView() {
         workItemId: item.id,
         actorSectorId: sectorId,
         deliverQuantity: payload.deliverQuantity,
+        confirmProduced: payload.confirmProduced === true,
         idempotencyKey: payload.idempotencyKey,
         actualDeliveredAt: payload.actualDeliveredAt,
         remito: payload.remito,

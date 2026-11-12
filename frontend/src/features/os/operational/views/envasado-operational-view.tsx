@@ -293,6 +293,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         actorSectorId: actorSectorId,
         partial: payload.partial === true,
         deliverQuantity: payload.deliverQuantity,
+        confirmProduced: payload.confirmProduced === true,
         idempotencyKey: payload.idempotencyKey,
         actualDeliveredAt: payload.actualDeliveredAt,
         remito: payload.remito,

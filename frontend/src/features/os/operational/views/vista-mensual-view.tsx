@@ -36,7 +36,7 @@ export function VistaMensualView() {
     monthStart: monthAnchor,
   });
   const monthItems = useMemo(
-    () => items.map((i) => ({ id: i.workItemId, product: i.product, client: i.client, quantity: i.quantity, unit: i.unit, plannedDate: i.plannedDate, plannedDateTo: i.plannedDateTo })),
+    () => items.map((i) => ({ id: i.workItemId, product: i.product, client: i.client, quantity: i.quantity, unit: i.unit, plannedDate: i.plannedDate, plannedDateTo: i.plannedDateTo, me: i.me })),
     [items]
   );
 

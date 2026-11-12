@@ -6,7 +6,7 @@
 import type { WorkItem } from "@/types/operational/work-item";
 
 /** Lo mínimo que la vista Mensual necesita de un trabajo (WorkItem y el plan compartido de solo lectura lo cumplen). */
-export type MonthItem = Pick<WorkItem, "id" | "product" | "client" | "quantity" | "unit" | "plannedDate" | "plannedDateTo">;
+export type MonthItem = Pick<WorkItem, "id" | "product" | "client" | "quantity" | "unit" | "plannedDate" | "plannedDateTo"> & { /** Control de ME (solo Envasado). */ me?: WorkItem["me"] };
 import { workItemCoversDate } from "./work-item-date-range";
 import { addDaysIso, parseIsoDate, weekStartMonday } from "./operational-calendar";
 

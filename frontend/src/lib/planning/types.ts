@@ -110,6 +110,11 @@ export interface PlanningWorkItemRecord {
   operationalStatus?: string;
   finishedQty?: string | null;
   operationalObservation?: string | null;
+  /** Control de ME por Depósito (0083). */
+  meStatus?: string | null;
+  meObservation?: string | null;
+  meUpdatedBy?: string | null;
+  meUpdatedAt?: string | null;
   packingMismatchObservation?: string | null;
   progressUpdatedAt?: string | null;
   progressUpdatedBy?: string | null;

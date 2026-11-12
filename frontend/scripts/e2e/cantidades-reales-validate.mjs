@@ -116,10 +116,7 @@ try {
   await dlg.waitFor({ timeout: 30_000 });
   const qtyDefault = await dlg.locator("[data-testid=deliver-quantity]").inputValue();
   check("«Entregar todo» ofrece el saldo REAL (630 = 1.235 realizadas − 605), no 595", /^630$/.test(qtyDefault.trim()), qtyDefault);
-  check("las cajas de ESTA entrega se piden abiertas (no las del trabajo completo)", (await dlg.locator("[data-testid=deliver-box-cajas-0]").count()) === 1);
-  await dlg.locator("[data-testid=confirm-deliver]").click();
-  const errTxt = await dlg.locator("[data-testid=deliver-error]").innerText({ timeout: 5000 }).catch(() => "");
-  check("sin cajas de esta entrega se rechaza con mensaje claro y no registra nada", /Cargá las cajas de ESTA entrega/.test(errTxt) && (await lines(ids.b)).length === 1, errTxt);
+  check("las cajas son opcionales: el diálogo no las exige abiertas", (await dlg.locator("[data-testid=deliver-box-cajas-0]").count()) === 0);
   await fillBoxes(dlg, [[6, 100], [1, 30]]);
   await dlg.locator("[data-testid=confirm-deliver]").click();
   await dlg.waitFor({ state: "detached", timeout: 30_000 }).catch(async () => console.log("DEBUG:", (await dlg.innerText()).replace(/\s+/g, " ").slice(-400)));

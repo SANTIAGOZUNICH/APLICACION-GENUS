@@ -236,6 +236,11 @@ export const workItems = pgTable(
     reworkRequestedBy: text("rework_requested_by"),
     reworkRequestedBySector: text("rework_requested_by_sector"),
     reworkReason: text("rework_reason"),
+    /** Control de ME por Depósito (0083): NULL = Sin info · OK = ✅ · NO_OK = ❌. Informativo; sin movimientos de stock. */
+    meStatus: text("me_status"),
+    meObservation: text("me_observation"),
+    meUpdatedBy: text("me_updated_by"),
+    meUpdatedAt: timestamp("me_updated_at", { withTimezone: true }),
     /** 0061 — programación de la MISMA OE/OA en otro día: apunta a la programación original. null = original/única. */
     scheduleRootId: uuid("schedule_root_id"),
     /** 0077 — trabajo de Codificado que recibe entregas parciales de este otro trabajo (de Envasado). NULL = trabajo normal. */
@@ -359,6 +364,19 @@ export const workItemDeliveries = pgTable(
  * fila agregada de work_item_deliveries (única activa por trabajo) acumula la
  * suma de las líneas ACTIVAS vinculadas por delivery_id.
  */
+/** Historial del control de ME (0083): quién cambió el estado, cuándo, desde qué estado y con qué observación. */
+export const workItemMeHistory = pgTable("work_item_me_history", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workItemId: uuid("work_item_id").notNull().references(() => workItems.id, { onDelete: "cascade" }),
+  fromStatus: text("from_status"),
+  toStatus: text("to_status"),
+  observation: text("observation"),
+  actorEmail: text("actor_email").notNull(),
+  actorName: text("actor_name"),
+  actorSector: text("actor_sector").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const workItemDeliveryLines = pgTable(
   "work_item_delivery_lines",
   {

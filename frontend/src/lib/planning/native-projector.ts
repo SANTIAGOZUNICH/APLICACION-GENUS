@@ -1,3 +1,4 @@
+import { buildMeInfo, meAppliesToSector } from "@/lib/me-status/me-status";
 import {
   dayOfWeekName,
   resolveWeekId,
@@ -153,6 +154,7 @@ export function projectNativeWorkItem(item: PlanningWorkItemRecord): WorkItem {
       (item.packagingTotalUnits != null ? String(item.packagingTotalUnits) : null),
     operationalObservation:
       item.operationalObservation ?? item.codificadoObservation ?? item.notes,
+    me: meAppliesToSector(item.sector) ? buildMeInfo(item) : null,
     completedAt: item.completedAt ?? null,
     completedBy: item.completedBy ?? null,
     progressUpdatedAt: item.progressUpdatedAt ?? null,

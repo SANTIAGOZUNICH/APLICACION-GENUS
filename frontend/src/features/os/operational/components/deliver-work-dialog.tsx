@@ -36,6 +36,8 @@ export interface DeliverWorkPayload {
   idempotencyKey: string;
   /** «Entregar parcial» (Envasado): el servidor mide el saldo contra lo asignado y no cierra el trabajo hasta completarlo. */
   partial?: boolean;
+  /** Confirmación explícita: se produjeron más unidades que las registradas; se declaran como realizadas (queda en el historial). */
+  confirmProduced?: boolean;
 }
 
 type Props = {
@@ -61,8 +63,6 @@ type Props = {
   mode?: "final" | "partial";
   /** Unidades terminadas según los registros (realizadas); limita lo que se puede entregar en una parcial. */
   produced?: number | null;
-  /** Entrega final tras entregas parciales: las cajas son las de ESTA entrega (obligatorias en Envasado), nunca las del trabajo completo. */
-  requireBoxes?: boolean;
   /** Texto de «Entregar parcial» (por defecto el de Envasado; Codificado informa el suyo). */
   partialDescription?: string;
   onConfirm: (payload: DeliverWorkPayload) => Promise<void>;
@@ -99,7 +99,6 @@ export function DeliverWorkDialog({
   submitLabel = "Confirmar entrega",
   mode = "final",
   produced = null,
-  requireBoxes = false,
   partialDescription = "Registra una entrega parcial a Producción: el trabajo sigue pendiente en Envasado hasta completar la cantidad.",
   onConfirm,
 }: Props) {
@@ -116,6 +115,9 @@ export function DeliverWorkDialog({
   const [boxes, setBoxes] = useState<PackingGroup[]>([]);
   const [showBoxes, setShowBoxes] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Entrega mayor a lo registrado como realizado/disponible: se pide confirmar las unidades realmente producidas. */
+  const [exceedTotal, setExceedTotal] = useState<number | null>(null);
+  const [confirmProd, setConfirmProd] = useState(false);
   const [busy, setBusy] = useState(false);
   const keyRef = useRef<string>(newIdempotencyKey("deliver"));
 
@@ -130,8 +132,10 @@ export function DeliverWorkDialog({
     setBulkKg("");
     setBulkObs("");
     setBoxes([]);
-    setShowBoxes(requireBoxes && !isPartialMode);
+    setShowBoxes(false);
     setError(null);
+    setExceedTotal(null);
+    setConfirmProd(false);
     setBusy(false);
     // Solo al abrir: el saldo cambia recién cuando se cierra/confirma.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -146,10 +150,10 @@ export function DeliverWorkDialog({
     if (target == null) return null;
     if (isPartialMode) {
       if (requested == null) return null;
-      return planPartialDelivery({ assigned: target, alreadyDelivered: delivered, produced, requested, unit });
+      return planPartialDelivery({ assigned: target, alreadyDelivered: delivered, produced, requested, unit, confirmProduced: confirmProd });
     }
-    return planDeliveryStep({ target, alreadyDelivered: delivered, requested, unit });
-  }, [target, delivered, requested, unit, isPartialMode, produced]);
+    return planDeliveryStep({ target, alreadyDelivered: delivered, requested, unit, confirmProduced: confirmProd });
+  }, [target, delivered, requested, unit, isPartialMode, produced, confirmProd]);
 
   async function submit() {
     if (busy) return; // doble clic
@@ -177,15 +181,17 @@ export function DeliverWorkDialog({
         setError("Este trabajo no tiene una cantidad asignada numérica: no admite entrega parcial.");
         return;
       }
-      const step = planPartialDelivery({ assigned: target, alreadyDelivered: delivered, produced, requested: effectiveRequested, unit });
+      const step = planPartialDelivery({ assigned: target, alreadyDelivered: delivered, produced, requested: effectiveRequested, unit, confirmProduced: confirmProd });
       if (!step.ok) {
         setError(step.error);
+        if ((step.code === "EXCEEDS_AVAILABLE" || step.code === "EXCEEDS_BALANCE") && effectiveRequested != null) setExceedTotal(delivered + effectiveRequested);
         return;
       }
     } else if (target != null) {
-      const step = planDeliveryStep({ target, alreadyDelivered: delivered, requested, unit });
+      const step = planDeliveryStep({ target, alreadyDelivered: delivered, requested, unit, confirmProduced: confirmProd });
       if (!step.ok) {
         setError(step.error);
+        if (step.code === "EXCEEDS_BALANCE") setExceedTotal(delivered + (requested ?? 0));
         return;
       }
     }
@@ -194,16 +200,12 @@ export function DeliverWorkDialog({
       deliveryPackingGroups = partialBoxes;
     } else if (showBoxes && !isPartialMode) {
       const stepUnits = requested ?? balance;
-      const packing = validateDeliveryPacking(boxes, stepUnits);
+      const packing = validateDeliveryPacking(boxes, stepUnits, { lenient: true });
       if (!packing.ok) {
         setError(packing.error);
         return;
       }
       deliveryPackingGroups = packing.groups.length > 0 ? packing.groups : null;
-    }
-    if (requireBoxes && !isPartialMode && !deliveryPackingGroups) {
-      setError("Cargá las cajas de ESTA entrega (cajas × unidades por caja): deben sumar las unidades que entregás ahora.");
-      return;
     }
     let bulk: ReturnType<typeof parseBulkRemainderKg> | null = null;
     if (showBulkRemainder && !isPartialMode) {
@@ -226,6 +228,7 @@ export function DeliverWorkDialog({
         deliveryPackingGroups,
         idempotencyKey: keyRef.current,
         ...(isPartialMode ? { partial: true } : {}),
+        ...(confirmProd ? { confirmProduced: true } : {}),
       });
       onOpenChange(false);
     } catch (err) {
@@ -398,6 +401,14 @@ export function DeliverWorkDialog({
             </>
           ) : null}
             </>
+          ) : null}
+          {exceedTotal != null ? (
+            <label className="flex items-start gap-2 rounded border border-amber-300/40 bg-amber-300/10 p-2 text-xs" data-testid="deliver-confirm-produced-box">
+              <input type="checkbox" className="mt-0.5 size-4" checked={confirmProd} onChange={(e) => setConfirmProd(e.target.checked)} data-testid="deliver-confirm-produced" />
+              <span>
+                Confirmo que se produjeron <strong>{formatQty(exceedTotal)}{unitLabel}</strong> en total. Se registran como realizadas (queda en el historial) y se entregan; no se genera ningún movimiento de stock.
+              </span>
+            </label>
           ) : null}
           {error ? (
             <p className="text-sm text-[var(--genus-error,#b91c1c)]" role="alert" data-testid="deliver-error">

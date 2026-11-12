@@ -48,6 +48,8 @@ export function resolveDeliveryTarget(input: DeliveryTargetInput): number | null
 export type DeliveryStepResult =
   | {
       ok: true;
+      /** Con confirmación explícita: el acumulado supera lo registrado como disponible; se declara como realizado hasta este valor. */
+      producedRaisedTo?: number;
       /** Cantidad que se entrega en este paso. */
       quantity: number;
       /** Acumulado entregado incluyendo este paso. */
@@ -72,10 +74,12 @@ export function planDeliveryStep(input: {
   alreadyDelivered: number;
   requested: number | null | undefined;
   unit: string | null | undefined;
+  /** El usuario confirmó explícitamente que se produjeron más unidades que las registradas: se entrega y se declaran como realizadas. */
+  confirmProduced?: boolean;
 }): DeliveryStepResult {
   const { target, alreadyDelivered, unit } = input;
   const balance = Math.max(0, target - alreadyDelivered);
-  if (balance <= DELIVERY_EPSILON) {
+  if (balance <= DELIVERY_EPSILON && !(input.confirmProduced && input.requested != null && Number(input.requested) > 0)) {
     return {
       ok: false,
       code: "NOTHING_PENDING",
@@ -98,11 +102,15 @@ export function planDeliveryStep(input: {
     };
   }
   if (requested > balance + DELIVERY_EPSILON) {
-    return {
-      ok: false,
-      code: "EXCEEDS_BALANCE",
-      error: `La cantidad (${formatQty(requested)}) supera el saldo pendiente de entrega (${formatQty(balance)}).`,
-    };
+    if (!input.confirmProduced) {
+      return {
+        ok: false,
+        code: "EXCEEDS_BALANCE",
+        error: `La cantidad (${formatQty(requested)}) supera lo registrado como disponible para entregar (${formatQty(balance)}). Si realmente se produjeron más unidades, confirmalo para registrarlas como realizadas.`,
+      };
+    }
+    const cumulativeUp = alreadyDelivered + requested;
+    return { ok: true, quantity: requested, cumulative: cumulativeUp, pending: 0, complete: true, producedRaisedTo: cumulativeUp };
   }
   const quantity = Math.min(requested, balance);
   const cumulative = alreadyDelivered + quantity;
@@ -112,7 +120,7 @@ export function planDeliveryStep(input: {
 }
 
 export type PartialDeliveryResult =
-  | { ok: true; quantity: number; cumulative: number; pending: number; complete: boolean }
+  | { ok: true; quantity: number; cumulative: number; pending: number; complete: boolean; producedRaisedTo?: number }
   | { ok: false; code: "INVALID_QUANTITY" | "EXCEEDS_BALANCE" | "EXCEEDS_AVAILABLE" | "NOTHING_PENDING"; error: string };
 
 /**
@@ -128,12 +136,14 @@ export function planPartialDelivery(input: {
   produced: number | null | undefined;
   requested: number | null | undefined;
   unit: string | null | undefined;
+  /** El usuario confirmó que se produjeron más unidades que las registradas: se entrega y se declaran como realizadas (queda auditado). */
+  confirmProduced?: boolean;
 }): PartialDeliveryResult {
   const { assigned, alreadyDelivered, unit } = input;
   const produced = input.produced != null && Number.isFinite(input.produced) && input.produced > 0 ? input.produced : null;
   const cap = produced ?? assigned;
   const available = Math.max(0, cap - alreadyDelivered);
-  if (available <= DELIVERY_EPSILON) {
+  if (available <= DELIVERY_EPSILON && !(input.confirmProduced && input.requested != null && Number(input.requested) > 0)) {
     // Ya salió todo lo asignado y todo lo realizado: nada pendiente. Si falta entregar lo asignado pero no hay realizadas, hay que registrarlas.
     if (alreadyDelivered >= assigned - DELIVERY_EPSILON) {
       return { ok: false, code: "NOTHING_PENDING", error: "No queda saldo pendiente de entrega en este trabajo." };
@@ -146,6 +156,10 @@ export function planPartialDelivery(input: {
   }
   if (isIntegerUnit(unit) && !Number.isInteger(requested)) {
     return { ok: false, code: "INVALID_QUANTITY", error: "La cantidad a entregar debe ser un número entero de unidades." };
+  }
+  if (requested > available + DELIVERY_EPSILON && input.confirmProduced) {
+    const cumulativeUp = alreadyDelivered + requested;
+    return { ok: true, quantity: requested, cumulative: cumulativeUp, pending: 0, complete: cumulativeUp >= assigned - DELIVERY_EPSILON, producedRaisedTo: cumulativeUp };
   }
   if (requested > available + DELIVERY_EPSILON) {
     return produced != null

@@ -104,6 +104,7 @@ export const SIDEBAR_ITEM_IDS = [
   "entregas_produccion",
   "pedidos_deposito",
   "control_me",
+  "me_envasado",
   "vista_mensual",
   "entregas_internas",
   "inventario_deposito",
