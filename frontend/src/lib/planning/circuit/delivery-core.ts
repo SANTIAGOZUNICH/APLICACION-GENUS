@@ -17,7 +17,6 @@ import { PlanningForbiddenError, PlanningNotFoundError, PlanningValidationError 
 import { isIntegerUnit } from "@/lib/utils/ar-number-parsing";
 import { summarizePackingGroups, normalizePackingGroups } from "@/lib/remitos/packing-math";
 import {
-  assertEnvasadoDeliveryBoxes,
   hasRealPackingGroups,
 } from "./packaging-close";
 import {
@@ -96,6 +95,11 @@ export interface RecordDeliveryParams {
    * explícita, no se pide la distribución en cajas de todo el trabajo y el trabajo solo se completa al entregar lo asignado.
    */
   partial?: boolean;
+  /**
+   * El usuario confirmó EXPLÍCITAMENTE que se produjeron más unidades que las registradas como realizadas: la entrega se registra y esas
+   * unidades se declaran como realizadas (queda en el historial). Nunca se aumenta la producción en silencio.
+   */
+  confirmProduced?: boolean;
 }
 
 export interface RecordDeliveryResult {
@@ -345,41 +349,22 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
   if (filledVto) patch.packagingVto = filledVto;
 
   const nextGroups = patch.packingGroups !== undefined ? patch.packingGroups : row.packingGroups;
-  const nextSamples = patch.sampleUnits !== undefined ? patch.sampleUnits : row.sampleUnits;
   const nextFinishedText = (patch.finishedQty as string | undefined) ?? row.finishedQty ?? null;
   const nextTotal = patch.packagingTotalUnits !== undefined ? patch.packagingTotalUnits : row.packagingTotalUnits;
-  const nextMismatchObs =
-    (patch.packingMismatchObservation as string | null | undefined) ?? row.packingMismatchObservation ?? null;
 
   // Cajas: Envasado entrega SU trabajo → distribución obligatoria y validada. Codificado (recibe solo el total) y
   // Producción/Dirección (registran sobre trabajos históricos) no la exigen; si hay distribución REAL consistente se
   // conserva y fija lo embalado.
-  // Si ya hubo entregas parciales, esta es la ÚLTIMA: sus cajas son las de ESTA entrega (deliveryPackingGroups), no las del trabajo completo.
+  // Cajas: registro operativo FLEXIBLE. La entrega se registra con la cantidad real aunque todavía no se conozca el desglose o no coincida con
+  // lo producido; las cajas informadas se guardan aparte y la diferencia queda visible para conciliar (nunca se inventan cajas ni unidades).
   const finalAfterPartials = alreadyDelivered > 0 && !params.partial;
-  const enforceBoxes = !params.skipBoxValidation && !params.partial && !finalAfterPartials && ENVASADO.has(actor.sector.toUpperCase());
-  if (finalAfterPartials && !params.skipBoxValidation && ENVASADO.has(actor.sector.toUpperCase()) && !hasRealPackingGroups(params.deliveryPackingGroups)) {
-    throw new PlanningValidationError(
-      "Para entregar desde Envasado cargá la distribución en cajas de ESTA entrega (cajas × unidades por caja). Si no tenés el desglose, enviá el trabajo a Codificado indicando solo la cantidad total."
-    );
-  }
   const finishedNum =
     parseQuantity(nextFinishedText, unit) ?? (nextTotal != null ? Number(nextTotal) : null);
-  if (enforceBoxes) {
-    const close = assertEnvasadoDeliveryBoxes({
-      finishedQty: finishedNum,
-      sampleUnits: nextSamples,
-      packingGroups: nextGroups,
-      observation: (c?.observation ?? row.operationalObservation ?? "") || nextMismatchObs,
-    });
-    patch.deliverableUnits = close.packedUnits;
-    patch.packagingClosedAt = now;
-    patch.packagingClosedBy = actorName;
-  } else if (!params.partial && !finalAfterPartials && c && hasRealPackingGroups(nextGroups) && finishedNum != null) {
+  if (!params.partial && !finalAfterPartials && c && hasRealPackingGroups(nextGroups) && finishedNum != null) {
     const packed = summarizePackingGroups(normalizePackingGroups(nextGroups as never)).totalEmbalado;
-    // Trabajos históricos (Producción registra la entrega): lo entregable es lo físicamente embalado. Trabajos
-    // enviados a Codificado sin desglose completo: la cantidad total declarada manda; una distribución parcial NO
-    // achica la entrega (no se «pierden» unidades por un desglose incompleto).
-    if (packed === finishedNum || !row.viaCodificado) {
+    // Solo cuando lo embalado COINCIDE con lo realizado se fija como cierre de packaging; una distribución que no coincide NO achica la entrega
+    // (las unidades reales declaradas mandan) y queda como diferencia por conciliar.
+    if (packed === finishedNum) {
       patch.deliverableUnits = packed;
       patch.packagingClosedAt = row.packagingClosedAt ?? now;
       patch.packagingClosedBy = row.packagingClosedBy ?? actorName;
@@ -402,6 +387,7 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
     if (received > (target ?? 0)) target = received;
   }
 
+  let producedRaised: number | null = null;
   let stepQuantity: number | null = null;
   let cumulative: number | null = null;
   let pending: number | null = null;
@@ -423,20 +409,23 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
       produced: finishedNum != null && finishedNum > 0 ? Math.max(finishedNum - toCodificado, 1e-9) : finishedNum,
       requested,
       unit,
+      confirmProduced: params.confirmProduced === true && !row.parentWorkItemId,
     });
     if (!step.ok) throw new PlanningValidationError(step.error);
     stepQuantity = step.quantity;
     cumulative = step.cumulative;
     pending = step.pending;
     complete = step.complete;
+    if (step.producedRaisedTo != null) producedRaised = step.producedRaisedTo + toCodificado;
   } else if (target != null) {
     const toCodificado = await sumActiveCodificadoTransfers(tx, params.workItemId);
-    const step = planDeliveryStep({ target: target - toCodificado, alreadyDelivered, requested, unit });
+    const step = planDeliveryStep({ target: target - toCodificado, alreadyDelivered, requested, unit, confirmProduced: params.confirmProduced === true && !row.parentWorkItemId });
     if (!step.ok) throw new PlanningValidationError(step.error);
     stepQuantity = step.quantity;
     cumulative = step.cumulative;
     pending = step.pending;
     complete = step.complete;
+    if (step.producedRaisedTo != null) producedRaised = step.producedRaisedTo + toCodificado;
   } else if (requested != null && requested > 0) {
     // Sin cantidad objetivo numérica: se registra lo declarado y se considera completa.
     stepQuantity = requested;
@@ -444,9 +433,12 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
     pending = 0;
   }
 
-  // Cajas de ESTA entrega: si vienen, deben sumar exactamente lo entregado ahora.
-  const deliveryPacking = validateDeliveryPacking(params.deliveryPackingGroups ?? null, stepQuantity);
+  // Cajas de ESTA entrega: se guardan tal como se informan; si no suman lo entregado, la diferencia queda para conciliar (no bloquea).
+  const deliveryPacking = validateDeliveryPacking(params.deliveryPackingGroups ?? null, stepQuantity, { lenient: true });
   if (!deliveryPacking.ok) throw new PlanningValidationError(deliveryPacking.error);
+  // Unidades realizadas confirmadas explícitamente (entrega mayor a lo registrado): se declaran, auditado.
+  const finishedBeforeRaise = row.finishedQty ?? null;
+  if (producedRaised != null) patch.finishedQty = isIntegerUnit(unit) ? String(Math.round(producedRaised)) : formatQty(producedRaised);
 
   // ── Snapshot canónico (relee la fila ya con el patch de cierre aplicado) ─────────────────────────
   if (Object.keys(patch).length > 0 || filledLote || filledVto) {
@@ -615,6 +607,31 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
         complete ? 0 : (pending ?? "s/d")
       }${params.syncNote ? ` | ${params.syncNote}` : ""}`.slice(0, 500),
   });
+
+  if (producedRaised != null) {
+    await tx.insert(operationalEvents).values({
+      workItemId: params.workItemId,
+      planningWeekId: row.planningWeekId,
+      type: "PRODUCED_CONFIRMED",
+      fromStatus: toStatus,
+      toStatus,
+      actorEmail: actor.email,
+      actorSector: actor.sector,
+      note: `delivery:${key} | realizadas antes=${finishedBeforeRaise ?? "s/d"} | realizadas confirmadas=${patch.finishedQty} | confirmado por ${actorName}`.slice(0, 500),
+    });
+  }
+  if (deliveryPacking.ok && deliveryPacking.diff != null && deliveryPacking.diff !== 0) {
+    await tx.insert(operationalEvents).values({
+      workItemId: params.workItemId,
+      planningWeekId: row.planningWeekId,
+      type: "DELIVERY_PACKING_DIFF",
+      fromStatus: toStatus,
+      toStatus,
+      actorEmail: actor.email,
+      actorSector: actor.sector,
+      note: `delivery:${key} | unidades declaradas=${stepQuantity} | unidades en cajas=${deliveryPacking.unidades} | diferencia=${deliveryPacking.diff} | registrado por ${actorName}`.slice(0, 500),
+    });
+  }
 
   if (complete) {
     await closePedidoIfAllDelivered(tx, updatedItem, actor);

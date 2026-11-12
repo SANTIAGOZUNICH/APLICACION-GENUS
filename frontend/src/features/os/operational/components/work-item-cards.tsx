@@ -12,6 +12,7 @@
  * trabajo está vinculado (misma tabla y API que Semanas). Las diferencias con la tarea de Semanas se MUESTRAN; nunca se
  * da por sincronizado algo que vive en otro sistema.
  */
+import { MeBadge } from "./me-badge";
 import type { ElaboracionFigures } from "@/lib/planning/elaboracion-figures";
 import { useMemo, useRef, useState } from "react";
 import { AlertTriangle, CalendarDays, Check, Link2, Lock, Pencil, X } from "lucide-react";
@@ -469,6 +470,7 @@ export function WorkItemCard(props: WorkItemCardsProps & { item: WorkItem }) {
         )}
       </div>
 
+      {item.me ? <div data-testid="card-me"><MeBadge me={item.me} showObservation /></div> : null}
       {variant === "elaboracion" && fig ? (
         <div className="space-y-1.5 rounded-lg border border-white/10 bg-black/10 p-2" data-testid="card-elab-figures" data-elab-state={fig.state}>
           <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${ELAB_STATE_TONE[fig.state] ?? ""}`} data-testid="card-elab-state">{fig.stateLabel}</span>

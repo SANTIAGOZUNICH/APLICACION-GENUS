@@ -28,7 +28,7 @@ describe.skipIf(Boolean(PROBLEM))(`Codificado: entregas parciales con cajas${PRO
 
   beforeAll(async () => {
     process.env.VITEST = "false";
-    process.env.NODE_ENV = "development";
+    (process.env as Record<string, string | undefined>).NODE_ENV = "development";
     delete process.env.GENUS_FEATURE_MEMORY;
     process.env.DATABASE_URL = process.env.GENUS_E2E_DATABASE_URL!;
     const { Pool, neonConfig } = await import("@neondatabase/serverless");
@@ -82,9 +82,8 @@ describe.skipIf(Boolean(PROBLEM))(`Codificado: entregas parciales con cajas${PRO
     expect(deliveries.every((d) => d.packingSource === "ENTREGA")).toBe(true);
   });
 
-  it("6, 7) cajas que no suman las unidades se rechazan sin registrar nada; entregar sin cajas es válido (no se inventa embalaje)", async () => {
+  it("6, 7) cajas inválidas se rechazan sin registrar nada; entregar sin cajas es válido (no se inventa embalaje)", async () => {
     const { child } = await received("2000", ENVASADO_BOXES);
-    await expect(deliver(codif, child, 850, B100(8))).rejects.toThrow(/Las cajas suman 800 u\./);
     await expect(deliver(codif, child, 100, [{ cajas: 0, unidadesPorCaja: 100 }])).rejects.toThrow();
     expect(await lines(child)).toHaveLength(0);
     const sinCajas = await deliver(codif, child, 500, null);
@@ -98,6 +97,15 @@ describe.skipIf(Boolean(PROBLEM))(`Codificado: entregas parciales con cajas${PRO
     const inc = await deliver(codif, child, 850, [{ cajas: 8, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 50 }]);
     expect(inc).toMatchObject({ delivered: 1350 });
     expect((await (await rem()).listDeliveriesOfWork(child)).deliveries[1]).toMatchObject({ delivered: 850, cajas: 9 });
+  });
+
+  it("cajas que no suman las unidades declaradas NO bloquean: se registra la cantidad real y las cajas informadas quedan aparte (diferencia por conciliar)", async () => {
+    const { child } = await received("2000", ENVASADO_BOXES);
+    const r = await deliver(codif, child, 850, B100(8)); // declara 850, cajas = 800
+    expect(r).toMatchObject({ delivered: 850 });
+    const [l] = await lines(child);
+    expect(l).toMatchObject({ quantity: 850 });
+    expect(l!.packing_groups).toEqual([{ cajas: 8, unidadesPorCaja: 100 }]);
   });
 
   it("12, 13) cajas de Envasado: Codificado informa las suyas (no se suman a las de Envasado); sin cajas propias solo se heredan cuando la entrega completa coincide", async () => {

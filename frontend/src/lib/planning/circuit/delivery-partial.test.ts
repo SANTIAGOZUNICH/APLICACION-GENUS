@@ -80,3 +80,25 @@ describe("cantidad solicitada = referencia, no tope (1.200 pedidas, 1.235 realiz
     expect(resolveDeliveryTarget({ unit: "kg", finishedQty: "70", plannedQuantity: "60" })).toBe(70);
   });
 });
+
+describe("entregas flexibles: confirmar lo realmente producido (caso JACTANS)", () => {
+  const b = { assigned: 1000, unit: "un." };
+  it("300 + 700 con realizadas desactualizadas (300): sin confirmar se explica; confirmando se registra y se declaran 1.000 realizadas", () => {
+    const sin = planPartialDelivery({ ...b, alreadyDelivered: 300, produced: 300, requested: 700 });
+    expect(sin).toMatchObject({ ok: false, code: "EXCEEDS_AVAILABLE" });
+    const con = planPartialDelivery({ ...b, alreadyDelivered: 300, produced: 300, requested: 700, confirmProduced: true });
+    expect(con).toMatchObject({ ok: true, cumulative: 1000, pending: 0, complete: true, producedRaisedTo: 1000 });
+  });
+  it("305 + 710 = 1.015 sobre 1.000: completa y sin pendiente negativo", () => {
+    expect(planPartialDelivery({ ...b, alreadyDelivered: 305, produced: 305, requested: 710, confirmProduced: true })).toMatchObject({ ok: true, cumulative: 1015, pending: 0, complete: true, producedRaisedTo: 1015 });
+  });
+  it("dentro de lo realizado no hace falta confirmar ni se declara nada", () => {
+    expect(planPartialDelivery({ ...b, alreadyDelivered: 0, produced: 1015, requested: 305, confirmProduced: true })).toMatchObject({ ok: true, pending: 710, complete: false });
+    expect((planPartialDelivery({ ...b, alreadyDelivered: 0, produced: 1015, requested: 305, confirmProduced: true }) as { producedRaisedTo?: number }).producedRaisedTo).toBeUndefined();
+  });
+  it("sin confirmación expresa NO se aumenta la producción en silencio; cantidades inválidas se rechazan igual", () => {
+    expect(planPartialDelivery({ ...b, alreadyDelivered: 0, produced: 300, requested: 400 }).ok).toBe(false);
+    expect(planPartialDelivery({ ...b, alreadyDelivered: 0, produced: 300, requested: 0, confirmProduced: true }).ok).toBe(false);
+    expect(planPartialDelivery({ ...b, alreadyDelivered: 0, produced: 300, requested: 10.5, confirmProduced: true }).ok).toBe(false);
+  });
+});

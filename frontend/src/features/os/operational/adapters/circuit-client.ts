@@ -89,6 +89,8 @@ export interface CircuitDeliveryPayload {
   deliverQuantity?: number | null;
   /** «Entregar parcial»: el servidor mide el saldo contra lo asignado y no cierra el trabajo hasta completarlo. */
   partial?: boolean;
+  /** Confirmación explícita: se produjeron más unidades que las registradas; se declaran como realizadas (auditado). */
+  confirmProduced?: boolean;
   idempotencyKey: string;
   actualDeliveredAt: string;
   remito?: string | null;

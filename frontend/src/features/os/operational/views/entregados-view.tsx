@@ -458,6 +458,7 @@ export function EntregadosView() {
           workItemId: deliveryTarget.relatedWorkItemId,
           actorSectorId: sectorId,
           deliverQuantity: payload.deliverQuantity,
+          confirmProduced: payload.confirmProduced === true,
           idempotencyKey: payload.idempotencyKey,
           actualDeliveredAt: payload.actualDeliveredAt,
           remito: payload.remito,

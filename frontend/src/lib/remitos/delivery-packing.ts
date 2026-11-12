@@ -5,10 +5,10 @@
 export type DeliveryPackingGroup = { cajas: number; unidadesPorCaja: number };
 
 export type DeliveryPackingResult =
-  | { ok: true; groups: DeliveryPackingGroup[]; cajas: number; unidades: number }
+  | { ok: true; groups: DeliveryPackingGroup[]; cajas: number; unidades: number; /** Con `lenient`: unidades declaradas − unidades de las cajas (≠ 0 = diferencia a conciliar). */ diff?: number }
   | { ok: false; error: string };
 
-export function validateDeliveryPacking(raw: unknown, deliveredUnits: number | null): DeliveryPackingResult {
+export function validateDeliveryPacking(raw: unknown, deliveredUnits: number | null, opts: { lenient?: boolean } = {}): DeliveryPackingResult {
   if (raw == null) return { ok: true, groups: [], cajas: 0, unidades: 0 };
   if (!Array.isArray(raw)) return { ok: false, error: "El detalle de cajas no es válido." };
   const groups: DeliveryPackingGroup[] = [];
@@ -28,6 +28,8 @@ export function validateDeliveryPacking(raw: unknown, deliveredUnits: number | n
   const cajas = groups.reduce((s, g) => s + g.cajas, 0);
   const unidades = groups.reduce((s, g) => s + g.cajas * g.unidadesPorCaja, 0);
   if (groups.length > 0 && deliveredUnits != null && unidades !== deliveredUnits) {
+    // Registro operativo flexible: las unidades declaradas y las cajas informadas se guardan POR SEPARADO; la diferencia queda para conciliar.
+    if (opts.lenient) return { ok: true, groups, cajas, unidades, diff: deliveredUnits - unidades };
     return { ok: false, error: `Las cajas suman ${unidades} u. pero la entrega es de ${deliveredUnits} u. Corregí las cajas o la cantidad.` };
   }
   return { ok: true, groups, cajas, unidades };

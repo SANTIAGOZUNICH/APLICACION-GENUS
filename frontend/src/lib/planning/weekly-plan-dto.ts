@@ -1,5 +1,6 @@
 import type { PlanningSector, PlanningWorkItemRecord } from "@/lib/planning/types";
 import { SECTOR_LABELS } from "@/types/operational/sector";
+import { buildMeInfo, meAppliesToSector, type MeInfo } from "@/lib/me-status/me-status";
 import type { ElaboracionFigures } from "@/lib/planning/elaboracion-figures";
 
 export interface WeeklyPlanItemDto {
@@ -26,6 +27,8 @@ export interface WeeklyPlanItemDto {
   finishedQty?: string | null;
   /** Solo Elaboración: kg solicitados / elaborados / entregados / pendientes y estado real (renglones de entrega + envío a Envasado). */
   elaboracion?: ElaboracionFigures | null;
+  /** Control de ME por Depósito (solo Envasado). */
+  me?: MeInfo | null;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -108,6 +111,7 @@ export function toWeeklyPlanItemDto(item: PlanningWorkItemRecord): WeeklyPlanIte
     stateLabel: currentStateLabel(item),
     operationalStatus: item.operationalStatus ?? null,
     finishedQty: item.finishedQty ?? null,
+    me: meAppliesToSector(item.sector) ? buildMeInfo(item) : null,
   };
 }
 

@@ -1527,6 +1527,8 @@ export interface DeliverWorkInput {
   idempotencyKey?: string | null;
   /** Cierre (lo que antes hacía «Finalizar») aplicado en la misma transacción que la entrega. */
   completion?: DeliveryCompletion | null;
+  /** Confirmación explícita: se produjeron más unidades que las registradas; se declaran como realizadas (auditado). */
+  confirmProduced?: boolean;
 }
 
 /**
@@ -1573,6 +1575,7 @@ export async function deliverWorkDurable(
       completion: input.completion ?? null,
       deliveryPackingGroups: input.deliveryPackingGroups ?? null,
       partial: input.partial === true,
+      confirmProduced: input.confirmProduced === true,
     })
   );
   // Aviso a Producción FUERA de la transacción: un fallo de la notificación nunca bloquea la entrega.

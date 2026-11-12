@@ -42,6 +42,11 @@ export function DeliveryBoxesSection({ boxes, onBoxesChange, expected, onUseTota
             Total: {cajas} {cajas === 1 ? "caja" : "cajas"} · {fmt(total)} u.
             {expected != null ? ` (la entrega es de ${fmt(expected)} u.)` : ""}
           </p>
+          {mismatch ? (
+            <p className="rounded border border-amber-300/40 bg-amber-300/10 px-2 py-1 text-xs text-[var(--genus-warning)]" data-testid={`${prefix}-boxes-diff`}>
+              Las cajas suman {fmt(total)} u. y la entrega es de {fmt(expected ?? 0)} u.: se registra igual con las cantidades reales y la diferencia ({fmt(Math.abs((expected ?? 0) - total))} u.) queda por conciliar. Podés corregir el embalaje después.
+            </p>
+          ) : null}
           {total > 0 && onUseTotal && total !== expected ? (
             <button type="button" className="min-h-9 rounded border border-[var(--os-border)] px-3 text-xs" onClick={() => onUseTotal(total)} data-testid={`${prefix}-boxes-use-total`}>
               Usar {fmt(total)} u. como cantidad total

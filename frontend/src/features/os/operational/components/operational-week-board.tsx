@@ -19,6 +19,7 @@ import { workItemCoversDate } from "@/lib/operational/work-item-date-range";
 import { groupWorkItemsByDay } from "@/lib/operational/work-item-filters";
 import { isWorkItemReschedulable } from "../lib/work-transfer-labels";
 import { StatusChip } from "./operational-ui";
+import { MeBadge } from "./me-badge";
 import { DeliveryDateBadge } from "./delivery-date-badge";
 import { WorkItemWarningBadge } from "./work-item-warning-badge";
 import { NO_CELL_EDITING, WorkItemCard, type WorkItemCardsProps } from "./work-item-cards";
@@ -235,6 +236,7 @@ function ConsultaCard({ item }: { item: WeeklyPlanItemDto }) {
         {item.quantity} {item.unit} · {item.sectorLabel}
       </p>
       <p className="text-[var(--os-text-muted)]">{dayRangeLabel(item)}</p>
+      <MeBadge me={item.me} className="mt-1" />
       <button
         type="button"
         className="mt-1 text-[0.65rem] font-medium text-[var(--os-teal)] underline-offset-2 hover:underline"
@@ -296,6 +298,7 @@ function CompactWorkItem({ item, onEditItem }: { item: WorkItem; onEditItem?: (i
       </div>
       <div className="font-semibold">{displayField(item.product ?? item.client)}</div>
       <div className="font-semibold tabular-nums">{displayField(item.quantity)} {item.unit ?? ""}</div>
+      <MeBadge me={item.me} className="mt-0.5" />
       {onEditItem && <div className="mt-1"><CardEditButton item={item} onEditItem={onEditItem} /></div>}
     </li>
   );
@@ -582,6 +585,7 @@ function WeekJobCard({
       <p className="truncate text-[11px] leading-tight text-[#9fc0d4]" title={item.client ?? ""}>
         {displayField(item.client)}
       </p>
+      <MeBadge me={item.me} className="mt-0.5" />
       <div className="mt-1 flex flex-wrap items-center gap-1">
         <span className="text-[12px] font-semibold tabular-nums text-[var(--os-teal)]" data-testid="week-job-qty">
           {displayField(item.quantity)} {item.unit ?? ""}

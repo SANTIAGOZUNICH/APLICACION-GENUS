@@ -103,18 +103,27 @@ describe("DeliverWorkDialog — modo «Entregar parcial»", () => {
     expect((onConfirm.mock.calls[0] as unknown[])[0]).toMatchObject({ deliverQuantity: 850, deliveryPackingGroups: [{ cajas: 8, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 50 }], partial: true });
   });
 
-  it("opción B: cantidad informada y cajas que no suman → error con los números exactos, sin enviar", async () => {
+  it("opción B: cantidad informada y cajas que no suman → advertencia con los números exactos, pero se registra igual (diferencia por conciliar)", async () => {
     const onConfirm = open({ produced: 2050 });
     fireEvent.change(screen.getByTestId("deliver-quantity"), { target: { value: "850" } });
     fireEvent.click(screen.getByTestId("deliver-boxes-toggle"));
     fireEvent.change(screen.getByTestId("deliver-box-cajas-0"), { target: { value: "8" } });
     fireEvent.change(screen.getByTestId("deliver-box-upc-0"), { target: { value: "100" } });
-    fireEvent.click(screen.getByTestId("confirm-deliver"));
-    await waitFor(() => expect(screen.getByTestId("deliver-error").textContent).toMatch(/suman 800 u\. pero la cantidad total es 850 u\./));
-    expect(onConfirm).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByTestId("deliver-boxes-use-total")); // «Usar 800 u. como cantidad total»
+    expect(screen.getByTestId("deliver-boxes-diff").textContent).toMatch(/suman 800 u\. y la entrega es de 850 u\./);
     fireEvent.click(screen.getByTestId("confirm-deliver"));
     await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
-    expect((onConfirm.mock.calls[0] as unknown[])[0]).toMatchObject({ deliverQuantity: 800 });
+    expect((onConfirm.mock.calls[0] as unknown[])[0]).toMatchObject({ deliverQuantity: 850, deliveryPackingGroups: [{ cajas: 8, unidadesPorCaja: 100 }] });
+  });
+
+  it("entregar más de lo registrado como realizado: se pide confirmar las unidades realmente producidas (no se bloquea sin alternativa)", async () => {
+    const onConfirm = open({ produced: 300 });
+    fireEvent.change(screen.getByTestId("deliver-quantity"), { target: { value: "700" } });
+    fireEvent.click(screen.getByTestId("confirm-deliver"));
+    await waitFor(() => expect(screen.getByTestId("deliver-confirm-produced")).toBeTruthy());
+    expect(onConfirm).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("deliver-confirm-produced"));
+    fireEvent.click(screen.getByTestId("confirm-deliver"));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+    expect((onConfirm.mock.calls[0] as unknown[])[0]).toMatchObject({ deliverQuantity: 700, confirmProduced: true });
   });
 });

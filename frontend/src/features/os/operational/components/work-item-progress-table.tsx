@@ -112,6 +112,7 @@ function WorkItemProgressTableInner({
         ]
       : []),
     excelCol<WorkItem>("estado", "Estado", (i) => i.status.replace(/_/g, " ")),
+    ...(variant === "envasado" ? [excelCol<WorkItem>("me", "ME", (i) => (i.me ? `${i.me.status === "OK" ? "✅" : i.me.status === "NO_OK" ? "❌" : "Sin info"}${i.me.observation ? ` · ${i.me.observation}` : ""}` : ""))] : []),
     excelCol<WorkItem>("notes", "Observación", (i) => i.notes ?? "", { edit: cells.edit("notes") }),
     excelCol<WorkItem>("avance", "Avance informado", (i) => getObservation(i.id) || "—"),
     {

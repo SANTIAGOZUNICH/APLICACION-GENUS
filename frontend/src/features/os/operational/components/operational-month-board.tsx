@@ -4,6 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { X } from "lucide-react";
 import { useDesignPreviewPortalContainer } from "@/lib/utils/use-design-preview-portal-container";
+import { MeBadge } from "./me-badge";
 import { holidayScopeLabel, plantHolidaysBetween, type PlantHoliday } from "@/lib/holidays/holiday-calendar";
 import { buildMonthGrid, groupItemsByMonthDay, undatedItems, type MonthItem } from "@/lib/operational/month-grid";
 
@@ -33,6 +34,11 @@ interface Props<T extends MonthItem> {
    * vez; se cierra con la X, tocando afuera o con Esc. Si se pasa, reemplaza al `onSelectItem` en los trabajos del calendario.
    */
   renderDetail?: (item: T) => ReactNode;
+}
+
+function chipTitle(it: MonthItem): string {
+  const me = it.me ? ` · ME: ${it.me.status === "OK" ? "✅" : it.me.status === "NO_OK" ? "❌" : "Sin info"}${it.me.observation ? ` (${it.me.observation})` : ""}` : "";
+  return `${chipLabel(it)}${me}`;
 }
 
 function chipLabel(it: MonthItem): string {
@@ -137,12 +143,13 @@ export function OperationalMonthBoard<T extends MonthItem>({ monthStart, today, 
                                 <Popover.Trigger asChild>
                                   <button
                                     type="button"
-                                    title={chipLabel(it)}
-                                    className="block w-full truncate rounded bg-[var(--os-teal)]/15 px-1 py-0.5 text-left text-[11px] hover:bg-[var(--os-teal)]/30"
+                                    title={chipTitle(it)}
+                                    className="block w-full rounded bg-[var(--os-teal)]/15 px-1 py-0.5 text-left text-[11px] hover:bg-[var(--os-teal)]/30"
                                     data-testid="month-chip"
                                     data-id={it.id}
                                   >
-                                    {chipLabel(it)}
+                                    <span className="block truncate">{chipLabel(it)}</span>
+                                    <MeBadge me={it.me} />
                                   </button>
                                 </Popover.Trigger>
                                 <Popover.Portal container={portalContainer}>
@@ -173,12 +180,13 @@ export function OperationalMonthBoard<T extends MonthItem>({ monthStart, today, 
                                 setDragId(it.id);
                               }}
                               onClick={() => onSelectItem(it)}
-                              title={chipLabel(it)}
-                              className="block w-full truncate rounded bg-[var(--os-teal)]/15 px-1 py-0.5 text-left text-[11px] hover:bg-[var(--os-teal)]/30"
+                              title={chipTitle(it)}
+                              className="block w-full rounded bg-[var(--os-teal)]/15 px-1 py-0.5 text-left text-[11px] hover:bg-[var(--os-teal)]/30"
                               data-testid="month-chip"
                               data-id={it.id}
                             >
-                              {chipLabel(it)}
+                              <span className="block truncate">{chipLabel(it)}</span>
+                              <MeBadge me={it.me} />
                             </button>
                             )}
                           </li>
