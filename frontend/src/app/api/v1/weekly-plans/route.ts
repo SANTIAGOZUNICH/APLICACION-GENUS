@@ -4,6 +4,7 @@ import { authErrorResponse } from "@/lib/auth/http";
 import { isDatabaseConfigured } from "@/lib/db/client";
 import { monthGridRange, monthStartOf } from "@/lib/operational/month-grid";
 import { weekStartMonday } from "@/lib/operational/operational-calendar";
+import { loadElaboracionFigures } from "@/lib/planning/elaboracion-figures-service";
 import { getPlanningService } from "@/lib/planning/get-planning-service";
 import { toWeeklyPlanItemDtos } from "@/lib/planning/weekly-plan-dto";
 import {
@@ -70,7 +71,12 @@ export async function GET(request: Request) {
     const rows = await getPlanningService().listPublishedItems(
       monthRange ? { sectors, from: monthRange.from, to: monthRange.to, limit: 500 } : { sectors, weekStart, limit: 500 }
     );
-    const items = toWeeklyPlanItemDtos(rows);
+    // Elaboración: kg elaborados / entregados / pendientes y estado REAL (renglones de entrega + envío a Envasado). Solo lectura.
+    const elab = rows.filter((r) => r.sector === "ELABORACION");
+    const figures = elab.length > 0
+      ? await loadElaboracionFigures(elab.map((r) => ({ id: r.id, plannedQuantity: r.plannedQuantity, finishedQty: r.finishedQty ?? null, operationalStatus: r.operationalStatus ?? null, status: r.status, unit: r.unit })))
+      : undefined;
+    const items = toWeeklyPlanItemDtos(rows, figures);
 
     return NextResponse.json({
       weekStart,

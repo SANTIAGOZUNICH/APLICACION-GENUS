@@ -12,6 +12,7 @@
  * trabajo está vinculado (misma tabla y API que Semanas). Las diferencias con la tarea de Semanas se MUESTRAN; nunca se
  * da por sincronizado algo que vive en otro sistema.
  */
+import type { ElaboracionFigures } from "@/lib/planning/elaboracion-figures";
 import { useMemo, useRef, useState } from "react";
 import { AlertTriangle, CalendarDays, Check, Link2, Lock, Pencil, X } from "lucide-react";
 import { displayField } from "@/lib/operational/display-fields";
@@ -69,7 +70,23 @@ export interface WorkItemCardsProps {
    * trabajos, sus datos y sus acciones son los mismos. Semana y el resto de las vistas no lo usan.
    */
   groupByPedido?: boolean;
+  /** Solo consulta (Materias Primas): la tarjeta solo ofrece «Ver detalle», sin «Registrar avance» ni ninguna otra acción. */
+  readOnly?: boolean;
+  /** Elaboración: cifras REALES (kg elaborados / entregados / pendientes y estado) de cada trabajo; si se pasa, se muestran en la tarjeta. */
+  elaboracionFigures?: (itemId: string) => ElaboracionFigures | null | undefined;
 }
+
+const ELAB_STATE_TONE: Record<string, string> = {
+  PENDIENTE: "bg-white/10 text-[#cfe0ea]",
+  EN_ELABORACION: "bg-sky-400/20 text-sky-100",
+  ELABORADO: "bg-violet-400/20 text-violet-100",
+  ENTREGADO_PARCIAL: "bg-amber-300/20 text-amber-100",
+  ENTREGADO: "bg-emerald-400/20 text-emerald-100",
+  BLOQUEADO: "bg-rose-400/20 text-rose-100",
+  CANCELADO: "bg-white/10 text-[#9fb4c0]",
+};
+const kgText = (n: number | null | undefined, unit: string) => (n == null ? "—" : `${fmtKg(n)} ${unit}`);
+const fmtKg = (n: number) => new Intl.NumberFormat("es-AR", { maximumFractionDigits: 3 }).format(n);
 
 const LABEL = "text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8fb3c9]";
 
@@ -396,6 +413,7 @@ export function WorkItemCard(props: WorkItemCardsProps & { item: WorkItem }) {
   const T = compact
     ? { box: "gap-1.5 p-2.5", label: "text-[9px] font-semibold uppercase tracking-[0.12em] text-[#8fb3c9]", product: "text-[14px]", qty: "text-[15px]", fin: "text-[13px]", min: "6.5rem", base: "text-[12px]" }
     : { box: "gap-2 p-3.5", label: LABEL, product: "text-[16px]", qty: "text-[17px]", fin: "text-[15px]", min: "8.5rem", base: "text-[13px]" };
+  const fig = props.elaboracionFigures?.(item.id) ?? null;
   const showLote = showPackagingColumns || (isProduccion && variant === "envasado");
   return (
     <article
@@ -450,6 +468,18 @@ export function WorkItemCard(props: WorkItemCardsProps & { item: WorkItem }) {
           </div>
         )}
       </div>
+
+      {variant === "elaboracion" && fig ? (
+        <div className="space-y-1.5 rounded-lg border border-white/10 bg-black/10 p-2" data-testid="card-elab-figures" data-elab-state={fig.state}>
+          <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${ELAB_STATE_TONE[fig.state] ?? ""}`} data-testid="card-elab-state">{fig.stateLabel}</span>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[12px] font-semibold tabular-nums text-[#e6f0f6]">
+            <div><div className={T.label}>Solicitados</div><span data-testid="card-elab-requested">{kgText(fig.requestedKg, "kg")}</span></div>
+            <div><div className={T.label}>Elaborados</div><span data-testid="card-elab-elaborated">{kgText(fig.elaboratedKg, "kg")}</span></div>
+            <div><div className={T.label}>Entregados</div><span data-testid="card-elab-delivered">{kgText(fig.deliveredKg, "kg")}</span></div>
+            <div><div className={T.label}>Pendientes de entregar</div><span data-testid="card-elab-pending">{kgText(fig.pendingKg, "kg")}</span></div>
+          </div>
+        </div>
+      ) : null}
 
       <div className={`grid gap-x-3 gap-y-1.5 border-t border-white/10 pt-2 ${T.base} font-semibold text-[#e6f0f6]`} style={{ gridTemplateColumns: `repeat(auto-fit,minmax(${T.min},1fr))` }}>
         <div>
@@ -507,7 +537,7 @@ export function WorkItemCard(props: WorkItemCardsProps & { item: WorkItem }) {
       {transferred && <p className="text-xs font-semibold text-[var(--os-teal)]">{transferStatusNote(item.status)}</p>}
 
       {!props.hideActions && <div className="mt-auto flex flex-wrap gap-1.5 border-t border-white/10 pt-2">
-        <ActionButton label={archived || transferred ? "Ver detalle" : "Ver / Registrar avance"} variant="neutral" onClick={() => onSelectItem(item)} />
+        <ActionButton label={archived || transferred || props.readOnly ? "Ver detalle" : "Ver / Registrar avance"} variant="neutral" onClick={() => onSelectItem(item)} />
         {variant === "envasado" && !archived && !transferred && !isProduccion && (
           <ActionButton label="Entregar parcial" variant="approve" onClick={() => onSelectItem(item, "partial")} />
         )}

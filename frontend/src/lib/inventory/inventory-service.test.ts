@@ -180,6 +180,7 @@ describe("Columnas exactas ME/MP", () => {
       "Control semanal total",
       "Compras MP",
       "COA'S",
+      "Semana de Elaboración",
     ]);
     expect(MP_STOCK_COLUMNS).toHaveLength(13);
     expect(MP_INGRESO_COLUMNS).toHaveLength(14);

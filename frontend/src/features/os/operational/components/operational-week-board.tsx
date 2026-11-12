@@ -81,7 +81,7 @@ interface OperationalWeekBoardProps {
    * compacto), agrupada por día. Es de consulta (la edición de planificación sigue en el detalle) y conserva las
    * acciones de la tarjeta: ver detalle / registrar avance, archivar y restaurar.
    */
-  cards?: Pick<WorkItemCardsProps, "variant" | "getFinishedQty" | "getObservation" | "onSelectItem" | "listMode" | "onArchiveFromView" | "onRestoreToView" | "archiveBusyId" | "showPackagingColumns">;
+  cards?: Pick<WorkItemCardsProps, "variant" | "getFinishedQty" | "getObservation" | "onSelectItem" | "listMode" | "onArchiveFromView" | "onRestoreToView" | "archiveBusyId" | "showPackagingColumns" | "readOnly" | "elaboracionFigures">;
   /**
    * «columns» (Envasado): los 5 días en columnas (3 en tablet), tarjetas compactas, contador por día y desplazamiento
    * INTERNO si un día tiene muchos trabajos (la columna no estira la página). Requiere `cards`. En celular se ve solo el
