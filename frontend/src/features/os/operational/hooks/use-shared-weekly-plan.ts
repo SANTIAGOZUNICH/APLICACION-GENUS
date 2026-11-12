@@ -26,12 +26,18 @@ interface UseSharedWeeklyPlanResult {
   updatedAgoLabel: string;
   refresh: () => void;
   allowedSectors: PlanningSector[];
+  /** Permiso para marcar ME según el servidor (null = todavía no se sabe). */
+  canEditMe: boolean | null;
+  /** Sector con el que el servidor reconoce al usuario. */
+  actorSector: string | null;
 }
 
 interface WeeklyPlansResponse {
   items?: WeeklyPlanItemDto[];
   uniqueCount?: number;
   allowedSectors?: PlanningSector[];
+  canEditMe?: boolean;
+  actorSector?: string;
   scannedAt?: string;
   error?: string;
 }
@@ -45,6 +51,8 @@ export function useSharedWeeklyPlan({
   const [items, setItems] = useState<WeeklyPlanItemDto[]>([]);
   const [uniqueCount, setUniqueCount] = useState(0);
   const [allowedSectors, setAllowedSectors] = useState<PlanningSector[]>([]);
+  const [canEditMe, setCanEditMe] = useState<boolean | null>(null);
+  const [actorSector, setActorSector] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastSuccessAt, setLastSuccessAt] = useState<Date | null>(null);
@@ -90,6 +98,8 @@ export function useSharedWeeklyPlan({
         setItems(Array.isArray(body.items) ? body.items : []);
         setUniqueCount(typeof body.uniqueCount === "number" ? body.uniqueCount : body.items?.length ?? 0);
         setAllowedSectors(Array.isArray(body.allowedSectors) ? body.allowedSectors : []);
+        setCanEditMe(typeof body.canEditMe === "boolean" ? body.canEditMe : null);
+        setActorSector(typeof body.actorSector === "string" ? body.actorSector : null);
         setLastSuccessAt(body.scannedAt ? new Date(body.scannedAt) : new Date());
         setError(null);
         hasDataRef.current = true;
@@ -140,5 +150,7 @@ export function useSharedWeeklyPlan({
     updatedAgoLabel,
     refresh,
     allowedSectors,
+    canEditMe,
+    actorSector,
   };
 }

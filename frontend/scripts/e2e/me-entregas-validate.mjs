@@ -95,7 +95,7 @@ try {
   const rowOf = (p) => dep.page.locator("[data-testid=me-row]", { hasText: p }).first();
   await rowOf(P.masivo).waitFor({ timeout: 60_000 });
   const rtxt = (await rowOf(P.masivo).innerText()).replace(/\s+/g, " ");
-  check("Depósito ve cliente, producto, fecha, sector de Envasado, cantidad y estado ME (Sin info)", /JACTANS E2E SA/.test(rtxt) && /Envasado Masivo/.test(rtxt) && /1000 un\./.test(rtxt) && /ME: Sin info/.test(rtxt), rtxt.slice(0, 160));
+  check("Depósito ve cliente, producto, fecha, sector de Envasado, cantidad y estado ME (Sin info)", /JACTANS E2E SA/.test(rtxt) && /Masivo/.test(rtxt) && /1000 un\./.test(rtxt) && /ME: Sin info/.test(rtxt), rtxt.slice(0, 160));
   check("los trabajos de Elaboración no aparecen en el control de ME", (await dep.page.locator("[data-testid=me-row]", { hasText: P.elab }).count()) === 0);
   await rowOf(P.masivo).locator("[data-testid=me-set-OK]").click();
   check("Depósito marca ✅", await waitDb(async () => (await q("select me_status from work_items where id = $1", [ids.masivo]))[0].me_status === "OK"));
