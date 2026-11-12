@@ -115,6 +115,17 @@ describe("hojas de elaboración dentro de una OE", () => {
     expect(summarizeSheets({ ...c0, header: { ...c0.header, quantityKg: 900 }, sheets }).exceedsKg).toBe(100);
   });
 
+  it("la suma de los kg REALMENTE elaborados puede superar los solicitados (OE de 60 kg → 70 kg): sin pendiente negativo ni error", () => {
+    const c0 = { ...oe(), header: { ...oe().header, quantityKg: 60 } };
+    let sheets = [] as NonNullable<OeContent["sheets"]>;
+    [30, 30].forEach((kg, i) => {
+      const s = createSheet({ ...c0, sheets }, { kind: "tambor", kg, by: "e@x" });
+      sheets = [...sheets, { ...s, status: "elaborado", kgElaborados: i === 0 ? 38 : 32 }];
+    });
+    const sm = summarizeSheets({ ...c0, sheets });
+    expect(sm).toMatchObject({ requestedKg: 60, plannedKg: 60, elaboratedKg: 70, pendingKg: 0, exceedsKg: 0 });
+    expect(c0.header.quantityKg).toBe(60); // lo solicitado no se modifica
+  });
   it("consumo: una sola fuente de verdad (hojas), sin duplicar con la hoja principal", () => {
     const c0 = oe();
     const mk = (kg: number, lote: string) => {

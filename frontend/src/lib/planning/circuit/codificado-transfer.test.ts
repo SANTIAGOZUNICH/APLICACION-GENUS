@@ -23,9 +23,9 @@ describe("planCodificadoTransfer", () => {
   });
   it("la cantidad asignada NO es un tope: con 2.050 realizadas se pueden entregar 2.050 a Codificado (pendiente nunca negativo)", () => {
     expect(planCodificadoTransfer({ ...base, alreadyOut: 0, produced: 2050, requested: 2050 })).toMatchObject({ ok: true, quantity: 2050, cumulative: 2050, pending: 0, complete: true });
-    // 1.000 + 800 + 250 = 2.050 (las tres se aceptan)
-    expect(planCodificadoTransfer({ ...base, alreadyOut: 0, produced: 2050, requested: 1000 })).toMatchObject({ ok: true, pending: 1000, complete: false });
-    expect(planCodificadoTransfer({ ...base, alreadyOut: 1000, produced: 2050, requested: 800 })).toMatchObject({ ok: true, pending: 200, complete: false });
+    // 1.000 + 800 + 250 = 2.050 (las tres se aceptan); el pendiente cuenta lo REALIZADO que falta entregar (2.050 − entregado)
+    expect(planCodificadoTransfer({ ...base, alreadyOut: 0, produced: 2050, requested: 1000 })).toMatchObject({ ok: true, pending: 1050, complete: false });
+    expect(planCodificadoTransfer({ ...base, alreadyOut: 1000, produced: 2050, requested: 800 })).toMatchObject({ ok: true, pending: 250, complete: false });
     expect(planCodificadoTransfer({ ...base, alreadyOut: 1800, produced: 2050, requested: 250 })).toMatchObject({ ok: true, cumulative: 2050, pending: 0, complete: true });
     // pero no más de lo realizado
     expect(planCodificadoTransfer({ ...base, alreadyOut: 1800, produced: 2050, requested: 251 })).toMatchObject({ ok: false, code: "EXCEEDS_AVAILABLE" });
