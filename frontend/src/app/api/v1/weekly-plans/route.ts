@@ -5,6 +5,7 @@ import { isDatabaseConfigured } from "@/lib/db/client";
 import { monthGridRange, monthStartOf } from "@/lib/operational/month-grid";
 import { weekStartMonday } from "@/lib/operational/operational-calendar";
 import { loadElaboracionFigures } from "@/lib/planning/elaboracion-figures-service";
+import { canSetMeStatus } from "@/lib/me-status/me-status";
 import { getPlanningService } from "@/lib/planning/get-planning-service";
 import { toWeeklyPlanItemDtos } from "@/lib/planning/weekly-plan-dto";
 import {
@@ -87,6 +88,9 @@ export async function GET(request: Request) {
       uniqueCount: items.length,
       scannedAt: new Date().toISOString(),
       readOnly: true,
+      /** Permiso REAL del usuario autenticado para marcar ME (misma regla que el servidor aplica al guardar): las pantallas no lo deducen por su cuenta. */
+      canEditMe: canSetMeStatus(actor.sector),
+      actorSector: actor.sector,
     });
   } catch (err) {
     return authErrorResponse(err);

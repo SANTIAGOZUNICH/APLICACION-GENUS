@@ -62,4 +62,10 @@ describe("GET /api/v1/weekly-plans", () => {
     expect(Object.keys(mod).filter((k) => ["POST", "PUT", "PATCH", "DELETE"].includes(k))).toEqual([]);
     expect((await GET(req("mp@laboratoriogenus.com.ar", "?weekStart=2026-08-03&planSector=ELABORACION"))).status).toBe(200);
   });
+
+  it("informa el permiso REAL de ME del usuario autenticado: solo Depósito y Dirección pueden modificar", async () => {
+    const can = async (email: string) => (await (await GET(req(`${email}@laboratoriogenus.com.ar`, "?weekStart=2026-08-03"))).json()).canEditMe;
+    expect(await can("deposito")).toBe(true);
+    for (const e of ["mp", "codificado", "elaboracion"]) expect(await can(e)).toBe(false);
+  });
 });
