@@ -56,4 +56,10 @@ describe("GET /api/v1/weekly-plans", () => {
       })
     );
   });
+
+  it("es de SOLO LECTURA: la ruta solo expone GET (sin POST/PUT/PATCH/DELETE) y Producción puede consultar", async () => {
+    const mod = await import("./route");
+    expect(Object.keys(mod).filter((k) => ["POST", "PUT", "PATCH", "DELETE"].includes(k))).toEqual([]);
+    expect((await GET(req("mp@laboratoriogenus.com.ar", "?weekStart=2026-08-03&planSector=ELABORACION"))).status).toBe(200);
+  });
 });

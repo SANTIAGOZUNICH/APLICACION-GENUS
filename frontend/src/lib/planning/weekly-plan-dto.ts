@@ -1,5 +1,6 @@
 import type { PlanningSector, PlanningWorkItemRecord } from "@/lib/planning/types";
 import { SECTOR_LABELS } from "@/types/operational/sector";
+import type { ElaboracionFigures } from "@/lib/planning/elaboracion-figures";
 
 export interface WeeklyPlanItemDto {
   workItemId: string;
@@ -20,6 +21,11 @@ export interface WeeklyPlanItemDto {
   progressLabel: string;
   /** Estado ACTUAL del trabajo para personas (avance operativo; cae al estado de planificación). Para la tarjeta de la Vista mensual. */
   stateLabel: string;
+  /** Avance operativo real (solo lectura): estado operativo y kg/unidades realizadas informadas por el sector (null = sin informar). */
+  operationalStatus?: string | null;
+  finishedQty?: string | null;
+  /** Solo Elaboración: kg solicitados / elaborados / entregados / pendientes y estado real (renglones de entrega + envío a Envasado). */
+  elaboracion?: ElaboracionFigures | null;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -93,16 +99,22 @@ export function toWeeklyPlanItemDto(item: PlanningWorkItemRecord): WeeklyPlanIte
     sector: item.sector,
     sectorLabel: SECTOR_LABELS[item.sector] ?? item.sector,
     responsible,
-    deliveryDate: null,
+    deliveryDate: item.deliveryDate ?? null,
     status: item.status,
     statusLabel: STATUS_LABELS[item.status] ?? item.status,
     lote: item.packagingLote?.trim() || null,
     notes: item.notes,
     progressLabel: progressFromStatus(item.status),
     stateLabel: currentStateLabel(item),
+    operationalStatus: item.operationalStatus ?? null,
+    finishedQty: item.finishedQty ?? null,
   };
 }
 
-export function toWeeklyPlanItemDtos(items: PlanningWorkItemRecord[]): WeeklyPlanItemDto[] {
-  return items.map(toWeeklyPlanItemDto);
+export function toWeeklyPlanItemDtos(items: PlanningWorkItemRecord[], figures?: Map<string, ElaboracionFigures>): WeeklyPlanItemDto[] {
+  return items.map((i) => {
+    const dto = toWeeklyPlanItemDto(i);
+    const f = figures?.get(i.id);
+    return f ? { ...dto, elaboracion: f, stateLabel: f.stateLabel } : dto;
+  });
 }

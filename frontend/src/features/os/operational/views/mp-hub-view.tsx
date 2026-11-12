@@ -30,6 +30,7 @@ import {
 } from "@/lib/inventory/mp-draft-rows";
 import { ExcelPasteDialog } from "@/features/os/operational/components/excel-paste-dialog";
 import { MpWeeklyControlPanel } from "@/features/os/operational/components/mp-weekly-control-panel";
+import { MpSemanaElaboracionPanel } from "../components/mp-semana-elaboracion-panel";
 import { MpWeeklyTotalPanel } from "@/features/os/operational/components/mp-weekly-total-panel";
 import { MpCoasPanel } from "@/features/os/operational/components/mp-coas-panel";
 import { MpStockAjusteModal } from "@/features/os/operational/components/mp-stock-ajuste-modal";
@@ -186,6 +187,7 @@ const TAB_TO_RESOURCE = {
   "Control semanal total": "mp_control",
   "Compras MP": "mp_compras",
   "COA'S": "mp_stock",
+  "Semana de Elaboración": "mp_control",
 } as const;
 
 /** Planilla de Ingresos MP: TODAS las columnas se editan (TOTAL corrige la cantidad por bulto; INGRESO Nº no se repite). */
@@ -1171,7 +1173,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
 
       <div className="mb-3 flex flex-wrap gap-2">
         {tab === "Ingresos MP" ? <IngresoConRemitoButtons module="MP" canWrite={canWrite} onChanged={() => { void reload(); fotos.reload(); }} /> : null}
-        {canWrite && tab !== "Control semanal" && tab !== "Control semanal total" && tab !== "COA'S" && (
+        {canWrite && tab !== "Control semanal" && tab !== "Control semanal total" && tab !== "COA'S" && tab !== "Semana de Elaboración" && (
           <>
             <Button type="button" variant={tab === "Ingresos MP" ? "secondary" : undefined} onClick={openNew}>
               <Plus className="mr-1 size-4" /> Nuevo
@@ -1205,7 +1207,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
               deleteLabel={tab === "Ingresos MP" ? "Anular seleccionados" : "Eliminar seleccionados"}
             />
           ))}
-        {tab !== "Control semanal" && tab !== "Control semanal total" && tab !== "COA'S" ? (
+        {tab !== "Control semanal" && tab !== "Control semanal total" && tab !== "COA'S" && tab !== "Semana de Elaboración" ? (
         <span className="relative inline-flex items-center">
           <input
             className="min-w-[18rem] rounded border px-3 py-1.5 pr-8 text-sm"
@@ -1458,6 +1460,8 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       {tab === "Control semanal total" && <MpWeeklyTotalPanel />}
 
       {tab === "COA'S" && <MpCoasPanel />}
+
+      {tab === "Semana de Elaboración" && <MpSemanaElaboracionPanel />}
 
       {tab === "Compras MP" && (
         <OperationalTable

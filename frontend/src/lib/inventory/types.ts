@@ -420,4 +420,6 @@ export const MP_TABS = [
   "Control semanal total",
   "Compras MP",
   "COA'S",
+  /** Planificación semanal de Elaboración (solo lectura): mismos trabajos y estados reales que ve Elaboración. */
+  "Semana de Elaboración",
 ] as const;
