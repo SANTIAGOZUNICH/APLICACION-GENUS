@@ -169,7 +169,7 @@ try {
       await clickBox(page, await draftCell(page, 0, "Fecha"));
       await pasteDoc(page, ["05/11/2026", "B003", `${TAG} CLIENTE`, "0001-79", "Producto inexistente ST", "1", "50", "50", "FALSE", "FALSE", ""].join("\t"));
       check("producto sin material identificado: queda «sin material» y NO descuenta", await waitDb(async () => (await active("egreso = 'B003'")).length === 1 && (await active("egreso = 'B003'"))[0].me_stock_status === "SIN_MATERIAL", 40_000) && (await stockApi(page)) === 3000);
-      await page.reload();
+      await openTab(page);
       await page.locator("[data-testid=despachos-stock-panel]").waitFor({ timeout: 60_000 });
       check("panel «Stock ME de las entregas» muestra la entrega sin material con selector", (await page.locator("[data-testid=despachos-sin-material] li").count()) >= 1);
       await page.locator("[data-testid=despachos-pick-material]").first().selectOption(COD);
