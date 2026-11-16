@@ -183,7 +183,9 @@ try {
     } else {
       await openTab(page);
       const scrollable = await page.evaluate((gid) => { const sc = document.querySelector(`[data-testid=${gid}] .dsg-container`); return sc ? sc.scrollWidth > sc.clientWidth : false; }, GID);
-      check("[TABLET] la planilla de entregas hace scroll horizontal y el panel de stock es visible", scrollable && (await page.locator("[data-testid=despachos-stock-panel]").count()) === 1);
+      check("[TABLET] la planilla de entregas hace scroll horizontal (no corta columnas)", scrollable);
+      await page.locator("[data-testid=despachos-stock-resumen]").waitFor({ timeout: 60_000 });
+      check("[TABLET] el resumen de stock de las entregas es visible", await page.locator("[data-testid=despachos-stock-resumen]").isVisible());
       check("[TABLET] stock consistente (3.750) e Ingresos intacto (5.000)", (await stockApi(page)) === 3750 && JSON.stringify(await ingresosApi(page)) === "[5000]");
       await page.screenshot({ path: `${OUT}/3-tablet.png` });
     }
