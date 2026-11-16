@@ -62,6 +62,8 @@ export type MeSalidaRow = {
   descuentaStock?: boolean;
   /** Etapa 2 — motivo de la salida manual (ver ME_SALIDA_MOTIVOS). */
   motivoSalida?: string | null;
+  /** Entrega de Producción (deposito_despachos) que originó esta salida: su cantidad/código se corrigen desde esa planilla (una sola fila por despacho). */
+  despachoId?: string | null;
   oaId: string | null;
   oaNumber: string | null;
   oaVersion: number | null;

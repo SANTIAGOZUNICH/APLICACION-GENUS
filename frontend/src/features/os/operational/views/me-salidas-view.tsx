@@ -133,7 +133,7 @@ export function MeSalidasView() {
   }, []);
   const [historyFor, setHistoryFor] = useState<{ id: string; label: string } | null>(null);
   const sheet = useMeSheetEditing<MeSalidaRow>("me_salidas", sectorId, canWrite, ME_SALIDA_SHEET_FIELD_OF, reload);
-  // Filas en blanco al final: salida MANUAL (no mueve stock salvo que se elija un motivo que descuenta; las reglas anti doble descuento son las del servidor).
+  // Filas en blanco al final: salida MANUAL (descuenta stock salvo que se elija «Solo registro»; las reglas anti doble descuento son las del servidor).
   const draftRows = useMemo<GenusGridDraftRows | undefined>(
     () =>
       canWrite
@@ -394,9 +394,9 @@ export function MeSalidasView() {
       </div>
 
       <p className="mb-2 rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-xs text-[var(--os-text-muted)]" data-testid="me-salidas-regla">
-        <b className="text-[var(--os-text)]">Cómo descuentan las salidas:</b> las salidas de una OA se descuentan solas al entregar la OA.
-        Una salida manual descuenta solo si su motivo lo indica (devolución, descarte, traslado, muestra). Una entrega de
-        materiales para una OA se registra como «Entrega para una OA» y no descuenta, para no restar dos veces.
+        <b className="text-[var(--os-text)]">Cómo descuentan las salidas:</b> toda salida registrada por Depósito descuenta el stock al registrarse (el ingreso
+        original no se modifica: Ingresos es el historial de lo recibido y Stock es el saldo). Si la salida corresponde a una OA (se indica en comentarios o remito), la OA solo
+        descuenta la diferencia con lo usado: nunca se resta dos veces. «Solo registro» no descuenta. Las salidas anteriores a este cambio no se modificaron.
       </p>
       {del.bar}
 
@@ -564,13 +564,13 @@ export function MeSalidasView() {
                   onChange={(e) => setForm({ ...form, motivoSalida: e.target.value })}
                   data-testid="me-salida-motivo"
                 >
-                  <option value="">— Solo registro (no descuenta) —</option>
-                  {ME_SALIDA_MOTIVOS.filter((m) => m.id !== "REGISTRO").map((m) => (
+                  <option value="">— Entrega a Producción / sector (descuenta) —</option>
+                  {ME_SALIDA_MOTIVOS.map((m) => (
                     <option key={m.id} value={m.id}>{m.label}{m.descuenta ? " · descuenta stock" : ""}</option>
                   ))}
                 </select>
                 <span className="text-xs text-[var(--os-text-muted)]">
-                  Los materiales que se entregan para una OA NO se descuentan acá: la OA los descuenta sola al entregarse.
+                  Si se entregan para una OA, indicá el N.º de OA en comentarios: la OA descontará solo lo usado que exceda lo ya entregado.
                 </span>
               </label>
               <label className="flex flex-col gap-1">

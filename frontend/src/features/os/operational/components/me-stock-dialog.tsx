@@ -13,7 +13,7 @@ import { ME_AJUSTE_TIPOS, MIN_AJUSTE_MOTIVO } from "@/lib/inventory/me-sheet-edi
 import type { MeMovement } from "@/lib/inventory/me-stock-calc";
 import { fetchMeMovimientos, postMeAjuste } from "../adapters/inventory-client";
 
-const KIND: Record<MeMovement["tipo"], string> = { INGRESO: "Ingreso", SALIDA_OA: "Consumo OA", SALIDA_MANUAL: "Salida manual", AJUSTE: "Ajuste" };
+const KIND: Record<MeMovement["tipo"], string> = { INGRESO: "Ingreso", SALIDA_OA: "Consumo OA", SALIDA_MANUAL: "Salida manual", AJUSTE: "Ajuste", NETEO_OA: "Neteo OA" };
 const n = (v: number) => v.toLocaleString("es-AR");
 
 export function MeStockDialog({ target, canAdjust, onClose, onAdjusted }: { target: { materialId: string; codigo: string; insumo: string; stock: number } | null; canAdjust: boolean; onClose: () => void; onAdjusted: () => void }) {

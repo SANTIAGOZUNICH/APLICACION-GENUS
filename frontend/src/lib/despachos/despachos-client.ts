@@ -72,3 +72,31 @@ export async function fetchDespachoHistoryApi(s: OrdersClientSession, id: string
   if (!res.ok) throw new Error(body.error ?? "No se pudo cargar el historial.");
   return body.history ?? [];
 }
+
+export type DespachoStockReport = {
+  rows: Array<{ id: string; fecha: string | null; egreso: string; cliente: string; producto: string; cantidadTotal: number; status: string | null; codigo: string | null; candidatos: string[]; accion: "DESCONTAR" | "ELEGIR_MATERIAL" | "NADA"; stockActual: number | null }>;
+  resumen: { vinculadas: number; historicas: number; sinMaterial: number; pendientes: number; unidadesHistoricas: number };
+  materiales: Array<{ codigo: string; descripcion: string; cliente: string }>;
+  persistenceReady: boolean;
+};
+
+/** Informe de vínculo entregas ↔ stock ME (solo lectura). */
+export async function fetchDespachoStockReportApi(s: OrdersClientSession): Promise<DespachoStockReport> {
+  const res = await fetch(`${BASE}/stock`, { credentials: "include", headers: headers(s), cache: "no-store" });
+  const body = (await res.json().catch(() => ({}))) as Partial<DespachoStockReport> & { error?: string };
+  if (!res.ok) throw new Error(body.error ?? "No se pudo cargar el vínculo con el stock.");
+  return body as DespachoStockReport;
+}
+
+export async function assignDespachoMaterialApi(s: OrdersClientSession, id: string, codigo: string): Promise<void> {
+  const res = await fetch(`${BASE}/stock`, { method: "POST", credentials: "include", headers: headers(s), body: JSON.stringify({ action: "assign", id, codigo }) });
+  const body = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) throw new Error(body.error ?? "No se pudo asignar el material.");
+}
+
+export async function applyHistoricoDespachosApi(s: OrdersClientSession, ids?: string[]): Promise<{ aplicadas: string[]; omitidas: Array<{ id: string; motivo: string }> }> {
+  const res = await fetch(`${BASE}/stock`, { method: "POST", credentials: "include", headers: headers(s), body: JSON.stringify({ action: "apply", ids }) });
+  const body = (await res.json().catch(() => ({}))) as { aplicadas?: string[]; omitidas?: Array<{ id: string; motivo: string }>; error?: string };
+  if (!res.ok) throw new Error(body.error ?? "No se pudo aplicar el descuento.");
+  return { aplicadas: body.aplicadas ?? [], omitidas: body.omitidas ?? [] };
+}

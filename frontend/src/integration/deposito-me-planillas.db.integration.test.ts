@@ -66,16 +66,15 @@ describe.skipIf(Boolean(PROBLEM))(`Depósito ME: planillas editables en Postgres
     expect(audit[0]!.payload).toMatchObject({ actorSector: "DEPOSITO", reason: "IT recuento", before: { cantidad: 100, total: 100 }, after: { cantidad: 120, total: 120 } });
   });
 
-  it("salida manual: «descuenta stock» con motivo propio resta; si menciona una OA se rechaza (no descuenta dos veces)", async () => {
-    const { patchMeSheetCells, meStockByCodigoDb, MeSheetPatchError } = await mod();
+  it("salida manual: «descuenta stock» con motivo propio resta; si menciona una OA se acepta pero la OA descuenta solo la diferencia (no dos veces)", async () => {
+    const { patchMeSheetCells, meStockByCodigoDb } = await mod();
     const s2 = await payload("inv_me_salidas", ids.salMan2);
     await patchMeSheetCells(deposito, "me_salidas", [{ id: ids.salMan2, field: "motivoSalida", value: "DESCARTE", expectedVersion: String(s2.updatedAt) }]);
     expect(await payload("inv_me_salidas", ids.salMan2)).toMatchObject({ motivoSalida: "DESCARTE", descuentaStock: true });
     expect(await meStockByCodigoDb(COD)).toBe(120 + 50 - 40 - 5);
     const s1 = await payload("inv_me_salidas", ids.salMan);
-    const err = await patchMeSheetCells(deposito, "me_salidas", [{ id: ids.salMan, field: "descuentaStock", value: "Sí", expectedVersion: String(s1.updatedAt) }]).catch((e) => e);
-    expect(err).toBeInstanceOf(MeSheetPatchError);
-    expect(err.message).toMatch(/dos veces/);
+    // Entregada a mano 40 para la OA + la OA usó 40: se descuenta UNA vez (max), no 80.
+    await patchMeSheetCells(deposito, "me_salidas", [{ id: ids.salMan, field: "descuentaStock", value: "Sí", expectedVersion: String(s1.updatedAt) }]);
     expect(await meStockByCodigoDb(COD)).toBe(125);
     // la salida automática de la OA no se edita desde la planilla
     const so = await payload("inv_me_salidas", ids.salOa);

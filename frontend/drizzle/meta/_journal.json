@@ -568,6 +568,13 @@
       "when": 1793900012000,
       "tag": "0083_work_item_me_control",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1793900013000,
+      "tag": "0084_despachos_stock_me",
+      "breakpoints": true
     }
   ]
 }

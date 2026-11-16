@@ -38,7 +38,8 @@ export const MIN_AJUSTE_MOTIVO = 8;
 
 /** Motivos de una salida MANUAL. `descuenta` define si resta stock. */
 export const ME_SALIDA_MOTIVOS = [
-  { id: "ENTREGA_OA", label: "Entrega para una OA (no descuenta: la OA descuenta sola)", descuenta: false },
+  { id: "ENTREGA_PRODUCCION", label: "Entrega a Producción / sector", descuenta: true },
+  { id: "ENTREGA_OA", label: "Entrega para una OA (la OA solo descuenta la diferencia)", descuenta: true },
   { id: "REGISTRO", label: "Solo registro (no descuenta)", descuenta: false },
   { id: "DEVOLUCION_CLIENTE", label: "Devolución al cliente", descuenta: true },
   { id: "DESCARTE", label: "Descarte / rotura", descuenta: true },
@@ -73,7 +74,7 @@ export function mentionsOa(...texts: Array<string | null | undefined>): boolean 
   return texts.some((t) => /\bOA[\s-]?\d{2,}/i.test(t ?? ""));
 }
 
-type ProtectableRow = { anulado?: boolean; reverted?: boolean; origen?: string; archived?: boolean };
+type ProtectableRow = { anulado?: boolean; reverted?: boolean; origen?: string; archived?: boolean; despachoId?: string | null };
 
 /** Motivo por el que la celda NO se edita (null = editable). */
 export function meSheetProtection(resource: MeSheetResource, row: ProtectableRow, field: string, sector: SectorId | string | null | undefined, isSuperadmin = false): string | null {
@@ -86,6 +87,8 @@ export function meSheetProtection(resource: MeSheetResource, row: ProtectableRow
   if (row.archived) return "Material archivado: no se edita.";
   // Salida automática de una OA: solo se bloquean los campos que mueven stock (la OA descuenta sola); el resto (cliente, remito, comentarios…) se edita y se vacía libremente.
   if (resource === "me_salidas" && row.origen === "OA" && ME_STOCK_FIELDS.has(field)) return "Salida automática de una OA: la cantidad se corrige desde la OA (no se descuenta dos veces).";
+  // Salida generada por una Entrega a Producción: cantidad, código y motivo se corrigen en esa planilla (una sola fila por entrega).
+  if (resource === "me_salidas" && row.despachoId && ME_STOCK_FIELDS.has(field)) return "Salida generada por Entregas Producción: corregila desde esa planilla (no se descuenta dos veces).";
   return null;
 }
 
@@ -141,9 +144,7 @@ export function manualSalidaStockError(row: { origen?: string; descuentaStock?: 
   if (row.origen === "OA" || !row.descuentaStock) return null;
   const motivo = meSalidaMotivo(row.motivoSalida);
   if (motivo && !motivo.descuenta) return `El motivo «${motivo.label}» no descuenta stock.`;
-  if (row.oaNumber || mentionsOa(row.comentarios, row.remitoNro)) {
-    return "Esta salida menciona una OA: el consumo de una OA se descuenta solo al entregarla. Marcala como «Entrega para una OA» (no descuenta) para no descontar dos veces.";
-  }
+  // Una salida que menciona una OA SÍ descuenta: la OA no resta dos veces lo ya entregado (solo descuenta la diferencia; ver me-stock-calc).
   if (!row.codigo?.trim()) return "Para descontar stock la salida necesita el código del material.";
   if (!((row.total ?? row.cantidad ?? 0) > 0)) return "Para descontar stock la cantidad debe ser mayor a 0.";
   return null;

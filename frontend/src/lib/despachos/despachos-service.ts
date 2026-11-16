@@ -2,7 +2,7 @@
  * Depósito «Entregas Producción» — Neon (producción) o memoria de proceso (vitest / sin DATABASE_URL).
  * Migración 0073: `deposito_despachos` + `deposito_despachos_audit`.
  *
- * Registro OPERATIVO de lo que sale de fábrica: NO descuenta stock, no toca MP ni elaboración y no se genera solo desde
+ * Registro OPERATIVO de lo que sale de fábrica. Cada entrega descuenta stock ME mediante UNA salida vinculada (despacho-me-stock.ts; nunca duplica, no toca MP ni elaboración) y no se genera solo desde
  * «Entrega de Envasado a Producción» (son operaciones distintas). Altas idempotentes por clave del cliente; bajas lógicas;
  * cada alta / cambio de campo / baja deja una fila de auditoría con usuario, fecha, antes y después.
  */
@@ -14,6 +14,7 @@ import { depositoDespachos, depositoDespachosAudit, remitos } from "@/lib/db/sch
 import { OrdersForbiddenError, OrdersNotFoundError, OrdersValidationError } from "@/lib/orders/types";
 import type { SectorId } from "@/types/operational/sector";
 import { canAccessDespachos, canMutateDespachos } from "./despachos-rbac";
+import { syncDespachosStockSafe } from "./despacho-me-stock";
 import {
   MAX_DESPACHO_BULK_ROWS,
   MAX_DESPACHO_CELL_CHANGES,
@@ -69,6 +70,7 @@ function rowToDomain(r: typeof depositoDespachos.$inferSelect): DespachoRecord {
     entregado: r.entregado,
     entregadoBy: r.entregadoBy,
     entregadoAt: r.entregadoAt?.toISOString() ?? null,
+    meStock: { status: r.meStockStatus ?? null, codigo: r.meCodigo ?? null, salidaId: r.meSalidaId ?? null },
     pedidoOp: r.pedidoOp,
     createdBy: r.createdBy,
     createdBySector: r.createdBySector,
@@ -253,6 +255,11 @@ export class DespachosService {
     return mem().audit.filter((e) => e.despachoId === despachoId).reverse();
   }
 
+  private async stockLink(id: string): Promise<DespachoRecord["meStock"]> {
+    const [row] = await getDb().select({ s: depositoDespachos.meStockStatus, c: depositoDespachos.meCodigo, i: depositoDespachos.meSalidaId }).from(depositoDespachos).where(eq(depositoDespachos.id, id));
+    return { status: row?.s ?? null, codigo: row?.c ?? null, salidaId: row?.i ?? null };
+  }
+
   private async findByKey(key: string): Promise<DespachoRecord | null> {
     if (neon()) {
       const [row] = await getDb().select().from(depositoDespachos).where(eq(depositoDespachos.idempotencyKey, key));
@@ -306,6 +313,7 @@ export class DespachosService {
           entregadoBy: st.entregadoBy,
           entregadoAt: st.entregadoAt,
           pedidoOp: record.pedidoOp,
+          meStockStatus: null, // NULL explícito = pendiente de vincular (el DEFAULT HISTORICO es solo para las filas anteriores a 0084)
           idempotencyKey: key,
           createdBy: record.createdBy,
           createdBySector: record.createdBySector,
@@ -322,6 +330,10 @@ export class DespachosService {
       mem().items.unshift({ ...record, deleted: false, idem: key });
     }
     await audit(actor, { despachoId: record.id, action: "create", after: JSON.stringify(v) });
+    if (neon()) {
+      await syncDespachosStockSafe(actor, [record.id]);
+      record.meStock = await this.stockLink(record.id);
+    }
     return { record, created: true };
   }
 
@@ -391,7 +403,7 @@ export class DespachosService {
           cantidad: r.cantidad == null ? null : String(r.cantidad), cantidadTotal: String(r.cantidadTotal), comentarios: r.comentarios,
           control: r.control, controlBy: r.controlBy, controlAt: r.controlAt ? new Date(r.controlAt) : null,
           entregado: r.entregado, entregadoBy: r.entregadoBy, entregadoAt: r.entregadoAt ? new Date(r.entregadoAt) : null,
-          pedidoOp: r.pedidoOp, idempotencyKey: key, createdBy: r.createdBy,
+          pedidoOp: r.pedidoOp, meStockStatus: null, idempotencyKey: key, createdBy: r.createdBy,
           createdBySector: r.createdBySector, createdAt: now, updatedAt: now,
         })))
         .onConflictDoNothing()
@@ -404,6 +416,7 @@ export class DespachosService {
           actorEmail: actor.email, actorSector: actor.sector, actorName: actor.displayName, createdAt: now,
         })));
       }
+      await syncDespachosStockSafe(actor, created.map((c) => c.record.id));
       for (const c of chunk) {
         if (ok.has(c.record.id)) { out[c.index] = { ok: true, record: c.record, created: true }; continue; }
         // Perdió la carrera contra un reintento simultáneo con la misma clave: devuelve el registro ganador.
@@ -447,6 +460,11 @@ export class DespachosService {
       const rec = await this.applyField(actor, cur, change.field, value);
       versions.set(change.id, rec.updatedAt);
       out.push({ ok: true, record: rec });
+    }
+    if (neon()) {
+      const touched = [...new Set(parsed.filter((p) => p.change.field !== "control" && p.change.field !== "entregado").map((p) => p.change.id))];
+      await syncDespachosStockSafe(actor, touched);
+      for (const r of out) if (r.ok && touched.includes(r.record.id)) r.record = { ...r.record, meStock: await this.stockLink(r.record.id) };
     }
     return out;
   }
@@ -500,6 +518,7 @@ export class DespachosService {
       const m = mem().items.find((i) => i.id === id);
       if (m) m.deleted = true;
     }
+    if (neon()) await syncDespachosStockSafe(actor, [id]); // anula la salida vinculada (queda en el historial)
     await audit(actor, { despachoId: id, action: "delete", before: JSON.stringify({ fecha: cur.fecha, egreso: cur.egreso, remito: cur.remito, cliente: cur.cliente, producto: cur.producto, bultos: cur.bultos, cantidad: cur.cantidad, cantidadTotal: cur.cantidadTotal, control: cur.control, entregado: cur.entregado }) });
     return true;
   }
