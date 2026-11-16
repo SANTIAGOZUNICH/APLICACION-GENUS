@@ -148,7 +148,7 @@ try {
   await dp.waitForTimeout(1500);
   const notice = await dp.locator("[data-testid=me-salidas-grid-notice], [data-testid=me-salidas-grid-failed]").allInnerTexts().catch(() => []);
   const m1 = await pl("inv_me_salidas", id.m1);
-  check("marcar «descuenta» una salida que menciona la OA: rechazado (no descuenta dos veces) y nada cambia", !m1.descuentaStock && (await stockOf(api, "E2E-ME-CAJA")) === 125, notice.join(" ").slice(0, 160));
+  check("marcar «descuenta» una salida que menciona la OA: se acepta pero la OA descuenta solo la diferencia (no dos veces): el stock no cambia", m1.descuentaStock === true && (await stockOf(api, "E2E-ME-CAJA")) === 125, notice.join(" ").slice(0, 160));
   await dp.screenshot({ path: `${OUT}/3-salidas-planilla.png` });
 
   // ================= INVENTARIO ME =================
@@ -196,15 +196,15 @@ try {
   const prodIng = await prodCtx.patch("/api/v1/inventory/cells", { data: { resource: "me_ingresos", changes: [{ id: id.i1, field: "cantidad", value: "1", expectedVersion: (await pl("inv_me_ingresos", id.i1)).updatedAt }] } });
   check("Producción NO edita ingresos (403); el ingreso no cambia", prodIng.status() === 403 && (await pl("inv_me_ingresos", id.i1)).total === 120, String(prodIng.status()));
   const prodAdj = await prodCtx.post("/api/v1/inventory/me-ajustes", { data: { materialId: id.matEti, expectedStock: 15, newStock: 14, motivo: "Conteo de Producción", tipo: "CONTEO_FISICO" } });
-  check("Producción SÍ registra ajustes de inventario (permiso conservado)", prodAdj.status() === 200 && (await stockOf(prodCtx, "E2E-ME-ETI")) === 14, String(prodAdj.status()));
+  check("Producción solo consulta el inventario ME: no ajusta (403) y el stock no cambia (#228)", prodAdj.status() === 403 && (await stockOf(prodCtx, "E2E-ME-ETI")) === 15, String(prodAdj.status()));
   await prodCtx.dispose();
   const envCtx = await pwRequest.newContext({ baseURL: BASE });
   await envCtx.post("/api/v1/auth/login", { data: { email: E2E_USERS.envasado.email, password: E2E_PASSWORD } });
-  const envAdj = await envCtx.post("/api/v1/inventory/me-ajustes", { data: { materialId: id.matEti, expectedStock: 14, newStock: 0, motivo: "Intento de Envasado", tipo: "OTRO" } });
+  const envAdj = await envCtx.post("/api/v1/inventory/me-ajustes", { data: { materialId: id.matEti, expectedStock: 15, newStock: 0, motivo: "Intento de Envasado", tipo: "OTRO" } });
   check("Envasado no ajusta inventario (403)", envAdj.status() === 403, String(envAdj.status()));
   await envCtx.dispose();
   const audits = await q("select count(*)::int n from inv_audit where payload->>'entityId' = any($1)", [[id.i1, id.m2, id.matCaja, id.matEti]]);
-  check("auditoría en la base para cada cambio (ingreso, salida, umbral, ajustes)", audits[0].n >= 5, String(audits[0].n));
+  check("auditoría en la base para cada cambio (ingreso, salida, umbral, ajustes)", audits[0].n >= 4, String(audits[0].n));
 } catch (err) {
   console.error(err);
   results.push({ name: "excepción", ok: false });

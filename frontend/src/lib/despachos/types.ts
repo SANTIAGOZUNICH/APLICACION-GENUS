@@ -27,6 +27,8 @@ export interface DespachoRecord {
   entregadoAt: string | null;
   /** Remito de GENUS OS cuyo número coincide con el REMITO N° de la fila (solo lectura: la fila nunca modifica el remito). */
   remitoLink?: { id: string; number: string; status: string } | null;
+  /** Vínculo con el stock ME: la entrega descuenta UNA salida de inv_me_salidas (nunca se duplica). status: VINCULADO | SIN_MATERIAL | HISTORICO | ANULADO | null = pendiente. */
+  meStock?: { status: string | null; codigo: string | null; salidaId: string | null };
   /** Pedido/OP de Producción al que corresponde (opcional; permite ver las entregas parciales del pedido). */
   pedidoOp: string;
   createdBy: string;

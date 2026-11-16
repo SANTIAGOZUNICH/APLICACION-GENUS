@@ -302,7 +302,7 @@ describe("InventoryService ME/MP", () => {
       bultos: 1,
       cantidad: 100,
     });
-    // Manual: no afecta stock
+    // Manual (sin motivo): descuenta por defecto — toda salida de Depósito resta stock (los INGRESOS no se tocan)
     svc.upsertMeSalida(deposito, {
       descripcion: "Cajas",
       codigo: "CAJ-X",
@@ -311,11 +311,12 @@ describe("InventoryService ME/MP", () => {
       cantidad: 100,
       origen: "MANUAL",
     });
-    expect(svc.listMeMaterials(deposito)[0]?.stockActual).toBe(100);
+    expect(svc.listMeMaterials(deposito)[0]?.stockActual).toBe(-100);
+    expect(svc.listMeIngresos(deposito)[0]?.total).toBe(100);
 
-    // OA usa 300 con stock 100: el movimiento real se persiste → -200 visible.
+    // OA usa 300: el movimiento real se persiste → saldo negativo visible.
     applyOaDeliveryToMe(svc, produccion, makeOaForSalida(ing.materialId!, "CAJ-X", "300"));
-    expect(svc.listMeMaterials(deposito)[0]?.stockActual).toBe(-200);
+    expect(svc.listMeMaterials(deposito)[0]?.stockActual).toBe(-400);
   });
 
   it("aviso al cruzar mínimo sin duplicar; notifica 8 sectores; dismiss no borra aviso", () => {
@@ -888,7 +889,7 @@ describe("Depósito ME — eliminación múltiple (bulkDeleteMe)", () => {
     applyOaDeliveryToMe(svc, produccion, oa);
     const manual = svc.upsertMeSalida(deposito, { codigo: "BD-S-1", descripcion: "Entrega", bultos: 1, cantidad: 7 });
     const before = svc.getMeMaterialById(deposito, ing.materialId!)!.stockActual;
-    expect(before).toBe(420);
+    expect(before).toBe(413);
 
     const res = svc.bulkDeleteMe(deposito, "me_salidas", { all: true });
     expect(res.deleted).toHaveLength(2);

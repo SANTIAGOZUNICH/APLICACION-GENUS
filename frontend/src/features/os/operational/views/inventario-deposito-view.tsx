@@ -158,7 +158,7 @@ function DetailDialog({ row, headers, onClose }: { row: MeInventarioViewRow; hea
     })();
     return () => { off = true; };
   }, [row.materialId, headers]);
-  const KIND: Record<string, string> = { INGRESO: "Ingreso", SALIDA_OA: "Salida (OA)", SALIDA_MANUAL: "Salida", AJUSTE: "Ajuste" };
+  const KIND: Record<string, string> = { INGRESO: "Ingreso", SALIDA_OA: "Salida (OA)", SALIDA_MANUAL: "Salida", AJUSTE: "Ajuste", NETEO_OA: "Neteo OA" };
   const facts: Array<[string, string]> = [
     ["Código", row.codigo || "—"],
     ["Nombre / descripción", row.insumo || "—"],

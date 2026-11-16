@@ -105,7 +105,7 @@ describe("Inventario ME automático (OA)", () => {
     ]);
   });
 
-  it("ingreso aumenta stock; salidas manuales no descuentan", () => {
+  it("ingreso aumenta stock; las salidas manuales descuentan el stock sin tocar el ingreso", () => {
     const ing = svc.upsertMeIngreso(deposito, {
       codigo: "CAJ-01",
       descripcionInsumo: "Cajas",
@@ -123,7 +123,8 @@ describe("Inventario ME automático (OA)", () => {
       cantidad: 100,
       origen: "MANUAL",
     });
-    expect(svc.listMeInventario(deposito)[0]?.cantidadTotal).toBe(1000);
+    expect(svc.listMeInventario(deposito)[0]?.cantidadTotal).toBe(900);
+    expect(svc.listMeIngresos(deposito)[0]?.total).toBe(1000);
   });
 
   it("OA borrador no descuenta; entrega descuenta; segunda no duplica", () => {

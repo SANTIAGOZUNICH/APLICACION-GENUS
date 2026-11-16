@@ -9,6 +9,7 @@ import { useSortPreference } from "../lib/use-sort-preference";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { Button } from "@/components/ui/button";
+import { EntregasStockPanel } from "../components/entregas-stock-panel";
 import { downloadXlsx, exportFileName } from "@/lib/sheet-io";
 import { applySort, compareDates, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
 import {
@@ -99,10 +100,12 @@ export function EntregasProduccionView() {
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
   const [filters, setFilters] = useState<DespachoFilters>({});
+  const [stockKey, setStockKey] = useState(0);
 
   const refresh = useCallback(async () => {
     try {
       setItems(await fetchDespachosApi(session));
+      setStockKey((k) => k + 1);
       setOffline(false);
     } catch (err) {
       showToast(err instanceof Error ? err.message : "No se pudo cargar Entregas Producción.", "info");
@@ -351,7 +354,10 @@ export function EntregasProduccionView() {
                 minWidth: 92,
                 cellNote: (r: DespachoRecord) => (r.cantidad == null && r.cantidadTotal > 0 ? "Dato anterior sin desglose: completá CANTIDAD (unidades por bulto) para que TOTAL = BULTOS × CANTIDAD." : null),
               }),
-              excelCol("total", SHEET_TITLES[7], totalText, { readOnlyReason: "TOTAL = BULTOS × CANTIDAD: se calcula solo.", pasteSkip: true, minWidth: 88, className: "font-semibold tabular-nums" }),
+              excelCol("total", SHEET_TITLES[7], totalText, {
+                readOnlyReason: "TOTAL = BULTOS × CANTIDAD: se calcula solo.",
+                cellNote: (r: DespachoRecord) =>
+                  r.meStock?.status === "VINCULADO" ? `Descuenta stock ME (${r.meStock.codigo}).` : r.meStock?.status === "SIN_MATERIAL" ? "Sin material identificado: no descuenta stock (elegí el material abajo)." : r.meStock?.status === "HISTORICO" ? "Entrega anterior: todavía no descuenta stock." : null, pasteSkip: true, minWidth: 88, className: "font-semibold tabular-nums" }),
               excelCol("control", SHEET_TITLES[8], (r: DespachoRecord) => (r.control ? "TRUE" : "FALSE"), {
                 edit: edit("control"),
                 minWidth: 88,
@@ -380,6 +386,8 @@ export function EntregasProduccionView() {
           </p>
         </>
       )}
+
+      <EntregasStockPanel session={session} canEdit={canEdit} refreshKey={stockKey} onChanged={() => void refresh()} notify={(m) => showToast(m, "info")} />
 
       {pedidos.length > 0 ? (
         <section className="mt-5" data-testid="despachos-pedidos">

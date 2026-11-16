@@ -40,28 +40,32 @@ describe("stock ME calculado (regla única)", () => {
 });
 
 describe("salidas manuales: nunca descuentan dos veces el consumo de una OA", () => {
-  it("rechaza «descuenta stock» si menciona una OA o si el motivo es entrega para OA", () => {
-    expect(manualSalidaStockError({ origen: "MANUAL", descuentaStock: true, comentarios: "Entregado a envasado para OA-2026-000123", codigo: "X", total: 5 })).toMatch(/se descuenta solo al entregarla/);
-    expect(manualSalidaStockError({ origen: "MANUAL", descuentaStock: true, oaNumber: "OA-2026-000123", codigo: "X", total: 5 })).toMatch(/OA/);
-    expect(manualSalidaStockError({ origen: "MANUAL", descuentaStock: true, motivoSalida: "ENTREGA_OA", codigo: "X", total: 5 })).toMatch(/no descuenta/);
+  it("una salida manual que menciona una OA ya NO se rechaza: la OA descuenta solo la diferencia", () => {
+    expect(manualSalidaStockError({ origen: "MANUAL", descuentaStock: true, comentarios: "Entregado a envasado para OA-2026-000123", codigo: "X", total: 5 })).toBeNull();
+    expect(manualSalidaStockError({ origen: "MANUAL", descuentaStock: true, motivoSalida: "ENTREGA_OA", codigo: "X", total: 5 })).toBeNull();
     expect(manualSalidaStockError({ origen: "MANUAL", descuentaStock: true, motivoSalida: "DEVOLUCION_CLIENTE", codigo: "X", total: 5 })).toBeNull();
     expect(manualSalidaStockError({ origen: "MANUAL", descuentaStock: true, codigo: "", total: 5 })).toMatch(/código/);
   });
 
-  it("servicio: manual con motivo que descuenta resta; consumo de OA + entrega manual de la misma OA resta UNA sola vez", () => {
+  it("servicio: toda salida descuenta por defecto; entrega manual para una OA + consumo de esa OA resta max(entregado, usado), nunca dos veces", () => {
     const repo = new MemoryInventoryRepo();
     const svc = new InventoryService(repo);
-    const i = svc.upsertMeIngreso(deposito, { codigo: "CAJ-1", descripcionInsumo: "Cajas", bultos: 1, cantidad: 100 });
+    const i = svc.upsertMeIngreso(deposito, { codigo: "CAJ-1", descripcion: "Cajas", bultos: 1, cantidad: 100 } as never);
     const mat = () => svc.listMeMaterials(deposito).find((m) => m.id === i.materialId)!;
     svc.upsertMeSalida(deposito, { codigo: "CAJ-1", descripcion: "Cajas", cantidad: 10, motivoSalida: "DEVOLUCION_CLIENTE" });
     expect(mat().stockActual).toBe(90);
-    // La entrega física para una OA se registra a mano (no descuenta)…
+    // Un simple registro (sin descuento) existe pero no resta.
+    svc.upsertMeSalida(deposito, { codigo: "CAJ-1", descripcion: "Cajas", cantidad: 5, motivoSalida: "REGISTRO" });
+    expect(mat().stockActual).toBe(90);
+    // Entrega física de 40 para una OA: descuenta ya…
     svc.upsertMeSalida(deposito, { codigo: "CAJ-1", descripcion: "Cajas", cantidad: 40, motivoSalida: "ENTREGA_OA", comentarios: "OA-2026-000555" });
-    // …y la OA descuenta sola al entregarse.
+    expect(mat().stockActual).toBe(50);
+    // …la OA usa 40: no se resta otra vez.
     svc.createOaMeSalida(produccion, { codigo: "CAJ-1", descripcion: "Cajas", cliente: "", unidad: "u", cantidad: 40, materialId: i.materialId!, oaId: "oa-1", oaNumber: "OA-2026-000555", oaVersion: 1, materialLineId: "l1", idempotencyKey: "oa-1:1:l1" });
     expect(mat().stockActual).toBe(50);
-    expect(() => svc.upsertMeSalida(deposito, { codigo: "CAJ-1", cantidad: 40, descuentaStock: true, comentarios: "para OA-2026-000555" })).toThrow(/dos veces/);
-    expect(mat().stockActual).toBe(50);
+    // Si la OA usa más que lo entregado, resta solo la diferencia.
+    svc.createOaMeSalida(produccion, { codigo: "CAJ-1", descripcion: "Cajas", cliente: "", unidad: "u", cantidad: 15, materialId: i.materialId!, oaId: "oa-1", oaNumber: "OA-2026-000555", oaVersion: 1, materialLineId: "l2", idempotencyKey: "oa-1:1:l2" });
+    expect(mat().stockActual).toBe(35);
   });
 
   it("pegar dos veces el mismo ingreso (remito, código, cantidad, fecha) no suma stock dos veces", () => {

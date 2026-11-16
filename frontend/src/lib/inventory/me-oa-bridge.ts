@@ -83,14 +83,17 @@ export function previewOaMeShortages(
       (line.materialId ? service.getMeMaterialById(invActor, line.materialId) : null) ??
       service.getMeMaterialByCodigo(invActor, line.codigo);
     const stock = mat?.stockActual ?? 0;
-    if (stock < line.cantidadUtilizada) {
+    // Lo ya entregado por salidas manuales de ESTA OA (mismo código) ya descontó stock: la OA solo descuenta la diferencia.
+    const handed = service.manualHandedForOa(order.orderNumber ?? "", line.codigo);
+    const needed = Math.max(0, line.cantidadUtilizada - handed);
+    if (needed > 0 && stock < needed) {
       shortages.push({
         codigo: line.codigo,
         material: line.material || mat?.descripcion || line.codigo,
         materialId: mat?.id ?? null,
         stockDisponible: stock,
-        cantidadSolicitada: line.cantidadUtilizada,
-        diferencia: line.cantidadUtilizada - stock,
+        cantidadSolicitada: needed,
+        diferencia: needed - stock,
       });
     }
   }

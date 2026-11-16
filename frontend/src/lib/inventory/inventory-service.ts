@@ -18,7 +18,7 @@ import {
 } from "./calcs";
 import { normalizeOptionalReason, sanitizeOptionalReason } from "@/lib/lifecycle/reason";
 import { ME_CODIGO_REQUIRED_MSG, normalizeMeCodigo } from "./me-codigo";
-import { computeMeStock } from "./me-stock-calc";
+import { computeMeStock, meSalidaCantidad, meSalidaDescuentaStock, meSalidaOaKey } from "./me-stock-calc";
 import { manualSalidaStockError, meSalidaMotivo } from "./me-sheet-edit";
 import {
   rebuildMeInventarioByCodigo,
@@ -578,7 +578,8 @@ export class InventoryService {
     // consumo de una OA (la OA descuenta sola al entregarla: no se resta dos veces).
     if (origen !== "OA") {
       const motivo = meSalidaMotivo(row.motivoSalida);
-      row.descuentaStock = input.descuentaStock !== undefined ? Boolean(input.descuentaStock) : motivo ? motivo.descuenta : Boolean(existing?.descuentaStock);
+      // Salida NUEVA de Depósito: descuenta por defecto (solo no descuenta si se elige «Solo registro»). Las filas históricas (sin el campo) no cambian.
+      row.descuentaStock = input.descuentaStock !== undefined ? Boolean(input.descuentaStock) : motivo ? motivo.descuenta : existing ? Boolean(existing.descuentaStock) : true;
       const err = manualSalidaStockError(row);
       if (err) throw new InventoryValidationError(err);
     } else {
@@ -661,6 +662,9 @@ export class InventoryService {
     if (!existing) throw new InventoryNotFoundError("Salida ME no encontrada.");
     if (existing.reverted) {
       return existing;
+    }
+    if (existing.despachoId) {
+      throw new InventoryValidationError("Esta salida viene de una entrega en «Entregas Producción»: se anula eliminando esa entrega (así stock y entrega no se desfasan).");
     }
 
     const now = nowIso();
@@ -1278,6 +1282,14 @@ export class InventoryService {
       row as unknown as Record<string, unknown>
     );
     return row;
+  }
+
+  /** Unidades ya descontadas por salidas MANUALES vinculadas a esa OA y código (la OA solo descuenta la diferencia). */
+  manualHandedForOa(oaNumber: string, codigo: string): number {
+    const cod = normalizeMeCodigo(codigo);
+    const key = meSalidaOaKey({ origen: "OA", oaNumber, comentarios: "", remitoNro: "" });
+    if (!key || !cod) return 0;
+    return this.repo.listMeSalidas().filter((r) => r.origen !== "OA" && meSalidaDescuentaStock(r) && normalizeMeCodigo(r.codigo) === cod && meSalidaOaKey(r) === key).reduce((s, r) => s + meSalidaCantidad(r), 0);
   }
 
   findMeSalidaByIdempotencyKey(key: string) {

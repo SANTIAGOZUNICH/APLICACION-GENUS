@@ -1867,6 +1867,10 @@ export const depositoDespachos = pgTable(
     entregado: boolean("entregado").notNull().default(false),
     entregadoBy: text("entregado_by"),
     entregadoAt: timestamp("entregado_at", { withTimezone: true }),
+    // Migración 0084: vínculo con el stock de ME. NULL/HISTORICO = no impacta stock hasta aplicarlo de forma explícita.
+    meCodigo: text("me_codigo"),
+    meSalidaId: text("me_salida_id"),
+    meStockStatus: text("me_stock_status").default("HISTORICO"),
     idempotencyKey: text("idempotency_key"),
     createdBy: text("created_by").notNull(),
     createdBySector: text("created_by_sector").notNull(),
