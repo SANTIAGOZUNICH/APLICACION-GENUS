@@ -21,6 +21,7 @@ import {
 import { WorkItemProgressTable } from "../components/work-item-progress-table";
 import { WorkItemDrawer } from "../components/work-item-drawer";
 import { SyncStatusBar, OperationalTabs } from "../components/operational-ui";
+import { EnvasadoEntregadosPanel } from "../components/envasado-entregados-panel";
 import { OperationalDayNav } from "../components/operational-day-nav";
 import { OperationalMonthBoard } from "../components/operational-month-board";
 import { OperationalWeekBoard, parseWeekBoardDropId, shortDayLabel, WeekBoardDndContext } from "../components/operational-week-board";
@@ -101,7 +102,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   const [listTab, setListTab] = useState<EnvasadoListTab>("activos");
   const [archivedIds, setArchivedIds] = useState<string[]>([]);
   const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
-  const [topTab, setTopTab] = useState<"semanas" | "pendientes">("semanas");
+  const [topTab, setTopTab] = useState<"semanas" | "pendientes" | "entregados">("semanas");
   /** null = cerrado. {} = botón general (sin preselección). {line,plannedDate} = botón "+" de una celda. */
   const [assignSlot, setAssignSlot] = useState<{ line?: string; plannedDate?: string } | null>(null);
 
@@ -566,9 +567,10 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           tabs={[
             { id: "semanas", label: "Semanas" },
             { id: "pendientes", label: "Pendientes", count: pendientesItems.length },
+            { id: "entregados", label: "Entregados" },
           ]}
           activeId={topTab}
-          onChange={(id) => setTopTab(id as "semanas" | "pendientes")}
+          onChange={(id) => setTopTab(id as "semanas" | "pendientes" | "entregados")}
         />
         {canAssignWork ? (
           <Button
@@ -595,7 +597,9 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         />
       ) : null}
 
-      {topTab === "pendientes" ? (
+      {topTab === "entregados" ? (
+        <EnvasadoEntregadosPanel notify={(m, tone) => showToast(m, tone)} />
+      ) : topTab === "pendientes" ? (
         <div className="space-y-4">
           {loadingPendientes && !dataPendientes && (
             <div className="os-skeleton h-48 rounded-[var(--os-radius)]" />
