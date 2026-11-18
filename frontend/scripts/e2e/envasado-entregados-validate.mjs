@@ -43,6 +43,7 @@ const card = (page, product) => page.locator("[data-testid=work-item-card]", { h
 const tab = (page, label) => page.getByRole("button", { name: new RegExp(`^${label}`) }).or(page.getByRole("tab", { name: new RegExp(`^${label}`) })).first();
 const rowsOf = (page) => page.locator("[data-testid=entregado-row]");
 async function deliverUi(page, product, qty) {
+  await tab(page, "Semanas").click();
   await card(page, product).waitFor({ timeout: 120_000 });
   await card(page, product).getByRole("button", { name: "Entregar parcial" }).click();
   const dlg = page.locator("[data-testid=deliver-work-dialog]");
@@ -87,6 +88,7 @@ try {
   const iP = flat.findIndex((t) => /^Pendientes/.test(t));
   check("Masivo ve las pestañas Pendientes | Entregados, una al lado de la otra", iP >= 0 && /^Entregados/.test(flat[iP + 1] ?? ""), JSON.stringify(flat));
   await openEntregados(p);
+  await p.locator("[data-testid=entregados-empty]").waitFor({ timeout: 30_000 }).catch(() => undefined);
   check("sin entregas todavía: mensaje vacío claro", (await p.locator("[data-testid=entregados-empty]").count()) === 1);
 
   await deliverUi(p, PM, 300);
