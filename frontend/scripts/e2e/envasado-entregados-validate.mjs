@@ -128,6 +128,8 @@ try {
   check("NO se modificó cantidades, estado, remitos ni historial de cambios (la entrega sigue guardada)", (await snap()) === before && (await q("select count(*)::int n from internal_delivery_hides where hidden"))[0].n === 1);
   await p.reload();
   await openEntregados(p).catch(async () => { await card(p, PM).waitFor({ timeout: 5000 }).catch(() => undefined); });
+  await p.waitForFunction(() => document.querySelectorAll("[data-testid=entregado-row]").length >= 1, null, { timeout: 30_000 }).catch(() => undefined);
+  await p.waitForTimeout(800);
   check("el ocultamiento persiste tras recargar", (await rowsOf(p).count()) === 1);
   await p.locator("[data-testid=entregados-toggle-hidden]").click();
   await p.waitForFunction(() => document.querySelectorAll("[data-testid=entregado-row][data-hidden='1']").length === 1, null, { timeout: 30_000 });
