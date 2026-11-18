@@ -8,7 +8,8 @@ import {
   editLegacyDelivery,
   getInternalDeliveryHistory,
   InternalDeliveryConflictError,
-  listInternalDeliveries,
+  listInternalDeliveriesPage,
+  setInternalDeliveryHidden,
   type InternalDeliveryKind,
 } from "@/lib/planning/internal-deliveries-service";
 import { PlanningValidationError } from "@/lib/planning/types";
@@ -45,7 +46,12 @@ export async function GET(request: Request) {
       return NextResponse.json({ ok: true, changes: await getInternalDeliveryHistory(actor, kindOf(kind), String(id ?? "")) }, { headers: NO_STORE });
     }
     const status = sp.get("status");
-    const items = await listInternalDeliveries(actor, {
+    const hidden = sp.get("hidden");
+    const tipo = sp.get("tipo");
+    const page = await listInternalDeliveriesPage(actor, {
+      hidden: hidden === "only" || hidden === "exclude" ? hidden : "all",
+      tipo: tipo === "PARCIAL" || tipo === "TOTAL" ? tipo : null,
+      offset: Number(sp.get("offset") ?? 0),
       q: sp.get("q"),
       workItemId: sp.get("workItemId"),
       sector: sp.get("sector"),
@@ -54,7 +60,7 @@ export async function GET(request: Request) {
       to: sp.get("to"),
       limit: Number(sp.get("limit") ?? 300),
     });
-    return NextResponse.json({ ok: true, items }, { headers: NO_STORE });
+    return NextResponse.json({ ok: true, items: page.items, hasMore: page.hasMore, hiddenCount: page.hiddenCount }, { headers: NO_STORE });
   } catch (err) {
     return fail(err);
   }
@@ -86,6 +92,11 @@ export async function POST(request: Request) {
           expectedVersion: e.expectedVersion != null && Number.isFinite(Number(e.expectedVersion)) ? Number(e.expectedVersion) : null,
         })),
       });
+      return NextResponse.json({ ok: true, ...result }, { headers: NO_STORE });
+    }
+    // Entregados (Envasado): «Quitar del listado» / «Restaurar» — preferencia operativa, no toca la entrega.
+    if (action === "hide" || action === "restore") {
+      const result = await setInternalDeliveryHidden(actor, { kind: kindOf(body.kind), id: String(body.id ?? ""), hidden: action === "hide" });
       return NextResponse.json({ ok: true, ...result }, { headers: NO_STORE });
     }
     if (action === "edit_legacy") {

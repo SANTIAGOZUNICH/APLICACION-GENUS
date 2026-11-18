@@ -21,6 +21,7 @@ import { and, asc, desc, eq, inArray, like, sql } from "drizzle-orm";
 import { getDb, remitoLineLockKey } from "@/lib/db/client";
 import {
   internalDeliveryChanges,
+  internalDeliveryHides,
   operationalEvents,
   workItemCodificadoTransfers,
   workItemDeliveries,
@@ -138,6 +139,11 @@ export type InternalDeliveryDto = {
   cancelledAt: string | null;
   cancelledBy: string | null;
   canManage: boolean;
+  /** PARCIAL = quedaban unidades por entregar después de esta entrega; TOTAL = cerró el trabajo; null = dato histórico sin saldo (no se inventa). */
+  tipo: "PARCIAL" | "TOTAL" | null;
+  /** «Quitar del listado» del sector del actor (solo sectores de Envasado; para los demás siempre false). No cambia la entrega. */
+  hidden: boolean;
+  hiddenAt: string | null;
 };
 
 export type InternalDeliveryFilters = {
@@ -148,7 +154,15 @@ export type InternalDeliveryFilters = {
   from?: string | null;
   to?: string | null;
   limit?: number | null;
+  offset?: number | null;
+  /** Solo sectores de Envasado: exclude (default) = listado operativo; only = ocultas; all = todas. Producción/Dirección ignoran el ocultamiento. */
+  hidden?: "exclude" | "only" | "all" | null;
+  tipo?: "PARCIAL" | "TOTAL" | null;
 };
+
+/** Sectores que pueden quitar entregas de SU listado (preferencia operativa; nunca toca la entrega). */
+const HIDE_SECTORS = new Set(["ENVASADO_MASIVO", "ENVASADO_PREMIUM"]);
+export const canHideInternalDeliveries = (actorSector: string | null | undefined) => HIDE_SECTORS.has(String(actorSector ?? "").toUpperCase());
 
 type RawRow = Omit<InternalDeliveryDto, "version" | "cancelReason" | "cancelledAt" | "cancelledBy" | "canManage" | "originLabel" | "destinationLabel" | "status" | "cajas" | "boxesText" | "remito" | "remitted" | "available" | "remitos" | "packingInherited"> & {
   status: InternalDeliveryStatus;
@@ -299,6 +313,13 @@ async function decorate(tx: Tx, actor: PlanningActor, rows: RawRow[]): Promise<I
     byKey.set(k, list);
   }
   const s = sectorOf(actor);
+  const hiddenRows: Array<{ kind: string; deliveryId: string; hiddenAt: Date }> = canHideInternalDeliveries(s)
+    ? await tx
+        .select({ kind: internalDeliveryHides.kind, deliveryId: internalDeliveryHides.deliveryId, hiddenAt: internalDeliveryHides.hiddenAt })
+        .from(internalDeliveryHides)
+        .where(and(inArray(internalDeliveryHides.deliveryId, ids), eq(internalDeliveryHides.sector, s), eq(internalDeliveryHides.hidden, true)))
+    : [];
+  const hiddenAt = new Map(hiddenRows.map((h) => [`${h.kind}:${h.deliveryId}`, h.hiddenAt.toISOString()]));
   const remittance = await loadRemittanceByLine(rows.filter((r) => r.kind === "PRODUCCION").map((r) => r.id), tx);
   // Entrega a Producción sin cajas propias (p. ej. Codificado → Producción): se muestran las cajas que Envasado informó en sus entregas a
   // Codificado (solo lectura; no se guardan en la entrega). Es el mismo dato que usa el remito.
@@ -334,21 +355,36 @@ async function decorate(tx: Tx, actor: PlanningActor, rows: RawRow[]): Promise<I
       cancelledAt: r.status === "CANCELADA" ? (cancel?.createdAt.toISOString() ?? cancelledAtRaw?.toISOString() ?? null) : null,
       cancelledBy: r.status === "CANCELADA" ? (cancel?.actorName ?? cancel?.actorEmail ?? cancelledByRaw ?? null) : null,
       canManage: r.status === "ACTIVA" && canManageInternalDelivery(s, r.originSector),
+      tipo: r.pending == null ? null : r.pending > DELIVERY_EPSILON ? ("PARCIAL" as const) : ("TOTAL" as const),
+      hidden: hiddenAt.has(`${r.kind}:${r.id}`),
+      hiddenAt: hiddenAt.get(`${r.kind}:${r.id}`) ?? null,
     };
   });
 }
 
-/** Lista unificada de entregas internas (más recientes primero). Cada sector ve las suyas; Producción/Dirección, todas. */
-export async function listInternalDeliveries(actor: PlanningActor, filters: InternalDeliveryFilters = {}): Promise<InternalDeliveryDto[]> {
+export type InternalDeliveriesPage = { items: InternalDeliveryDto[]; hasMore: boolean; hiddenCount: number };
+
+/**
+ * Lista unificada de entregas internas (más recientes primero), paginada. Cada sector ve las suyas; Producción/Dirección, todas.
+ * El ocultamiento («Quitar del listado») solo afecta al listado de los sectores de Envasado y solo para SU sector; Producción y Dirección
+ * siempre ven todo.
+ */
+export async function listInternalDeliveriesPage(actor: PlanningActor, filters: InternalDeliveryFilters = {}): Promise<InternalDeliveriesPage> {
   const s = sectorOf(actor);
   if (!canViewInternalDeliveries(s)) throw new PlanningForbiddenError("No tenés permiso para consultar las entregas internas.");
   const db = getDb();
   const limit = Math.min(Math.max(Number(filters.limit ?? 300) || 300, 1), 500);
+  const offset = Math.max(Number(filters.offset ?? 0) || 0, 0);
   const originFilter = isAdminSector(s) ? (filters.sector ? String(filters.sector).toUpperCase() : null) : s;
   const text = String(filters.q ?? "").trim();
   const like_ = text ? `%${text.replace(/[%_\\]/g, (m) => `\\${m}`)}%` : null;
   const from = /^\d{4}-\d{2}-\d{2}$/.test(String(filters.from ?? "")) ? String(filters.from) : null;
   const to = /^\d{4}-\d{2}-\d{2}$/.test(String(filters.to ?? "")) ? String(filters.to) : null;
+  const hideMode = canHideInternalDeliveries(s) ? (filters.hidden === "only" || filters.hidden === "all" ? filters.hidden : "exclude") : "all";
+  const hideCond = (kind: InternalDeliveryKind, idCol: unknown) => {
+    const exists = sql`exists (select 1 from ${internalDeliveryHides} h where h.kind = ${kind} and h.delivery_id = ${idCol} and h.sector = ${s} and h.hidden)`;
+    return hideMode === "exclude" ? sql`not ${exists}` : hideMode === "only" ? exists : undefined;
+  };
 
   const lineConds = [
     filters.workItemId && /^[0-9a-f-]{36}$/i.test(String(filters.workItemId)) ? eq(workItemDeliveryLines.workItemId, String(filters.workItemId)) : undefined,
@@ -357,6 +393,8 @@ export async function listInternalDeliveries(actor: PlanningActor, filters: Inte
     from ? sql`${workItemDeliveryLines.actualDeliveredAt} >= ${from}::date` : undefined,
     to ? sql`${workItemDeliveryLines.actualDeliveredAt} < (${to}::date + 1)` : undefined,
     like_ ? sql`(${workItems.client} ilike ${like_} or ${workItems.product} ilike ${like_} or coalesce(${workItems.packagingLote}, '') ilike ${like_})` : undefined,
+    filters.tipo === "PARCIAL" ? sql`coalesce(${workItemDeliveryLines.pendingAfter}, 0) > ${DELIVERY_EPSILON}` : filters.tipo === "TOTAL" ? sql`coalesce(${workItemDeliveryLines.pendingAfter}, 0) <= ${DELIVERY_EPSILON}` : undefined,
+    hideCond("PRODUCCION", workItemDeliveryLines.id),
   ].filter(Boolean);
   const transferConds = [
     filters.workItemId && /^[0-9a-f-]{36}$/i.test(String(filters.workItemId)) ? eq(workItemCodificadoTransfers.workItemId, String(filters.workItemId)) : undefined,
@@ -365,14 +403,59 @@ export async function listInternalDeliveries(actor: PlanningActor, filters: Inte
     from ? sql`${workItemCodificadoTransfers.deliveredAt} >= ${from}::date` : undefined,
     to ? sql`${workItemCodificadoTransfers.deliveredAt} < (${to}::date + 1)` : undefined,
     like_ ? sql`(${workItems.client} ilike ${like_} or ${workItems.product} ilike ${like_} or coalesce(${workItemCodificadoTransfers.lote}, '') ilike ${like_})` : undefined,
+    filters.tipo === "PARCIAL" ? sql`coalesce(${workItemCodificadoTransfers.pending}, 0) > ${DELIVERY_EPSILON}` : filters.tipo === "TOTAL" ? sql`coalesce(${workItemCodificadoTransfers.pending}, 0) <= ${DELIVERY_EPSILON}` : undefined,
+    hideCond("CODIFICADO", workItemCodificadoTransfers.id),
   ].filter(Boolean);
 
+  const want = offset + limit + 1; // +1 para saber si hay más páginas
   const [lines, transfers] = await Promise.all([
-    loadLineRows(db, lineConds.length ? and(...(lineConds as never[])) : undefined, limit),
-    loadTransferRows(db, transferConds.length ? and(...(transferConds as never[])) : undefined, limit),
+    loadLineRows(db, lineConds.length ? and(...(lineConds as never[])) : undefined, want),
+    loadTransferRows(db, transferConds.length ? and(...(transferConds as never[])) : undefined, want),
   ]);
-  const merged = [...lines, ...transfers].sort((a, b) => b.date.localeCompare(a.date)).slice(0, limit);
-  return decorate(db, actor, merged);
+  const merged = [...lines, ...transfers].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+  const slice = merged.slice(offset, offset + limit);
+  let hiddenCount = 0;
+  if (canHideInternalDeliveries(s)) {
+    const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(internalDeliveryHides).where(and(eq(internalDeliveryHides.sector, s), eq(internalDeliveryHides.hidden, true)));
+    hiddenCount = Number(row?.n ?? 0);
+  }
+  return { items: await decorate(db, actor, slice), hasMore: merged.length > offset + limit, hiddenCount };
+}
+
+/** Lista simple (sin paginar) — compatibilidad con «Entregas internas». */
+export async function listInternalDeliveries(actor: PlanningActor, filters: InternalDeliveryFilters = {}): Promise<InternalDeliveryDto[]> {
+  return (await listInternalDeliveriesPage(actor, { ...filters, hidden: filters.hidden ?? "all" })).items;
+}
+
+/**
+ * «Quitar del listado» / «Restaurar»: preferencia operativa del sector de Envasado que hizo la entrega. NO anula ni modifica la entrega,
+ * sus cantidades, el estado del trabajo, remitos, recepciones ni stock; solo marca una fila propia (soft-hide, idempotente).
+ */
+export async function setInternalDeliveryHidden(actor: PlanningActor, input: { kind: InternalDeliveryKind; id: string; hidden: boolean }): Promise<{ id: string; hidden: boolean }> {
+  const s = sectorOf(actor);
+  if (!canHideInternalDeliveries(s)) throw new PlanningForbiddenError("Solo Envasado Masivo y Envasado Premium pueden quitar entregas de su listado.");
+  if (!/^[0-9a-f-]{36}$/i.test(input.id)) throw new PlanningValidationError("Entrega inválida.");
+  const db = getDb();
+  const rows = input.kind === "PRODUCCION" ? await loadLineRows(db, eq(workItemDeliveryLines.id, input.id), 1) : await loadTransferRows(db, eq(workItemCodificadoTransfers.id, input.id), 1);
+  const row = rows[0];
+  if (!row) throw new PlanningNotFoundError("Entrega no encontrada.");
+  if (String(row.originSector).toUpperCase() !== s) throw new PlanningForbiddenError("Solo podés quitar del listado las entregas de tu propio sector.");
+  const now = new Date();
+  if (input.hidden) {
+    await db
+      .insert(internalDeliveryHides)
+      .values({ kind: input.kind, deliveryId: input.id, sector: s, hidden: true, hiddenBy: actor.email, hiddenAt: now })
+      .onConflictDoUpdate({
+        target: [internalDeliveryHides.kind, internalDeliveryHides.deliveryId, internalDeliveryHides.sector],
+        set: { hidden: true, hiddenBy: actor.email, hiddenAt: now, restoredBy: null, restoredAt: null },
+      });
+  } else {
+    await db
+      .update(internalDeliveryHides)
+      .set({ hidden: false, restoredBy: actor.email, restoredAt: now })
+      .where(and(eq(internalDeliveryHides.kind, input.kind), eq(internalDeliveryHides.deliveryId, input.id), eq(internalDeliveryHides.sector, s)));
+  }
+  return { id: input.id, hidden: input.hidden };
 }
 
 async function loadOne(tx: Tx, actor: PlanningActor, kind: InternalDeliveryKind, id: string): Promise<InternalDeliveryDto> {

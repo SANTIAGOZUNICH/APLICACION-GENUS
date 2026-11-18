@@ -2217,6 +2217,26 @@ export const workItemComments = pgTable(
 );
 
 /** Correcciones de entregas internas (0079): una fila inmutable por edición o cancelación, con valores anteriores y nuevos. */
+/** «Quitar del listado» de Entregados (0085): soft-hide operativo por sector; nunca modifica la entrega. */
+export const internalDeliveryHides = pgTable(
+  "internal_delivery_hides",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    kind: text("kind").notNull(),
+    deliveryId: uuid("delivery_id").notNull(),
+    sector: text("sector").notNull(),
+    hidden: boolean("hidden").notNull().default(true),
+    hiddenBy: text("hidden_by").notNull(),
+    hiddenAt: timestamp("hidden_at", { withTimezone: true }).notNull().defaultNow(),
+    restoredBy: text("restored_by"),
+    restoredAt: timestamp("restored_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("internal_delivery_hides_unique").on(table.kind, table.deliveryId, table.sector),
+    index("internal_delivery_hides_sector_idx").on(table.sector, table.hidden),
+  ]
+);
+
 export const internalDeliveryChanges = pgTable(
   "internal_delivery_changes",
   {
