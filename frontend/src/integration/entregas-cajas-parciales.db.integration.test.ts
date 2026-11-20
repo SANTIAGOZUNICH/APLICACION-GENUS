@@ -82,4 +82,79 @@ describe.skipIf(Boolean(PROBLEM))(`Cajas por entrega parcial${PROBLEM ? ` — sa
       expect(read.map((l) => l.packingGroups)).toEqual(FOUR.map((f) => f.boxes));
     }, 60_000);
   }
+
+  const finalDeliver = async (actor: typeof masivo, workItemId: string, qty: number, boxes: Array<{ cajas: number; unidadesPorCaja: number }>) => {
+    const { deliverWorkDurable } = await import("@/lib/planning/work-item-progress-repository");
+    return deliverWorkDurable(
+      { workItemId, deliverQuantity: qty, partial: false, deliveryPackingGroups: boxes, idempotencyKey: randomUUID(), codigo: null, sourceSector: actor.sector, plannedDeliveryDate: null, actualDeliveredAt: new Date().toISOString(), remito: null, receivedBy: null, observations: "final" } as never,
+      { email: actor.email, sector: actor.sector, displayName: actor.displayName }
+    );
+  };
+  const asRemitoActor = (a: { email: string; sector: string }) => ({ email: a.email, sector: a.sector }) as never;
+
+  it("entrega FINAL después de parciales (300 + 400 + 350 = 1.050 sobre 1.000): conserva SUS cajas, sin heredar ni exigir las del pedido", async () => {
+    const id = await newWork("ENVASADO_PREMIUM", "1000", "1050");
+    await deliverBoxes(premium, id, 300, [{ cajas: 3, unidadesPorCaja: 100 }]);
+    await deliverBoxes(premium, id, 400, [{ cajas: 4, unidadesPorCaja: 100 }]);
+    const r = await finalDeliver(premium, id, 350, [{ cajas: 3, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 50 }]);
+    expect(r).toMatchObject({ complete: true, delivered: 1050, pending: 0 });
+    const read = await readLines(id);
+    expect(read.map((l) => [l.sequence, l.kind, l.quantity, l.packingGroups])).toEqual([
+      [1, "PARCIAL", 300, [{ cajas: 3, unidadesPorCaja: 100 }]],
+      [2, "PARCIAL", 400, [{ cajas: 4, unidadesPorCaja: 100 }]],
+      [3, "FINAL", 350, [{ cajas: 3, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 50 }]],
+    ]);
+    expect((await item(id)).operational_status).toBe("entregado");
+  }, 60_000);
+
+  it("una entrega sin cajas NO hereda las de otra (queda 'sin detalle'); editar la 2.ª no toca la 1.ª; cancelar una no altera las restantes", async () => {
+    const id = await newWork("ENVASADO_MASIVO", "2000", "2020");
+    for (const f of FOUR.slice(0, 3)) await deliverBoxes(masivo, id, f.qty, f.boxes, f.obs);
+    await deliverBoxes(masivo, id, 470, null, "sin cajas");
+    let read = await readLines(id);
+    expect(read[3]!.packingGroups).toBeNull(); // faltante visible, no se inventa
+    expect(read.slice(0, 3).map((l) => l.packingGroups)).toEqual(FOUR.slice(0, 3).map((f) => f.boxes));
+    const svc = await ids();
+    // completar el detalle faltante por el flujo autorizado (auditado)
+    const four = (await q("select id from work_item_delivery_lines where work_item_id = $1 and sequence = 4", [id]))[0]!.id as string;
+    await svc.editInternalDelivery(masivo as never, { kind: "PRODUCCION", id: four, packingGroups: [{ cajas: 4, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 70 }], expectedVersion: 0 });
+    // editar la 2.ª
+    const two = (await q("select id from work_item_delivery_lines where work_item_id = $1 and sequence = 2", [id]))[0]!.id as string;
+    const before1 = (await readLines(id))[0]!;
+    await svc.editInternalDelivery(masivo as never, { kind: "PRODUCCION", id: two, observations: "dos corregida", packingGroups: [{ cajas: 5, unidadesPorCaja: 100 }, { cajas: 2, unidadesPorCaja: 50 }], expectedVersion: 0 });
+    read = await readLines(id);
+    expect(read[0]).toEqual(before1);
+    expect(read[1]!.packingGroups).toEqual([{ cajas: 5, unidadesPorCaja: 100 }, { cajas: 2, unidadesPorCaja: 50 }]);
+    expect(read[3]!.packingGroups).toEqual([{ cajas: 4, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 70 }]);
+    expect((await q("select count(*)::int n from internal_delivery_changes where delivery_id = any($1)", [[two, four]]))[0]!.n).toBeGreaterThanOrEqual(2);
+    // cancelar la 3.ª: las otras conservan sus cajas
+    const three = (await q("select id from work_item_delivery_lines where work_item_id = $1 and sequence = 3", [id]))[0]!.id as string;
+    await svc.cancelInternalDelivery(masivo as never, { kind: "PRODUCCION", id: three, reason: "error" });
+    const rest = (await readLines(id)).filter((l) => l.status === "ACTIVA");
+    expect(rest.map((l) => l.sequence)).toEqual([1, 2, 4]);
+    expect(rest[0]!.packingGroups).toEqual(FOUR[0]!.boxes);
+    expect(rest[2]!.packingGroups).toEqual([{ cajas: 4, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 70 }]);
+  }, 60_000);
+
+  it("remitos: cada entrega se remite con SUS cajas (2.ª y 3.ª), sin heredar las de la 1.ª y sin duplicar", async () => {
+    const id = await newWork("ENVASADO_MASIVO", "2000", "2020");
+    for (const f of FOUR) await deliverBoxes(masivo, id, f.qty, f.boxes, f.obs);
+    const lineIds = (await q("select id from work_item_delivery_lines where work_item_id = $1 order by sequence", [id])).map((r) => r.id as string);
+    const from = await import("@/lib/remitos/from-deliveries");
+    const el = await from.listEligibleDeliveries({ lineIds });
+    const bySeq = new Map(el.map((e) => [e.sequence, e]));
+    expect(bySeq.get(2)).toMatchObject({ quantity: 600, packingGroups: FOUR[1]!.boxes });
+    expect(bySeq.get(3)).toMatchObject({ quantity: 450, packingGroups: FOUR[2]!.boxes });
+    // remito solo de la 2.ª: lleva 6 × 100 (no las 5 × 100 de la 1.ª)
+    const r2 = await from.createRemitoDraftsFromDeliveries(asRemitoActor(prod), [lineIds[1]!]);
+    expect(r2.remitos).toHaveLength(1);
+    expect(r2.remitos[0]!.lines[0]).toMatchObject({ totalUnits: 600, cajas1: 6, unidades1: 100 });
+    // pedirla otra vez no duplica unidades
+    const again = await from.createRemitoDraftsFromDeliveries(asRemitoActor(prod), [lineIds[1]!]).catch((e) => e);
+    expect(again instanceof Error ? 0 : again.remitos.length).toBe(0); // no se creó otro remito
+    expect(again instanceof Error ? [lineIds[1]] : again.skipped).toContain(lineIds[1]);
+    // remito de la 3.ª: 4 × 100 + 1 × 50
+    const r3 = await from.createRemitoDraftsFromDeliveries(asRemitoActor(prod), [lineIds[2]!]);
+    expect(r3.remitos[0]!.lines.find((l) => l.totalUnits === 450)).toMatchObject({ totalUnits: 450, cajas1: 4, unidades1: 100, cajas2: 1, unidades2: 50 });
+  }, 60_000);
 });

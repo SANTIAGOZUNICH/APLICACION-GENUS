@@ -50,3 +50,28 @@ describe("cajas por entrega (sin mezclar entregas)", () => {
     expect(deliveryPackingEntries({ id: "dx", packingGroups: [{ cajas: 45, unidadesPorCaja: 10 }] }, lines)[0]!.breakdown?.totalUnits).toBe(450);
   });
 });
+
+import { expandDeliveryRows } from "./packing-breakdown";
+describe("expandDeliveryRows — una fila por entrega", () => {
+  const rec = (id: string) => ({ id, packingGroups: null });
+  const line = (id: string, deliveryId: string, sequence: number, quantity: number, groups: Array<{ cajas: number; unidadesPorCaja: number }> | null, status = "ACTIVA") => ({ id, deliveryId, sequence, status, quantity, packingGroups: groups });
+  it("un trabajo con 4 entregas se abre en 4 filas con SUS cajas y totales (2.020 u. · 21 cajas)", () => {
+    const lines = [
+      line("a", "d1", 1, 500, [{ cajas: 5, unidadesPorCaja: 100 }]),
+      line("b", "d1", 2, 600, [{ cajas: 6, unidadesPorCaja: 100 }]),
+      line("c", "d1", 3, 450, [{ cajas: 4, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 50 }]),
+      line("d", "d1", 4, 470, [{ cajas: 4, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 70 }]),
+    ];
+    const rows = expandDeliveryRows([rec("d1")], lines);
+    expect(rows.map((r) => [r.line?.sequence, r.index, r.count])).toEqual([[1, 0, 4], [2, 1, 4], [3, 2, 4], [4, 3, 4]]);
+    expect(rows[0]).toMatchObject({ totalUnits: 2020, totalCajas: 21, withoutBoxes: 0 });
+    expect(new Set(rows.map((r) => r.key)).size).toBe(4);
+  });
+  it("una sola entrega, sin renglones (histórico) o anuladas: una fila; una entrega sin cajas se cuenta como faltante", () => {
+    expect(expandDeliveryRows([rec("d1")], [line("a", "d1", 1, 10, null)])).toHaveLength(1);
+    expect(expandDeliveryRows([rec("d2")], [])).toHaveLength(1);
+    expect(expandDeliveryRows([rec("d3")], [line("a", "d3", 1, 10, null), line("b", "d3", 2, 10, [{ cajas: 1, unidadesPorCaja: 10 }]), line("c", "d3", 3, 10, null, "ANULADA")])).toHaveLength(2);
+    const r = expandDeliveryRows([rec("d4")], [line("a", "d4", 1, 10, null), line("b", "d4", 2, 10, [{ cajas: 1, unidadesPorCaja: 10 }])]);
+    expect(r[0]!.withoutBoxes).toBe(1);
+  });
+});

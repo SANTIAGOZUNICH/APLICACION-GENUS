@@ -1,7 +1,7 @@
 "use client";
 
 import { describeDeliveryPacking } from "@/lib/remitos/delivery-packing";
-import { deliveryPackingEntries, unitsAndCajasText, type DeliveryLineLike } from "@/lib/remitos/packing-breakdown";
+import { expandDeliveryRows, type DeliveryRowEntry, packingBreakdown, deliveryPackingEntries, unitsAndCajasText, type DeliveryLineLike } from "@/lib/remitos/packing-breakdown";
 import { PackingSummary } from "../components/packing-summary";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -178,6 +178,10 @@ function KpiTile({ label, value, tone }: { label: string; value: number; tone?: 
     </div>
   );
 }
+
+/** Fila de la planilla de Entregados: el registro del trabajo + (si tiene 2 o más entregas) la entrega que representa esta fila. */
+type DeliveryRow = DeliveryRecord & { __e: DeliveryRowEntry<DeliveryRecord> };
+const fmtU = (n: number) => new Intl.NumberFormat("es-AR").format(n);
 
 export function EntregadosView() {
   const workspace = useRequiredWorkspace();
@@ -394,7 +398,13 @@ export function EntregadosView() {
   const pagedDeliveries = filteredDeliveries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const totalPages = Math.max(1, Math.ceil(filteredDeliveries.length / PAGE_SIZE));
   const visibleIds = useMemo(() => pagedDeliveries.map((r) => r.id), [pagedDeliveries]);
+  // Producción ve CADA entrega parcial por separado (fecha, cajas, observaciones). En modo selección (archivar varias) se mantiene una fila por trabajo.
+  const deliveryRowsBase = useMemo<DeliveryRowEntry<DeliveryRecord>[]>(
+    () => expandDeliveryRows(pagedDeliveries, deliveryLines),
+    [pagedDeliveries, deliveryLines]
+  );
   const sel = useListSelectionMode(visibleIds);
+  const deliveryRows: DeliveryRow[] = (sel.active ? pagedDeliveries.map((record) => ({ record, line: null, index: 0, count: 1, totalUnits: 0, totalCajas: 0, withoutBoxes: 0, key: record.id })) : deliveryRowsBase).map((e) => ({ ...e.record, __e: e }));
 
   const periodCount = filteredDeliveries.length;
   const deliveredToday = activeDeliveries.filter((record) => record.actualDeliveredAt.slice(0, 10) === todayIso()).length;
@@ -601,27 +611,57 @@ export function EntregadosView() {
     showToast("Entrega eliminada definitivamente. Queda auditoría REGISTRO_ELIMINADO.");
   }, [closeDeleteGuide, deleteGuideTarget, deleteReason, sectorId, showToast]);
 
-  const deliveryColumns: OperationalTableColumn<DeliveryRecord>[] = [
-    { key: "actual", header: "Entregado", render: (record) => formatDateTime(record.actualDeliveredAt) },
+  // Una fila por entrega cuando el trabajo tiene varias: SOLO las cajas de ESA entrega; si no, las del registro.
+  const entriesOf = (record: DeliveryRow) =>
+    record.__e.count > 1 && record.__e.line
+      ? [{ key: record.__e.line.id, label: `Entrega #${record.__e.line.sequence}`, breakdown: packingBreakdown(record.__e.line.packingGroups) }]
+      : deliveryPackingEntries(record, deliveryLines);
+
+  const deliveryColumns: OperationalTableColumn<DeliveryRow>[] = [
+    { key: "actual", header: "Entregado", render: (record) => formatDateTime(record.__e.line?.actualDeliveredAt && record.__e.count > 1 ? record.__e.line.actualDeliveredAt : record.actualDeliveredAt) },
     {
       key: "planned",
       header: "Plan",
       hideOnMobile: true,
       render: (record) => formatDate(record.plannedDeliveryDate),
     },
-    { key: "product", header: "Producto", render: (record) => record.product },
+    {
+      key: "product",
+      header: "Producto",
+      text: (record) =>
+        record.__e.count > 1
+          ? `${record.product} · Entrega #${record.__e.line?.sequence} de ${record.__e.count}${record.__e.index === 0 ? ` · TOTAL RECIBIDO ${fmtU(record.__e.totalUnits)} u. · ${fmtU(record.__e.totalCajas)} cajas` : ""}`
+          : record.product,
+      render: (record) => (
+        <div>
+          <p>{record.product}</p>
+          {record.__e.count > 1 ? (
+            <p className="text-xs text-[var(--os-text-muted)]" data-testid="entrega-row-label">
+              Entrega #{record.__e.line?.sequence} de {record.__e.count}
+              {record.__e.line?.observations ? ` · ${record.__e.line.observations}` : ""}
+            </p>
+          ) : null}
+          {record.__e.count > 1 && record.__e.index === 0 ? (
+            <p className="text-xs font-medium text-[var(--os-text)]" data-testid="entrega-row-total">
+              Total recibido: {fmtU(record.__e.totalUnits)} u. · {fmtU(record.__e.totalCajas)} cajas ({record.__e.count} entregas)
+              {record.__e.withoutBoxes > 0 ? ` · ${record.__e.withoutBoxes} sin detalle de cajas` : ""}
+            </p>
+          ) : null}
+        </div>
+      ),
+    },
     {
       key: "cajas",
       header: "Cajas",
       headerTitle: "Cajas y unidades por caja registradas en ESTA entrega",
       // Texto para la planilla (la vista de lista usa el componente de abajo).
       text: (record) =>
-        deliveryPackingEntries(record, deliveryLines)
+        entriesOf(record)
           .map((e) => `${e.label ? `${e.label}: ` : ""}${e.breakdown ? `${unitsAndCajasText(e.breakdown)} (${e.breakdown.short})` : "Sin detalle de cajas registrado"}`)
           .join(" | "),
       render: (record) => (
         <div className="space-y-1" data-testid="entregado-cajas">
-          {deliveryPackingEntries(record, deliveryLines).map((e) => (
+          {entriesOf(record).map((e) => (
             <PackingSummary key={e.key} breakdown={e.breakdown} label={e.label} testId="entregado-packing" />
           ))}
         </div>
@@ -654,7 +694,9 @@ export function EntregadosView() {
     {
       key: "status",
       header: "Estado",
-      render: (record) => (
+      render: (record) => record.__e.count > 1 && record.__e.index > 0 ? (
+        <span className="text-xs text-[var(--os-text-muted)]">↳ Entrega #{record.__e.line?.sequence}</span>
+      ) : (
         <div className="space-y-1">
           <StatusChip status={isLateDelivery(record) ? "fuera_fecha" : "en_fecha"} />
           {record.deliveryComplete === false ? (
@@ -668,7 +710,9 @@ export function EntregadosView() {
     {
       key: "actions",
       header: "Acción",
-      render: (record) => (
+      render: (record) => record.__e.count > 1 && record.__e.index > 0 ? (
+        <span className="text-xs text-[var(--os-text-muted)]">Acciones en la primera fila del trabajo</span>
+      ) : (
         <div className="flex flex-wrap items-center justify-end gap-1">
           <DeliveryLifecycleActions
             record={record}
@@ -899,8 +943,8 @@ export function EntregadosView() {
             ) : null}
             <OperationalTable
               columns={deliveryColumns}
-              rows={pagedDeliveries}
-              rowKey={(record) => record.id}
+              rows={deliveryRows}
+              rowKey={(record) => record.__e.key}
               emptyMessage={
                 deliveriesLoading
                   ? "Cargando entregas..."

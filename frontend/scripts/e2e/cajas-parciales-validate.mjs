@@ -98,11 +98,13 @@ try {
   await p.getByRole("button", { name: /^Entregados$/ }).or(p.getByRole("link", { name: /^Entregados$/ })).first().click({ timeout: 120_000 });
   await p.locator("[data-testid=os-table-mode-toggle], [data-testid=entregado-cajas]").first().waitFor({ timeout: 120_000 });
   await p.waitForTimeout(2500);
-  const gridText = await p.locator("main").innerText().catch(() => "");
-  console.log("GRID_MODE_TEXT:", gridText.replace(/\s+/g, " ").slice(0, 1500));
-  await p.screenshot({ path: `${OUT}/produccion-grid.png` });
-  const gridRows = await p.evaluate(() => [...document.querySelectorAll(".dsg-row")].map((r) => r.innerText.replace(/\s+/g, " ")).slice(0, 12));
+  const gridRows = await p.evaluate(() => [...document.querySelectorAll(".dsg-row")].map((r) => [...r.querySelectorAll("input")].map((i) => i.value).filter(Boolean).join(" ¦ ")).filter(Boolean));
   console.log("GRID_ROWS:", JSON.stringify(gridRows));
+  await p.screenshot({ path: `${OUT}/produccion-grid.png` });
+  check("PLANILLA de Producción: una fila por entrega (4 filas), cada una con SUS cajas", gridRows.length >= 4 && /Entrega #1 de 4/.test(gridRows.join("\n")) && /5 × 100/.test(gridRows.join("\n")), String(gridRows.length));
+  const joined = gridRows.join("\n");
+  check("planilla: se ven las cajas de la 2.ª, 3.ª y 4.ª entrega (6 × 100, 4 × 100 + 1 × 50, 4 × 100 + 1 × 70)", /6 × 100/.test(joined) && /4 × 100 \+ 1 × 50/.test(joined) && /4 × 100 \+ 1 × 70/.test(joined));
+  check("planilla: TOTAL RECIBIDO 2.020 u. y 21 cajas", /TOTAL RECIBIDO 2\.020 u\. · 21 cajas/.test(joined), joined.slice(0, 300));
   if ((await p.locator("[data-testid=entregado-cajas]").count()) === 0) await p.locator("[data-testid=os-table-mode-toggle]").first().click();
   await p.locator("[data-testid=entregado-cajas]").first().waitFor({ timeout: 60_000 });
   const txt = await p.locator("[data-testid=entregado-cajas]").evaluateAll((els) => els.map((e) => e.innerText.replace(/\n/g, " | ")).join(" || "));
