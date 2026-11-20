@@ -97,6 +97,12 @@ try {
   const p = pr.page;
   await p.getByRole("button", { name: /^Entregados$/ }).or(p.getByRole("link", { name: /^Entregados$/ })).first().click({ timeout: 120_000 });
   await p.locator("[data-testid=os-table-mode-toggle], [data-testid=entregado-cajas]").first().waitFor({ timeout: 120_000 });
+  await p.waitForTimeout(2500);
+  const gridText = await p.locator("main").innerText().catch(() => "");
+  console.log("GRID_MODE_TEXT:", gridText.replace(/\s+/g, " ").slice(0, 1500));
+  await p.screenshot({ path: `${OUT}/produccion-grid.png` });
+  const gridRows = await p.evaluate(() => [...document.querySelectorAll(".dsg-row")].map((r) => r.innerText.replace(/\s+/g, " ")).slice(0, 12));
+  console.log("GRID_ROWS:", JSON.stringify(gridRows));
   if ((await p.locator("[data-testid=entregado-cajas]").count()) === 0) await p.locator("[data-testid=os-table-mode-toggle]").first().click();
   await p.locator("[data-testid=entregado-cajas]").first().waitFor({ timeout: 60_000 });
   const txt = await p.locator("[data-testid=entregado-cajas]").evaluateAll((els) => els.map((e) => e.innerText.replace(/\n/g, " | ")).join(" || "));
