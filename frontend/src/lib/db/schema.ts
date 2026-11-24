@@ -2375,6 +2375,8 @@ export const cajasGenusAudit = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("cajas_genus_audit_at_idx").on(table.createdAt)]
+);
+
 // ───────────────────────── Módulo INSUMOS (migración 0088) ─────────────────────────
 // Retiro y consumo de insumos por sector. Solo consumo: no toca stock general, MP ni ME.
 
@@ -2469,6 +2471,8 @@ export const insumoRetiroEvents = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("insumo_retiro_events_retiro_idx").on(table.retiroId, table.createdAt)]
+);
+
 /** Observaciones de Producción «vistas por usuario» (0089): solo cuándo vio cada ámbito (FEED o id de trabajo); nunca guarda el texto. */
 export const productionObservationSeen = pgTable(
   "production_observation_seen",
