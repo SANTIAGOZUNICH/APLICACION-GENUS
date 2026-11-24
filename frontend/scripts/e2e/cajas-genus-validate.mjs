@@ -84,6 +84,7 @@ try {
   check("Administración: pestañas INSUMOS y CAJAS GENUS junto a Facturación (sin módulo paralelo)", (await ap.locator("[data-testid=billing-tab-insumos]").count()) === 1 && (await ap.locator("[data-testid=billing-tab-control]").count()) === 1);
   await ap.locator("[data-testid=billing-tab-cajas]").click();
   await ap.locator("[data-testid=cajas-admin]").waitFor();
+  await ap.locator("[data-testid=cajas-sin-inicial]").waitFor({ timeout: 30_000 }).catch(() => undefined);
   check("Sin stock inicial configurado: aviso, sin stock calculado y SIN alerta", (await ap.locator("[data-testid=cajas-sin-inicial]").count()) === 1 && (await tabAlert(ap)) == null && (await ap.locator("[data-testid=cajas-alerta]").count()) === 0);
   check("Total de ingresos visible (500) aunque no haya stock inicial", (await ap.locator("[data-testid=cajas-total-ingresos]").innerText()).replace(/\D/g, "") === "500");
   await ap.locator("[data-testid=cajas-inicial-cantidad]").fill("1000");
