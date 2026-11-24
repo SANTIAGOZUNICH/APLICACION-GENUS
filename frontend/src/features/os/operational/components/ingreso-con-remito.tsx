@@ -759,15 +759,15 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
         {/* Pie fijo (hijo directo del diálogo que scrollea): acciones principales siempre a mano, sin tapar los últimos campos y respetando el área segura.
             Con el teclado abierto en un celular se oculta para devolverle el espacio al formulario. */}
         {step === "revision" ? (
-          <div className={`sticky bottom-0 z-10 -mx-3 border-t border-[var(--os-border)] bg-[var(--os-surface)] px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:-mx-6 sm:px-6 [@media(max-height:520px)]:static ${vp.kb ? "max-sm:hidden" : ""}`} data-testid="remito-barra-accion">
+          <div className={`sticky bottom-0 z-10 -mx-3 border-t border-[var(--os-border)] bg-[var(--os-surface)] px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:-mx-6 sm:px-6 ${vp.kb ? "max-sm:hidden" : ""}`} data-testid="remito-barra-accion">
             <div className="flex flex-wrap items-center gap-2">
               <Button type="button" variant="secondary" className="min-h-11 flex-1 sm:flex-none" onClick={() => void saveDraftOnly()} disabled={Boolean(busy)} data-testid="remito-guardar-borrador">
                 <Save className="mr-1 size-4" /> Guardar borrador
               </Button>
               <Button type="button" variant="secondary" className="min-h-11 flex-1 border-amber-500/60 sm:flex-none" onClick={() => void goSummary()} disabled={Boolean(busy)} data-testid="remito-revisar">
-                <CheckCircle2 className="mr-1 size-4" /> Confirmar ingreso de stock
+                <CheckCircle2 className="mr-1 size-4" /> <span className="sm:hidden">Confirmar ingreso</span><span className="hidden sm:inline">Confirmar ingreso de stock</span>
               </Button>
-              <Button type="button" className="min-h-12 w-full flex-none font-bold uppercase tracking-wide sm:ml-auto sm:w-auto sm:min-w-44" onClick={() => void toSheet()} disabled={Boolean(busy)} data-testid="remito-pasar-excel"><Table2 className="mr-1 size-4" /> PASAR A EXCEL</Button>
+              <Button type="button" className="min-h-12 flex-none font-bold uppercase tracking-wide max-[480px]:w-full sm:ml-auto sm:min-w-44" onClick={() => void toSheet()} disabled={Boolean(busy)} data-testid="remito-pasar-excel"><Table2 className="mr-1 size-4" /> PASAR A EXCEL</Button>
             </div>
           </div>
         ) : null}
