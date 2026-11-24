@@ -247,6 +247,7 @@ try {
 
   // ===== Fallo TRANSITORIO del proveedor: GENUS OS reintenta solo (el operario no ve ningún error) =====
   state.mode = "flaky";
+  ostate.mode = "ok"; // con respaldo disponible, un 503 de Gemini pasa al otro proveedor (no se insiste en el saturado)
   await resetBreaker();
   state.flakyHits = 0;
   await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
@@ -254,12 +255,13 @@ try {
   const stockAntesFlaky = await balance(MP_CODE);
   await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 90_000 });
-  check("503 transitorio del proveedor: reintento automático y la lectura se completa sin error visible", state.flakyHits >= 2 && (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER && (await mp.locator("[data-testid=remito-lectura-fallo]").count()) === 0, `hits=${state.flakyHits}`);
+  check("503 transitorio del proveedor: reintento automático y la lectura se completa sin error visible", state.flakyHits >= 1 && (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER && (await mp.locator("[data-testid=remito-lectura-fallo]").count()) === 0, `hits=${state.flakyHits}`);
   check("el reintento no duplicó nada: sigue siendo un borrador sin stock", (await balance(MP_CODE)) === stockAntesFlaky);
   await mp.keyboard.press("Escape");
 
   // ===== Proveedor saturado de forma sostenida: mensaje propio, tope de reintentos, foto y carga manual intactas =====
   state.mode = "overloaded";
+  ostate.mode = "down";
   await resetBreaker();
   state.requests.length = 0;
   await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
