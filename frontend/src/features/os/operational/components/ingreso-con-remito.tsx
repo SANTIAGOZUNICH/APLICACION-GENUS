@@ -992,12 +992,12 @@ function LineCard({
           <label className="flex min-h-11 items-center gap-3 text-sm [&>input]:size-5"><input type="checkbox" checked={line.noExpiry} onChange={(e) => set({ noExpiry: e.target.checked, vencimiento: e.target.checked ? "" : line.vencimiento })} data-testid="linea-sin-vencimiento" /> Sin vencimiento (no figura en la mercadería)</label>
         </div>
       ) : null}
-      <div className="flex flex-wrap items-end gap-3">
-        <button type="button" className="text-xs underline" onClick={() => setPartial((v) => !v)}>{partial ? "Ocultar recepción parcial" : "¿Recepción parcial? Indicar la cantidad del remito"}</button>
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+        <button type="button" className="min-h-11 text-left text-sm underline sm:text-xs" onClick={() => setPartial((v) => !v)}>{partial ? "Ocultar recepción parcial" : "¿Recepción parcial? Indicar la cantidad del remito"}</button>
         {partial ? (
           <label className="text-sm font-medium">Cantidad según remito<input inputMode="decimal" className={field} value={line.remitoQuantity} onChange={(e) => set({ remitoQuantity: e.target.value })} data-testid="linea-cantidad-remito" /></label>
         ) : null}
-        <label className="min-w-40 flex-1 text-sm">Observaciones del material<input className={field} value={line.notes} onChange={(e) => set({ notes: e.target.value })} /></label>
+        <label className="w-full text-sm font-medium sm:min-w-40 sm:flex-1">Observaciones del material<input className={field} value={line.notes} onChange={(e) => set({ notes: e.target.value })} /></label>
       </div>
       {partial && line.remitoQuantity.trim() && line.quantity.trim() ? <PendingNote remito={line.remitoQuantity} received={line.quantity} unit={line.unit} /> : null}
     </article>
