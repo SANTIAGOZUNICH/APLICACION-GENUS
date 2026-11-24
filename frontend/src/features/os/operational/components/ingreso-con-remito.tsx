@@ -525,7 +525,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
     setCloseAsk(null);
     const top = scrollBeforeAsk.current;
     // Vuelve exactamente a donde estaba (se repite porque el foco que regresa de la confirmación puede mover el scroll).
-    for (const ms of [0, 80, 250]) setTimeout(() => { if (contentNode) contentNode.scrollTop = top; }, ms);
+    for (const ms of [0, 60, 120, 200, 300, 450, 600, 800]) setTimeout(() => { if (contentNode && Math.abs(contentNode.scrollTop - top) > 1) contentNode.scrollTop = top; }, ms);
   }
 
   /** «Guardar y cerrar»: guarda SOLO el borrador (foto, datos leídos y cambios manuales). No confirma ni mueve stock. Si falla, NO se cierra. */
@@ -600,7 +600,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
     const reveal = () => {
       clearTimeout(t);
       t = setTimeout(() => {
-        if (Date.now() - lastCancelAt.current < 900) return; // volver de la confirmación de cierre no debe mover el scroll
+        if (Date.now() - lastCancelAt.current < 1200) return; // volver de la confirmación de cierre no debe mover el scroll
         const el = document.activeElement;
         if (isTextField(el) && contentNode.contains(el)) el.scrollIntoView({ block: "center", behavior: "smooth" });
       }, 250);
