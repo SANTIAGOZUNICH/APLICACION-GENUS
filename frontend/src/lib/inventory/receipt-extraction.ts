@@ -1062,7 +1062,7 @@ export async function probeExtraction(deps: { fetchImpl?: typeof fetch; env?: Pa
     effectiveModel: geminiTop.effectiveModel ?? firstOk?.model ?? null,
     listing: geminiTop.listing,
     attempts: geminiTop.attempts,
-    text: geminiTop.text.ok || !providers.some((p) => p.provider === "openai" && p.ok) ? geminiTop.text : { ok: true, message: `Gemini no respondió, pero el respaldo (${firstOk?.provider}) sí.` },
+    text: geminiTop.text, // el diagnóstico de Gemini no se disfraza: el estado del respaldo va en `providers`
     image: geminiTop.image,
     providers,
     message: anyOk ? (providers.every((p) => !p.configured || p.ok) ? (deps.image ? "Los proveedores configurados analizaron correctamente una imagen de prueba." : "Los proveedores configurados respondieron correctamente.") : `Funciona con ${firstOk?.provider}; algún proveedor falló: ${failMsg}`) : failMsg,
