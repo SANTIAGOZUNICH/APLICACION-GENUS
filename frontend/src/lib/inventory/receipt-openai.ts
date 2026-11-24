@@ -11,16 +11,28 @@
 import "server-only";
 
 export type OpenAIFailureKind = "key" | "permission" | "region" | "model" | "limit" | "quota" | "overloaded" | "unavailable" | "bad_request" | "unsupported" | "timeout";
-export type OpenAIAttempt = { model: string; status: number | null; kind: "ok" | OpenAIFailureKind };
+/** Campos del error que devuelve OpenAI, ya saneados (sin claves ni contenido): permiten saber QUÉ rechazó el pedido. */
+export type OpenAIErrorInfo = { message: string; type: string | null; code: string | null; param: string | null; requestId: string | null };
+export type OpenAIAttempt = { model: string; status: number | null; kind: "ok" | OpenAIFailureKind; error?: OpenAIErrorInfo };
 export type OpenAIRun =
   | { ok: true; model: string; text: string; finishReason: string; attempts: OpenAIAttempt[]; calls: number; ms: number; tokens?: { prompt?: number; output?: number; total?: number } }
-  | { ok: false; kind: OpenAIFailureKind; message: string; model: string | null; attempts: OpenAIAttempt[]; calls: number; ms: number; http: number | null; retryAfterMs: number | null };
+  | { ok: false; kind: OpenAIFailureKind; message: string; model: string | null; attempts: OpenAIAttempt[]; calls: number; ms: number; http: number | null; retryAfterMs: number | null; error?: OpenAIErrorInfo };
 
 export const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 const DEFAULT_BASE = "https://api.openai.com";
 const IMAGE_TYPES = /^image\/(jpeg|png|webp|gif)$/i;
 
-export const redactOpenAI = (t: string) => t.replace(/sk-[A-Za-z0-9_-]{16,}/g, "[clave oculta]").replace(/(Bearer\s+)[A-Za-z0-9._-]{12,}/gi, "$1[oculta]");
+export const redactOpenAI = (t: string) =>
+  t
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[clave oculta]")
+    .replace(/(Bearer\s+)[A-Za-z0-9._-]{12,}/gi, "$1[oculta]")
+    .replace(/data:[a-z]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]{20,}/gi, "[archivo oculto]");
+
+const clip = (v: unknown, n: number): string | null => (v == null || v === "" ? null : redactOpenAI(String(v)).slice(0, n));
+/** Error de OpenAI saneado: mensaje (acotado), tipo, código, parámetro y request-id. Nunca cabeceras de autorización ni contenido del pedido. */
+export function errorInfoOf(err: (OpenAIError & { param?: string | null }) | null | undefined, requestId: string | null): OpenAIErrorInfo {
+  return { message: clip(err?.message, 400) ?? "", type: clip(err?.type, 60), code: clip(err?.code, 60), param: clip(err?.param, 80), requestId: clip(requestId, 80) };
+}
 
 export function openaiKey(env: Partial<NodeJS.ProcessEnv>): string {
   return (env.INGRESO_REMITO_OPENAI_API_KEY ?? env.CREAMY_OPENAI_API_KEY ?? env.OPENAI_API_KEY ?? "").trim();
@@ -64,7 +76,7 @@ export function toOpenAIContent(parts: Part[]): { content: Array<Record<string, 
   return { content, skipped, files };
 }
 
-type OpenAIError = { type?: string; code?: string | null; message?: string };
+type OpenAIError = { type?: string; code?: string | null; message?: string; param?: string | null };
 
 /** Clasifica el rechazo de OpenAI: cuota agotada y límite por minuto son cosas distintas; nada se disfraza de «permiso». */
 export function classifyOpenAI(status: number, err: OpenAIError | null | undefined): OpenAIFailureKind {
@@ -84,21 +96,29 @@ export function classifyOpenAI(status: number, err: OpenAIError | null | undefin
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-export async function runOpenAI(parts: Part[], env: Partial<NodeJS.ProcessEnv>, doFetch: typeof fetch, opts: { maxOutputTokens?: number } = {}): Promise<OpenAIRun> {
+export async function runOpenAI(parts: Part[], env: Partial<NodeJS.ProcessEnv>, doFetch: typeof fetch, opts: { maxOutputTokens?: number; /** false = respuesta de texto libre (prueba de configuración). Por defecto JSON. */ json?: boolean; /** Prueba de configuración: permite un pedido sin imágenes. */ textOnly?: boolean } = {}): Promise<OpenAIRun> {
   const t0 = Date.now();
   const model = openaiModel(env);
   const key = openaiKey(env);
   const attempts: OpenAIAttempt[] = [];
-  const fail = (kind: OpenAIFailureKind, message: string, http: number | null, retryAfterMs: number | null = null): OpenAIRun => ({ ok: false, kind, message, model, attempts, calls: attempts.length, ms: Date.now() - t0, http, retryAfterMs });
+  let lastError: OpenAIErrorInfo | undefined;
+  const fail = (kind: OpenAIFailureKind, message: string, http: number | null, retryAfterMs: number | null = null): OpenAIRun => ({ ok: false, kind, message, model, attempts, calls: attempts.length, ms: Date.now() - t0, http, retryAfterMs, error: lastError });
   if (!key) return fail("key", "OpenAI no está configurado (falta CREAMY_OPENAI_API_KEY u OPENAI_API_KEY).", null);
   const { content, skipped, files } = toOpenAIContent(parts);
-  if (files === 0) return fail("unsupported", skipped ? "Los archivos (HEIC) no son compatibles con el proveedor alternativo." : "No hay imágenes para leer.", null);
+  if (files === 0 && !(opts.textOnly && content.length > 0)) return fail("unsupported", skipped ? "Los archivos (HEIC) no son compatibles con el proveedor alternativo." : "No hay imágenes para leer.", null);
   const budget = Math.max(50, Number(env.INGRESO_REMITO_BUDGET_MS ?? 38_000) || 38_000);
   const attemptCap = Math.max(20, Number(env.INGRESO_REMITO_ATTEMPT_MS ?? 30_000) || 30_000);
-  const maxCalls = Math.max(1, Math.min(3, Number(env.INGRESO_REMITO_OPENAI_MAX_ATTEMPTS ?? 2) || 2));
+  const maxCalls = Math.max(2, Math.min(3, Number(env.INGRESO_REMITO_OPENAI_MAX_ATTEMPTS ?? 2) || 2));
   const base = Math.max(0, Number(env.INGRESO_REMITO_RETRY_BASE_MS ?? 700) || 0);
   const deadline = t0 + budget;
-  const body = JSON.stringify({ model, input: [{ role: "user", content }], text: { format: { type: "json_object" } }, max_output_tokens: opts.maxOutputTokens ?? 8192, store: false });
+  const wantJson = opts.json !== false;
+  // `json_object` EXIGE que la palabra «JSON» figure en la entrada (si no, OpenAI responde 400): se garantiza sin tocar el pedido original.
+  const hasJsonWord = content.some((c) => c.type === "input_text" && /json/i.test(String(c.text ?? "")));
+  const input = wantJson && !hasJsonWord ? [...content, { type: "input_text", text: "Respondé únicamente con un objeto JSON válido." }] : content;
+  const reqBody: Record<string, unknown> = { model, input: [{ role: "user", content: input }], max_output_tokens: Math.max(16, opts.maxOutputTokens ?? 8192), store: false };
+  if (wantJson) reqBody.text = { format: { type: "json_object" } };
+  let body = JSON.stringify(reqBody);
+  let droppedFormat = false;
   let lastKind: OpenAIFailureKind = "unavailable";
   let lastHttp: number | null = null;
   let lastRetryAfter: number | null = null;
@@ -133,12 +153,21 @@ export async function runOpenAI(parts: Part[], env: Partial<NodeJS.ProcessEnv>, 
       return { ok: true, model, text, finishReason, attempts, calls: attempts.length, ms: Date.now() - t0, tokens: data.usage ? { prompt: data.usage.input_tokens, output: data.usage.output_tokens, total: data.usage.total_tokens } : undefined };
     }
     const kind = res.ok ? "unavailable" : classifyOpenAI(res.status, data?.error);
-    attempts.push({ model, status: res.status, kind });
+    lastError = errorInfoOf(data?.error ?? (data ? null : { message: raw.slice(0, 200) }), res.headers.get("x-request-id"));
+    attempts.push({ model, status: res.status, kind, error: lastError });
     lastKind = kind;
     lastHttp = res.status;
     const ra = Number(res.headers.get("retry-after"));
     lastRetryAfter = Number.isFinite(ra) && ra > 0 ? Math.round(ra * 1000) : null;
-    console.warn(`[ingreso-remito] OpenAI falló (${kind} · HTTP ${res.status}) · modelo ${model}: ${redactOpenAI(String(data?.error?.message ?? "")).slice(0, 160)}`);
+    console.warn(`[ingreso-remito] OpenAI falló (${kind} · HTTP ${res.status}) · modelo ${model} · tipo ${lastError.type ?? "-"} · código ${lastError.code ?? "-"} · param ${lastError.param ?? "-"} · req ${lastError.requestId ?? "-"}: ${lastError.message.slice(0, 200)}`);
+    // Un 400 por el formato de salida estructurada (param «text.format…») se reintenta UNA vez sin él: el pedido ya exige JSON en el texto.
+    if (kind === "bad_request" && wantJson && !droppedFormat && (/^text/.test(lastError.param ?? "") || /json_object|text\.format|response_format/i.test(lastError.message)) && n + 1 < Math.max(maxCalls, 2)) {
+      droppedFormat = true;
+      delete reqBody.text;
+      body = JSON.stringify(reqBody);
+      lastKind = kind;
+      continue;
+    }
     // Solo lo transitorio se reintenta (una vez, rápido); clave, cuota, permisos, modelo o pedido inválido no.
     const transient = kind === "overloaded" || kind === "unavailable" || kind === "limit";
     if (!transient || n + 1 >= maxCalls) break;
@@ -146,5 +175,6 @@ export async function runOpenAI(parts: Part[], env: Partial<NodeJS.ProcessEnv>, 
     if (room <= 0) break;
     await sleep(Math.min(room, lastRetryAfter ?? Math.round(base * 2 * (0.5 + Math.random() * 0.5)), 4_000));
   }
-  return fail(lastKind, `OpenAI no disponible (${lastKind}${lastHttp ? ` · HTTP ${lastHttp}` : ""}).`, lastHttp, lastRetryAfter);
+  const why = lastError ? ` · ${[lastError.type, lastError.code, lastError.param ? `param ${lastError.param}` : ""].filter(Boolean).join("/")}: ${lastError.message.slice(0, 200)}${lastError.requestId ? ` [req ${lastError.requestId}]` : ""}` : "";
+  return fail(lastKind, `OpenAI no disponible (${lastKind}${lastHttp ? ` · HTTP ${lastHttp}` : ""}${why}).`, lastHttp, lastRetryAfter);
 }
