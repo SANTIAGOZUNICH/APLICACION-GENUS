@@ -595,4 +595,89 @@ describe.skipIf(Boolean(PROBLEM))(`Ingreso con remito en Postgres real${PROBLEM 
     await rejects(s.addFile(mp as never, r.id, "MP", { fileName: "b.jpg", bytes: jpeg() }), 409);
     expect(await q("select 1 from inv_mp_ingresos where payload->>'remitoNro' = $1", [`R-${RUN}-21`])).toHaveLength(0);
   });
+
+  // ── Lectura robusta (reintentos, mejora de imagen, datos incompletos): el borrador se completa, nunca se confirma ni mueve stock ──
+  const robustCfg = () => ({ available: true, provider: "gemini" as const, model: "m", modelSource: "INGRESO_REMITO_GEMINI_MODEL" as const, code: "ok" as const, reason: "" });
+  const exLine = (o: Record<string, string> = {}) => ({ supplierCode: "FR-9", description: "Frasco PET 250 ml", quantity: "1000", unit: "un", packages: "", lote: "", vencimiento: "", notes: "", review: [] as string[], confidence: "ALTA" as const, ...o });
+  const exData = (remito: string, lines: unknown[], over: Record<string, unknown> = {}) => ({ supplier: `Proveedor IT ${RUN} SA`, remitoNumber: remito, remitoDate: tomorrow(), notes: "", headerReview: [] as string[], lines, ...over });
+
+  it("falla del servicio de lectura: la foto y lo escrito se conservan, el diagnóstico queda para Sistemas, no hay stock y el reintento con la MISMA foto completa el borrador", async () => {
+    const { ReceiptService } = await lib();
+    const remito = `R-${RUN}-RB1`;
+    let calls = 0;
+    const svcR = new ReceiptService({
+      extractionConfig: robustCfg,
+      extract: async () => {
+        calls++;
+        if (calls === 1) return { ok: false as const, kind: "overloaded" as const, message: "La lectura automática no está disponible en este momento. Tu imagen está guardada y podés completar los datos manualmente o reintentar.", technical: "saturado (HTTP 503)", diag: { provider: "gemini", model: "gemini-2.5-flash", elapsedMs: 31_000, stages: [{ stage: "lectura", ok: false, ms: 31_000, calls: 9 }], attempts: { overloaded: 9 }, pending: ["remitoNumber", "lines"], enhanced: false, errorKind: "overloaded", failedStage: "lectura", http: 503 } };
+        return { ok: true as const, provider: "gemini:test", model: "test", data: exData(remito, [exLine()]), pending: [], diag: { provider: "gemini", model: "test", elapsedMs: 4_000, stages: [{ stage: "lectura", ok: true, ms: 4_000 }], attempts: { ok: 1 }, pending: [], enhanced: false } };
+      },
+    });
+    const stockBefore = await meStock(ME_CODE);
+    const r = await draft("ME", dep, "", [], { files: 1, header: { supplier: `Proveedor IT ${RUN} SA`, remitoNumber: "", remitoDate: "", notes: "nota escrita a mano" } });
+    const fail = await svcR.extract(dep as never, r.id, "ME");
+    expect(fail).toMatchObject({ applied: false, kind: "overloaded" });
+    expect(fail.message).toMatch(/no está disponible en este momento.*imagen está guardada/);
+    expect(fail.message).not.toMatch(/foto más clara|imagen más clara/i);
+    expect(fail.receipt.files).toHaveLength(1); // la foto sigue
+    expect(fail.receipt.draft.header.notes).toBe("nota escrita a mano"); // lo escrito sigue
+    expect(fail.receipt.draft.job).toMatchObject({ status: "failed" });
+    expect((fail.receipt.draft.job as { diag?: Record<string, unknown> }).diag).toMatchObject({ errorKind: "overloaded", http: 503, failedStage: "lectura", technical: "saturado (HTTP 503)" });
+    expect(JSON.stringify(fail.receipt.draft.job)).not.toMatch(/AIza/);
+    expect(await meStock(ME_CODE)).toBe(stockBefore); // leer nunca mueve stock
+    const retry = await svcR.extract(dep as never, r.id, "ME", { fresh: true });
+    expect(retry).toMatchObject({ applied: true, kind: "ok" });
+    expect(retry.receipt.files).toHaveLength(1); // misma imagen, no se volvió a subir
+    expect(retry.receipt.draft.header).toMatchObject({ remitoNumber: remito, notes: "nota escrita a mano" });
+    expect(retry.receipt.draft.lines).toHaveLength(1);
+    expect(retry.receipt.draft.job).toMatchObject({ status: "done" });
+    expect(await meStock(ME_CODE)).toBe(stockBefore);
+    // Recién al CONFIRMAR se registra el ingreso y se suma el stock, una sola vez (aunque se reintente la lectura o la confirmación)
+    const lines = retry.receipt.draft.lines.map((l) => ({ ...l, materialCode: ME_CODE, quantity: "1000", unit: "un" }));
+    const saved = await (await svc()).saveDraft(dep as never, r.id, "ME", { expectedVersion: retry.receipt.version, header: retry.receipt.draft.header, lines });
+    const key = `k-${randomUUID()}`;
+    const c1 = await (await svc()).confirm(dep as never, r.id, "ME", { expectedVersion: saved.version, confirmKey: key } as never);
+    expect(c1.status).toBe("CONFIRMADO");
+    await (await svc()).confirm(dep as never, r.id, "ME", { expectedVersion: saved.version, confirmKey: key } as never).catch(() => undefined);
+    expect(await meStock(ME_CODE)).toBe(stockBefore + 1000);
+    expect((await q("select count(*)::int n from inv_me_ingresos where payload->>'remitoNro' = $1", [remito]))[0]!.n).toBe(1);
+  });
+
+  it("lectura parcial: completa todo lo identificado, marca solo lo pendiente (cantidad), guarda el diagnóstico y no mueve stock; una foto complementaria completa SOLO lo vacío", async () => {
+    const { ReceiptService } = await lib();
+    const remito = `R-${RUN}-RB2`;
+    let phase = 0;
+    const svcR = new ReceiptService({
+      extractionConfig: robustCfg,
+      extract: async () => {
+        phase++;
+        if (phase === 1) return { ok: true as const, provider: "gemini:test", model: "test", data: exData(remito, [exLine(), exLine({ supplierCode: "TA-3", description: "Tapa rosca 24/410", quantity: "", review: ["quantity"], confidence: "BAJA" as never })]), pending: ["quantity"], diag: { provider: "gemini", model: "test", elapsedMs: 21_000, stages: [{ stage: "lectura", ok: true, ms: 6_000 }, { stage: "mejora", ok: true, ms: 15_000, recovered: [] }], attempts: { ok: 2 }, pending: ["quantity"], enhanced: true } };
+        // foto complementaria (solo la zona de cantidades): trae la cantidad faltante y un nombre distinto del que escribió la persona
+        return { ok: true as const, provider: "gemini:test", model: "test", data: exData(remito, [exLine({ supplierCode: "FR-9", description: "OTRA DESCRIPCION", quantity: "7777" }), exLine({ supplierCode: "TA-3", description: "TAPA DEL REMITO", quantity: "5000", unit: "un" })]), pending: [], diag: { provider: "gemini", model: "test", elapsedMs: 3_000, stages: [{ stage: "lectura", ok: true, ms: 3_000 }], attempts: { ok: 1 }, pending: [], enhanced: false } };
+      },
+    });
+    const stockBefore = await meStock(ME_CODE2);
+    const r = await draft("ME", dep, "", [], { files: 1, header: { supplier: "", remitoNumber: "", remitoDate: "" } });
+    const first = await svcR.extract(dep as never, r.id, "ME");
+    expect(first).toMatchObject({ applied: true, kind: "ok" });
+    expect(first.message).toMatch(/Identificamos los datos principales\. Revisá los campos marcados\..*No pude identificar la cantidad.*fotografiar únicamente esa parte/);
+    expect(first.receipt.draft.lines.map((l) => l.quantity)).toEqual(["1000", ""]);
+    expect(first.receipt.draft.lines[1]!.review).toContain("quantity");
+    expect(first.receipt.draft.lines[0]!.review).not.toContain("quantity");
+    expect(first.receipt.draft.job).toMatchObject({ status: "done", pending: ["quantity"] });
+    expect((first.receipt.draft.job as { diag?: { enhanced?: boolean } }).diag?.enhanced).toBe(true);
+    // la persona completa a mano la descripción de la 2.ª línea y agrega una foto complementaria
+    const edited = first.receipt.draft.lines.map((l, i) => (i === 1 ? { ...l, description: "Tapa (escrita a mano)" } : l));
+    const saved = await (await svc()).saveDraft(dep as never, r.id, "ME", { expectedVersion: first.receipt.version, header: first.receipt.draft.header, lines: edited });
+    await (await svc()).addFile(dep as never, r.id, "ME", { fileName: "zona-cantidades.jpg", bytes: jpeg("compl") });
+    const second = await svcR.extract(dep as never, r.id, "ME", { fresh: true });
+    expect(second.applied).toBe(true);
+    const [l1, l2] = second.receipt.draft.lines;
+    expect(l1!.quantity).toBe("1000"); // ya identificado: no se pisa con el 7777 de la otra lectura
+    expect(l1!.description).toBe("Frasco PET 250 ml");
+    expect(l2).toMatchObject({ quantity: "5000", description: "Tapa (escrita a mano)" }); // completa lo vacío y respeta lo escrito
+    expect(l2!.review).not.toContain("quantity");
+    expect(await meStock(ME_CODE2)).toBe(stockBefore); // leer / completar nunca mueve stock
+    expect(saved.version).toBeGreaterThan(0);
+  });
 });
