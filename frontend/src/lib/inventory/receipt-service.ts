@@ -386,7 +386,7 @@ let healthStore: ProviderHealthStore | null = null;
 const sharedHealth = () => (healthStore ??= createDbHealthStore());
 
 const READ_WINDOW_MS = 60_000;
-const READ_MAX_PER_WINDOW = 8;
+const READ_MAX_PER_WINDOW = Math.max(1, Number(process.env.INGRESO_REMITO_READS_PER_MIN ?? 8) || 8);
 const recentReads = new Map<string, number[]>();
 /** Máximo de lecturas reales por usuario y minuto (por instancia). */
 export function allowRead(who: string, now = Date.now()): boolean {

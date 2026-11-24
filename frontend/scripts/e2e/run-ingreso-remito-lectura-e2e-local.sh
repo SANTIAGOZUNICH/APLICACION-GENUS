@@ -9,6 +9,7 @@ cd "$(dirname "$0")/../.."
 export INGRESO_REMITO_EXTRACTION=gemini
 export GEMINI_API_KEY=e2e-clave-falsa-no-es-real
 export INGRESO_REMITO_RETRY_BASE_MS=150
+export INGRESO_REMITO_READS_PER_MIN=200
 export INGRESO_REMITO_GEMINI_BASE_URL=http://127.0.0.1:4599
 # Proveedor de RESPALDO simulado (OpenAI, Responses API) con una clave falsa: nunca sale a internet.
 export CREAMY_OPENAI_API_KEY=e2e-openai-falsa
