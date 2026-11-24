@@ -366,6 +366,7 @@ try {
 
   // ===== Lectura parcial: no se puede leer UNA cantidad → se completa todo lo demás y se marca solo eso =====
   state.mode = "noqty";
+  ostate.mode = "down"; // sin otro proveedor que pueda recuperar la cantidad: queda el parcial
   await resetBreaker();
   state.delayMs = 400;
   state.requests.length = 0;
@@ -385,6 +386,7 @@ try {
   check("PASAR A EXCEL funciona con los datos ya leídos y NO repite la lectura (sin llamadas nuevas al proveedor)", state.requests.filter((r) => r.model && !r.textOnly).length === llamadasAntesExcel);
   await mp.keyboard.press("Escape");
   state.mode = "ok";
+  ostate.mode = "ok";
   await resetBreaker();
 
   // ===== Respuesta PERDIDA (timeout HTTP / corte de red): el resultado se RECUPERA sin volver a fotografiar ni llamar de nuevo =====
