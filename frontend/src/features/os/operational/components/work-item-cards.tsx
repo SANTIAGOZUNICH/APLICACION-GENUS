@@ -37,6 +37,7 @@ import { PriorityTag } from "./plan-task-card";
 import { PriorityChip } from "./semanas-priority-chip";
 import { priorityEdge, WorkItemPriorityBadge } from "./work-item-priority-badge";
 import { WorkItemWarningBadge } from "./work-item-warning-badge";
+import { WorkObservationsButton } from "./work-observations";
 import { groupPendingByPedido, type PedidoGroup } from "../lib/group-pending-by-pedido";
 
 type CellEditing = ReturnType<typeof useWorkItemCellEditing>;
@@ -429,6 +430,9 @@ export function WorkItemCard(props: WorkItemCardsProps & { item: WorkItem }) {
         <div className="flex items-center gap-1.5">
           <StatusChip status={item.status} />
         </div>
+      </div>
+      <div onClick={(e) => e.stopPropagation()}>
+        <WorkObservationsButton workItemId={item.id} />
       </div>
 
       {lock && (

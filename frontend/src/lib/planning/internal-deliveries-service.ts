@@ -35,6 +35,7 @@ import { syncObsMark } from "@/lib/planning/circuit/delivery-group";
 import { mergePackingGroups, packingTotals, samePacking } from "@/lib/remitos/delivery-boxes-input";
 import { describeDeliveryPacking, validateDeliveryPacking, type DeliveryPackingGroup } from "@/lib/remitos/delivery-packing";
 import { annulDeliveryInTx } from "@/lib/planning/work-item-progress-repository";
+import { syncDeliveryLineSafe } from "@/lib/cajas-genus/service";
 import { loadResolvedPackingByLine } from "@/lib/remitos/delivery-packing-resolve";
 import { availableToRemit, loadRemittanceByLine, remittedEditProblem } from "@/lib/remitos/delivery-remittance";
 import type { PlanningActor } from "@/lib/planning/types";
@@ -672,6 +673,8 @@ async function mutateLine(tx: Tx, actor: PlanningActor, input: MutationInput): P
   } else {
     await tx.update(workItemDeliveryLines).set({ quantity: newQty, observations: newObs, packingGroups: newPacking.length > 0 ? newPacking : null }).where(eq(workItemDeliveryLines.id, line.id));
   }
+  // CAJAS GENUS: edición/cancelación de la entrega → solo la DIFERENCIA de cajas (savepoint: nunca frena la corrección).
+  await syncDeliveryLineSafe(tx, line.id, { email: actor.email, sector: actor.sector });
   // 2) acumulados y saldos de las entregas que siguen vigentes (en orden), sin duplicar nada
   let running = 0;
   for (let i = 0; i < nextQuantities.length; i++) {

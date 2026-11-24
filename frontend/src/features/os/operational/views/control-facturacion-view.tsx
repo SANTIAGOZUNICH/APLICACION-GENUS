@@ -5,9 +5,13 @@ import { Button } from "@/components/ui/button";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { usePreviewContext } from "@/features/os/session/preview-context";
 import { DELIVERY_STATE_LABEL, INVOICING_STATE_LABEL, INVOICING_STATES, type InvoicingState } from "@/lib/billing/billing-state";
+import { InsumosAdminPanel } from "@/features/os/operational/components/insumos/insumos-admin-panel";
+import { CajasGenusAdminPanel } from "@/features/os/operational/components/cajas-genus/cajas-admin-panel";
+import { useCajasSummary } from "@/features/os/operational/components/cajas-genus/cajas-client";
+import { AlertTriangle } from "lucide-react";
 import type { BillableDelivery, BillingDashboard, BillingRowView, InvoiceView } from "@/lib/billing/billing-service";
 
-type Tab = "resumen" | "control" | "facturas";
+type Tab = "resumen" | "control" | "facturas" | "insumos" | "cajas";
 type Filters = { q: string; client: string; product: string; state: string; deliveryState: string; from: string; to: string };
 const EMPTY: Filters = { q: "", client: "", product: "", state: "TODOS", deliveryState: "TODOS", from: "", to: "" };
 
@@ -51,6 +55,9 @@ const qs = (o: Record<string, string | undefined>) => {
 export function ControlFacturacionView({ initialTab }: { initialTab?: Tab } = {}) {
   const { currentNav } = usePreviewContext();
   const [tab, setTab] = useState<Tab>(currentNav.workItemId ? "control" : (initialTab ?? "resumen"));
+  // Alerta de stock crítico de cajas: visible en la barra de pestañas aunque se esté trabajando en Facturación o Insumos.
+  const cajas = useCajasSummary({ pollMs: 20_000 });
+  const cajasCritical = Boolean(cajas.summary?.critical);
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [rows, setRows] = useState<BillingRowView[]>([]);
   const [canWrite, setCanWrite] = useState(false);
@@ -146,15 +153,23 @@ export function ControlFacturacionView({ initialTab }: { initialTab?: Tab } = {}
         </header>
 
         <div role="tablist" className="flex flex-wrap gap-2" aria-label="Secciones de facturación">
-          {([["resumen", "Resumen"], ["control", "Control de facturación"], ["facturas", "Facturas registradas"]] as const).map(([id, label]) => (
-            <button key={id} role="tab" aria-selected={tab === id} type="button" data-testid={`billing-tab-${id}`} onClick={() => setTab(id)} className={`min-h-11 rounded-lg border px-4 text-sm font-medium ${tab === id ? "border-[var(--os-teal)] bg-[var(--os-teal)]/15" : "border-[var(--os-border)]"}`}>
-              {label}
-            </button>
-          ))}
+          {([["resumen", "Resumen"], ["control", "Control de facturación"], ["facturas", "Facturas registradas"], ["insumos", "INSUMOS"], ["cajas", "CAJAS GENUS"]] as const).map(([id, label]) => {
+            const alert = id === "cajas" && cajasCritical;
+            return (
+              <button key={id} role="tab" aria-selected={tab === id} type="button" data-testid={`billing-tab-${id}`} data-alert={alert ? "true" : undefined} onClick={() => setTab(id)} className={`min-h-11 rounded-lg border px-4 text-sm font-medium ${alert ? "cajas-tab-alert" : tab === id ? "border-[var(--os-teal)] bg-[var(--os-teal)]/15" : "border-[var(--os-border)]"}`}>
+                {alert ? <AlertTriangle className="mr-1.5 inline size-4 align-[-2px]" aria-hidden /> : null}
+                {label}
+                {alert ? <span className="ml-1.5 rounded bg-white/25 px-1.5 text-xs" data-testid="cajas-tab-stock">{cajas.summary?.stock ?? 0} disp.</span> : null}
+              </button>
+            );
+          })}
         </div>
 
         {error ? <p role="alert" className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-sm" data-testid="billing-error">{error}</p> : null}
         {notice ? <p role="status" className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm" data-testid="billing-notice">{notice}</p> : null}
+
+        {tab === "insumos" ? <InsumosAdminPanel /> : null}
+        {tab === "cajas" ? <CajasGenusAdminPanel /> : null}
 
         {tab === "resumen" ? (
           <section className="space-y-4" data-testid="billing-dashboard">

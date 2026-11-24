@@ -25,6 +25,8 @@ export type TwinView =
   | "inventario-me"
   | "deposito-graneles"
   | "entregas-produccion"
+  | "ingreso-cajas-genus"
+  | "observaciones-produccion"
   | "pedidos-deposito"
   | "control-me"
   | "me-envasado"
@@ -60,6 +62,8 @@ export type TwinView =
 export interface TwinNavEntry {
   view: TwinView;
   workItemId?: string;
+  /** Pestaña de Administración a abrir (p. ej. «cajas» desde el aviso de stock crítico). */
+  adminTab?: string;
   oaRef?: string;
   oeRef?: string;
   clientName?: string;
@@ -88,6 +92,8 @@ export const SIDEBAR_TO_TWIN_VIEW: Record<SidebarItemId, TwinView> = {
   inventario_me: "inventario-me",
   deposito_graneles: "deposito-graneles",
   entregas_produccion: "entregas-produccion",
+  ingreso_cajas_genus: "ingreso-cajas-genus",
+  observaciones_produccion: "observaciones-produccion",
   pedidos_deposito: "pedidos-deposito",
   control_me: "control-me",
   me_envasado: "me-envasado",
@@ -140,6 +146,8 @@ export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
     "inventario-me": "inventario_me",
     "deposito-graneles": "deposito_graneles",
     "entregas-produccion": "entregas_produccion",
+    "ingreso-cajas-genus": "ingreso_cajas_genus",
+    "observaciones-produccion": "observaciones_produccion",
     "pedidos-deposito": "pedidos_deposito",
     "control-me": "control_me",
     "me-envasado": "me_envasado",
@@ -203,6 +211,8 @@ export function viewTitle(view: TwinView): string {
     "inventario-me": "Inventario ME",
     "deposito-graneles": "Depósito Graneles",
     "entregas-produccion": "Entregas Producción",
+    "ingreso-cajas-genus": "Ingreso de Cajas Genus",
+    "observaciones-produccion": "Observaciones",
     "pedidos-deposito": "Pedidos",
     "control-me": "Control de ME",
     "me-envasado": "ME de Envasado",

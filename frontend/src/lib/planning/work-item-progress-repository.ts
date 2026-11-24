@@ -1,3 +1,4 @@
+import { syncWorkItemLinesSafe } from "@/lib/cajas-genus/service";
 import "server-only";
 
 import { resolveManualLoteLinkPatch } from "@/lib/asignacion-lotes/lote-link";
@@ -28,6 +29,7 @@ import {
 import { primaryOfSyncObs, syncObsMark } from "@/lib/planning/circuit/delivery-group";
 import { emitCircuitNotification } from "@/lib/planning/circuit/circuit-notifications";
 import { emitBillingForDelivery } from "@/lib/notifications/billing-notifications";
+import { emitObservationForDelivery } from "@/lib/notifications/observation-notifications";
 import { loadRemittanceByLine, remittedEditProblem } from "@/lib/remitos/delivery-remittance";
 import {
   computeLoteIdentityKey,
@@ -1581,6 +1583,7 @@ export async function deliverWorkDurable(
   // Aviso a Producción FUERA de la transacción: un fallo de la notificación nunca bloquea la entrega.
   if (result.movement) await emitCircuitNotification(result.movement);
   await emitBillingForDelivery(result, actor.displayName ?? actor.email ?? "—");
+  await emitObservationForDelivery(result, actor.displayName ?? actor.email ?? "—");
   return result;
 }
 
@@ -1685,6 +1688,8 @@ export async function annulDeliveryInTx(tx: Tx, id: string, reason: string, acto
           .update(workItemDeliveryLines)
           .set({ status: "ANULADA", annulledAt: now, annulledBy: actorName })
           .where(and(eq(workItemDeliveryLines.deliveryId, row.id), eq(workItemDeliveryLines.status, "ACTIVA")));
+        // CAJAS GENUS: las cajas de las líneas anuladas se revierten (movimiento de diferencia auditado).
+        await syncWorkItemLinesSafe(tx, row.workItemId, { email: actorName, sector: "PRODUCCION" });
         await tx
           .update(workItems)
           .set({ operationalStatus: "revision", progressUpdatedAt: now, progressUpdatedBy: actorName, updatedAt: now })

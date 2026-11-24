@@ -27,6 +27,7 @@ import { StatusChip } from "./operational-ui";
 import { PackagingQuantitiesBlock } from "./packaging-quantities-block";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { MarkReadyPanel } from "./mark-ready-panel";
+import { WorkObservationsButton } from "./work-observations";
 import { WorkItemEditDeleteActions } from "./work-item-edit-delete-actions";
 import { WorkItemPlanEditor } from "./work-item-plan-editor";
 import { WorkFormulaPanel } from "./work-formula-panel";
@@ -255,6 +256,7 @@ export function WorkItemDrawer({
               onChanged={() => onPlanningChanged?.()}
             />
           ) : null}
+          <div><WorkObservationsButton workItemId={item.id} /></div>
           <WorkItemPlanEditor item={item} variant={variant} onChanged={onPlanningChanged} />
           {!planEditable && (
           <dl className="grid grid-cols-2 gap-4 text-sm">

@@ -2278,3 +2278,208 @@ export const internalDeliveryChanges = pgTable(
     index("internal_delivery_changes_item_idx").on(table.workItemId, table.createdAt),
   ]
 );
+
+// ───────────────────────── CAJAS GENUS (migración 0087) ─────────────────────────
+
+/** Una sola fila (`main`): umbral de alerta, inicio del seguimiento y estado/episodio de la alerta de stock crítico. */
+export const cajasGenusConfig = pgTable("cajas_genus_config", {
+  id: text("id").primaryKey().default("main"),
+  lowStockThreshold: integer("low_stock_threshold").notNull().default(300),
+  trackingStartedAt: timestamp("tracking_started_at", { withTimezone: true }).notNull().defaultNow(),
+  alertState: text("alert_state").notNull().default("NORMAL"),
+  alertEpisode: integer("alert_episode").notNull().default(0),
+  alertSince: timestamp("alert_since", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Libro de movimientos del stock de cajas propias. Nunca se borra: un ingreso se ANULA (status) y una entrega se corrige con movimientos de diferencia. */
+export const cajasGenusMovements = pgTable(
+  "cajas_genus_movements",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    seq: bigint("seq", { mode: "number" }).generatedAlwaysAsIdentity().notNull(),
+    /** STOCK_INICIAL | INGRESO | EGRESO_ENTREGA | AJUSTE_ENTREGA | AJUSTE_MANUAL */
+    kind: text("kind").notNull(),
+    /** Con signo: ingresos (+), egresos (−); STOCK_INICIAL = la base absoluta. */
+    delta: integer("delta").notNull(),
+    occurredOn: date("occurred_on").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    status: text("status").notNull().default("ACTIVO"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    bultos: integer("bultos"),
+    cantidadPorBulto: integer("cantidad_por_bulto"),
+    deliveryLineId: uuid("delivery_line_id"),
+    workItemId: uuid("work_item_id"),
+    clientKey: text("client_key"),
+    clientName: text("client_name"),
+    detail: jsonb("detail").notNull().default({}),
+    note: text("note"),
+    createdBy: text("created_by").notNull(),
+    createdBySector: text("created_by_sector").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidedBy: text("voided_by"),
+    voidReason: text("void_reason"),
+  },
+  (table) => [
+    uniqueIndex("cajas_genus_movements_idem_uidx").on(table.idempotencyKey),
+    uniqueIndex("cajas_genus_movements_seq_uidx").on(table.seq),
+    index("cajas_genus_movements_line_idx").on(table.deliveryLineId),
+    index("cajas_genus_movements_kind_idx").on(table.kind, table.status),
+    index("cajas_genus_movements_day_idx").on(table.occurredOn),
+  ]
+);
+
+/** Entregas finales que no se pudieron descontar (sin cliente o sin detalle de cajas): pendientes de revisión de Administración. */
+export const cajasGenusLineReview = pgTable(
+  "cajas_genus_line_review",
+  {
+    deliveryLineId: uuid("delivery_line_id").primaryKey(),
+    workItemId: uuid("work_item_id"),
+    reason: text("reason").notNull(),
+    clientName: text("client_name"),
+    detail: jsonb("detail").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedBy: text("resolved_by"),
+    resolution: text("resolution"),
+  },
+  (table) => [index("cajas_genus_line_review_open_idx").on(table.resolvedAt)]
+);
+
+/** «UTILIZA CAJAS PROPIAS» por cliente. Clave = nombre normalizado y compacto; `portal_client_id` vincula con el maestro de clientes del portal. */
+export const cajasGenusClientSettings = pgTable("cajas_genus_client_settings", {
+  clientKey: text("client_key").primaryKey(),
+  displayName: text("display_name").notNull(),
+  usesOwnBoxes: boolean("uses_own_boxes").notNull().default(false),
+  portalClientId: uuid("portal_client_id"),
+  source: text("source").notNull().default("ADMIN"),
+  updatedBy: text("updated_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Auditoría inmutable de acciones administrativas sobre las cajas Genus. */
+export const cajasGenusAudit = pgTable(
+  "cajas_genus_audit",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    action: text("action").notNull(),
+    targetId: text("target_id"),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    reason: text("reason"),
+    actorEmail: text("actor_email").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("cajas_genus_audit_at_idx").on(table.createdAt)]
+);
+
+// ───────────────────────── Módulo INSUMOS (migración 0088) ─────────────────────────
+// Retiro y consumo de insumos por sector. Solo consumo: no toca stock general, MP ni ME.
+
+export const insumoItems = pgTable(
+  "insumo_items",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    active: boolean("active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdBy: text("created_by"),
+    updatedBy: text("updated_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("insumo_items_name_uidx").on(sql`lower(${table.name})`)]
+);
+
+export const insumoResponsables = pgTable(
+  "insumo_responsables",
+  {
+    id: text("id").primaryKey(),
+    sector: text("sector").notNull(),
+    name: text("name").notNull(),
+    active: boolean("active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdBy: text("created_by"),
+    updatedBy: text("updated_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("insumo_responsables_sector_name_uidx").on(table.sector, sql`lower(${table.name})`),
+    index("insumo_responsables_sector_idx").on(table.sector, table.active, table.sortOrder),
+  ]
+);
+
+export const insumoRetiros = pgTable(
+  "insumo_retiros",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clientRequestId: text("client_request_id").notNull(),
+    sector: text("sector").notNull(),
+    responsableId: text("responsable_id").notNull().references(() => insumoResponsables.id),
+    responsableName: text("responsable_name").notNull(),
+    registradoPorEmail: text("registrado_por_email").notNull(),
+    registradoPorName: text("registrado_por_name").notNull(),
+    registradoPorSector: text("registrado_por_sector").notNull(),
+    status: text("status").notNull().default("ACTIVO"),
+    anuladoAt: timestamp("anulado_at", { withTimezone: true }),
+    anuladoBy: text("anulado_by"),
+    anuladoMotivo: text("anulado_motivo"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("insumo_retiros_client_request_uidx").on(table.clientRequestId),
+    index("insumo_retiros_created_idx").on(table.createdAt),
+    index("insumo_retiros_sector_idx").on(table.sector, table.createdAt),
+    index("insumo_retiros_responsable_idx").on(table.responsableId, table.createdAt),
+  ]
+);
+
+export const insumoRetiroItems = pgTable(
+  "insumo_retiro_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    retiroId: uuid("retiro_id").notNull().references(() => insumoRetiros.id),
+    insumoId: text("insumo_id").notNull().references(() => insumoItems.id),
+    insumoName: text("insumo_name").notNull(),
+    cantidad: integer("cantidad").notNull(),
+  },
+  (table) => [
+    uniqueIndex("insumo_retiro_items_retiro_insumo_uidx").on(table.retiroId, table.insumoId),
+    index("insumo_retiro_items_insumo_idx").on(table.insumoId),
+  ]
+);
+
+/** Eventos INMUTABLES (solo se insertan): creado, corregido, anulado. */
+export const insumoRetiroEvents = pgTable(
+  "insumo_retiro_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    retiroId: uuid("retiro_id").notNull().references(() => insumoRetiros.id),
+    action: text("action").notNull(),
+    actorEmail: text("actor_email").notNull(),
+    actorName: text("actor_name").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    motivo: text("motivo"),
+    beforeData: jsonb("before_data"),
+    afterData: jsonb("after_data"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("insumo_retiro_events_retiro_idx").on(table.retiroId, table.createdAt)]
+);
+
+/** Observaciones de Producción «vistas por usuario» (0089): solo cuándo vio cada ámbito (FEED o id de trabajo); nunca guarda el texto. */
+export const productionObservationSeen = pgTable(
+  "production_observation_seen",
+  {
+    userKey: text("user_key").notNull(),
+    scope: text("scope").notNull(),
+    seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userKey, table.scope] })]
+);

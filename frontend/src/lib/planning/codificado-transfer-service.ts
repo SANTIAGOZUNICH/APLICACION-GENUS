@@ -21,6 +21,7 @@ import { sumActiveDeliveredUnits } from "@/lib/planning/circuit/delivery-core";
 import { parseQuantity } from "@/lib/planning/circuit/delivery-math";
 import { validateDeliveryPacking, type DeliveryPackingGroup } from "@/lib/remitos/delivery-packing";
 import { sumActiveCodificadoTransfers } from "@/lib/planning/circuit/codificado-transfers-sum";
+import { emitObservationNotification } from "@/lib/notifications/observation-notifications";
 import type { PlanningActor } from "@/lib/planning/types";
 import { PlanningForbiddenError, PlanningNotFoundError, PlanningValidationError } from "@/lib/planning/types";
 
@@ -148,7 +149,7 @@ export async function transferToCodificadoDurable(input: TransferInput, actor: P
   const boxes = validateDeliveryPacking(input.packingGroups ?? null, requested, { lenient: true });
   if (!boxes.ok) throw new PlanningValidationError(boxes.error);
 
-  return getDb().transaction(async (tx) => {
+  const result = await getDb().transaction(async (tx) => {
     // Idempotencia: la misma clave devuelve la entrega ya registrada (doble clic, reintento de red).
     const replay = async (): Promise<TransferResult | null> => {
       const [prior] = await tx.select().from(workItemCodificadoTransfers).where(eq(workItemCodificadoTransfers.idempotencyKey, key)).limit(1);
@@ -308,6 +309,26 @@ export async function transferToCodificadoDurable(input: TransferInput, actor: P
 
     return { replayed: false, transfer: toDto(transfer!), view: await buildView(tx, parentAfter!, child!), complete: fullyOut };
   });
+  // Aviso a Producción FUERA de la transacción (best-effort, id determinístico por entrega: un replay no duplica; una falla no bloquea).
+  if (result.transfer.note?.trim()) {
+    await emitObservationNotification({
+      source: "TRANSFERENCIA",
+      eventKey: result.transfer.id,
+      workItemId: id,
+      sector: result.transfer.originSector,
+      actorName: result.transfer.deliveredByName || result.transfer.deliveredBy,
+      observation: result.transfer.note,
+      at: new Date(result.transfer.deliveredAt),
+      client: result.view.client,
+      product: result.view.product,
+      lote: result.transfer.lote,
+      quantity: result.transfer.quantity,
+      unit: result.view.unit,
+      tipo: result.transfer.pending > 1e-6 ? "PARCIAL" : "TOTAL",
+      destination: "Codificado",
+    });
+  }
+  return result;
 }
 
 export type CodedProgressInput = { workItemId: string; codedUnits: number };

@@ -32,7 +32,8 @@ import {
   type EnvasadoDestination,
 } from "./destination";
 import { emitCircuitNotification } from "./circuit-notifications";
-import type { CircuitMovement } from "./movements";
+import { emitObservationNotification } from "@/lib/notifications/observation-notifications";
+import { circuitSectorLabel, type CircuitMovement } from "./movements";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Tx = any;
@@ -410,6 +411,24 @@ export async function sendElaboracionToEnvasadoDurable(
   });
 
   await emitCircuitNotification(result.movement);
+  // Observación de Elaboración al enviar a Envasado (best-effort, id determinístico por trabajo: un reintento no duplica).
+  if (input.observation?.trim()) {
+    await emitObservationNotification({
+      source: "ENVIO_ENVASADO",
+      eventKey: id,
+      workItemId: id,
+      sector: "ELABORACION",
+      actorName: result.movement.actorName,
+      observation: input.observation,
+      at: result.movement.at,
+      client: result.movement.client,
+      product: result.movement.product,
+      lote: result.movement.lote ?? null,
+      quantity: result.movement.quantity ?? null,
+      unit: result.movement.unit ?? null,
+      destination: circuitSectorLabel(result.destinationSector),
+    });
+  }
   const { movement: _movement, ...rest } = result;
   void _movement;
   return rest;
