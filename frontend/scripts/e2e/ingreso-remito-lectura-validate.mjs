@@ -515,6 +515,7 @@ try {
         short: fields.filter((e) => e.getBoundingClientRect().height < 43.5).length,
         fields: fields.length,
         bodyLocked: getComputedStyle(document.body).overflow === "hidden" || document.body.hasAttribute("data-scroll-locked"),
+        wide: [...d.querySelectorAll("*")].filter((e) => e.getBoundingClientRect().right > d.getBoundingClientRect().right + 1).slice(0, 4).map((e) => `${e.tagName}.${(e.getAttribute("data-testid") || String(e.className).slice(0, 40))}`),
       };
     });
     check(`${w}×${h}: la ventana ocupa TODA la pantalla (sin márgenes ni ventana pequeña centrada)`, Math.abs(box.x) <= 1 && Math.abs(box.y) <= 1 && Math.abs(box.width - w) <= 2 && Math.abs(box.height - h) <= 2, JSON.stringify(box));
@@ -579,7 +580,8 @@ try {
   const bt = await mb.locator("[data-testid=remito-cerrar-confirmar] button:visible").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
   check("Las tres opciones son grandes (≥44 px)", bt.length >= 3 && bt.every((x) => x >= 44), JSON.stringify(bt));
   await mb.locator("[data-testid=remito-cerrar-cancelar]").click();
-  await mb.waitForTimeout(500);
+  await mb.locator("[data-testid=remito-cerrar-confirmar]").waitFor({ state: "hidden", timeout: 5000 }).catch(() => undefined);
+  await mb.waitForTimeout(700);
   const estado = await mb.evaluate(() => ({ top: document.querySelector("[data-testid=ingreso-remito-dialog]").scrollTop, sup: document.querySelector("[data-testid=remito-proveedor]").value }));
   check("Cancelar vuelve al formulario en el mismo estado y posición de desplazamiento (datos intactos)", !(await confirmVisible(mb)) && estado.sup === MARK && Math.abs(estado.top - topAntes) <= 4, JSON.stringify({ estado, topAntes }));
   await mb.keyboard.press("Escape");

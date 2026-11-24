@@ -46,7 +46,7 @@ const MODULE_TEXT: Record<ReceiptModule, { sector: string; material: string; sto
 };
 
 const uid = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
-const field = "mt-1 block min-h-11 w-full rounded-lg border border-[var(--os-border)] bg-[var(--os-surface,transparent)] px-3 py-2 text-base";
+const field = "mt-1 block min-h-11 min-w-0 w-full rounded-lg border border-[var(--os-border)] bg-[var(--os-surface,transparent)] px-3 py-2 text-base";
 const reviewRing = "border-amber-500 bg-amber-500/10";
 const fmtQty = (n: number, unit: string) => `${n.toLocaleString("es-AR", { maximumFractionDigits: 3 })} ${unit}`;
 
@@ -505,7 +505,9 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
   }, [atRisk]);
 
   /** Único punto de entrada para cerrar (X, fuera de la ventana, Escape, «atrás»): si hay algo en riesgo pide confirmación. */
+  const lastCancelAt = useRef(0);
   const requestClose = useCallback(() => {
+    if (Date.now() - lastCancelAt.current < 400) return; // el foco que vuelve de la confirmación no cuenta como un nuevo pedido de cierre
     if (!atRiskRef.current) {
       onClose();
       return;
@@ -519,6 +521,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
   }, [requestClose]);
 
   function cancelClose() {
+    lastCancelAt.current = Date.now();
     setCloseAsk(null);
     const top = scrollBeforeAsk.current;
     requestAnimationFrame(() => {
@@ -628,12 +631,13 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
       <DialogContent
         ref={setContentNode}
         hideCloseButton
-        className="max-sm:left-0 max-sm:top-[var(--vvt,0px)] max-sm:h-[var(--vvh,100dvh)] max-sm:max-h-none max-sm:w-screen max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 auto-rows-min content-start gap-3 overscroll-contain p-3 pb-0 w-[min(72rem,100vw)] max-w-none overflow-y-auto sm:max-h-[94dvh] sm:w-[min(72rem,calc(100vw-16px))] sm:p-6 sm:pb-0"
+        onFocusOutside={(e) => e.preventDefault()}
+        className="[&_fieldset]:min-w-0 [&_label]:min-w-0 max-sm:left-0 max-sm:top-[var(--vvt,0px)] max-sm:h-[var(--vvh,100dvh)] max-sm:max-h-none max-sm:w-screen max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 auto-rows-min content-start gap-3 overscroll-contain p-3 pb-0 w-[min(72rem,100vw)] max-w-none overflow-y-auto sm:max-h-[94dvh] sm:w-[min(72rem,calc(100vw-16px))] sm:p-6 sm:pb-0"
         style={{ ...(vp.h ? { maxHeight: `${vp.h}px`, "--vvh": `${vp.h}px`, "--vvt": `${vp.top}px` } : {}) } as CSSProperties}
         data-testid="ingreso-remito-dialog"
       >
         {/* Encabezado compacto y fijo: título + cierre (44 px) siempre al alcance. */}
-        <div className="sticky top-0 z-20 -mx-3 -mt-3 flex items-center gap-2 border-b border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-1.5 pt-[max(0.375rem,env(safe-area-inset-top))] sm:-mx-6 sm:-mt-6 sm:px-6 sm:py-3" data-testid="remito-encabezado">
+        <div className="sticky top-[-0.75rem] z-20 -mx-3 -mt-3 flex items-center gap-2 border-b border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-1.5 pt-[max(0.375rem,env(safe-area-inset-top))] sm:top-[-1.5rem] sm:-mx-6 sm:-mt-6 sm:px-6 sm:py-3" data-testid="remito-encabezado">
           <DialogTitle className="min-w-0 flex-1 truncate text-base sm:text-lg">Nuevo ingreso con remito — {t.sector}</DialogTitle>
           <button type="button" aria-label="Cerrar" onClick={requestClose} className="grid size-11 shrink-0 place-items-center rounded-lg text-[var(--os-text-muted)] hover:bg-[var(--os-border)]/40" data-testid="remito-cerrar-x">
             <X className="size-5" />
@@ -657,7 +661,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
         ) : null}
         {notice ? <p className="rounded-lg bg-sky-500/10 px-3 py-2 text-sm" role="status">{notice}</p> : null}
         {busy ? (
-          <p className="sticky top-[3.25rem] z-10 -mx-3 flex items-center gap-2 border-b border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-1.5 text-sm text-[var(--os-text-muted)] sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0" role="status" data-testid="remito-estado-ocupado">
+          <p className="sticky top-11 z-10 -mx-3 flex items-center gap-2 border-b border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-1.5 text-sm text-[var(--os-text-muted)] sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0" role="status" data-testid="remito-estado-ocupado">
             <Loader2 className="size-4 animate-spin" /> {busy}{busySecs >= 4 ? ` · ${busySecs} s` : ""}
           </p>
         ) : null}
