@@ -1,7 +1,7 @@
 /**
  * Preparación en el navegador de las fotos de remitos (tablets Android incluidas) antes de subirlas.
  * - Respeta la orientación EXIF (si no, el remito sale girado y la lectura automática falla).
- * - Achica en pasos (calidad y tamaño) hasta entrar con holgura en el límite del servidor: Vercel corta el cuerpo de la
+ * - Achica en pasos (primero calidad, el tamaño casi no baja: el texto chico necesita resolución) hasta entrar con holgura en el límite del servidor: Vercel corta el cuerpo de la
  *   petición cerca de 4,5 MB, así que apuntamos a ≤ TARGET_BYTES y no a 4 MB justos.
  * - Si el navegador no puede leer el formato (p. ej. HEIC fuera de Safari) devuelve el archivo tal cual.
  */
@@ -12,12 +12,15 @@ export type ShrinkStep = { maxSide: number; quality: number };
 
 /** Pasos de reducción progresivos (de mejor a peor calidad). Función pura, probada. */
 export const SHRINK_STEPS: readonly ShrinkStep[] = [
-  { maxSide: 2400, quality: 0.85 },
-  { maxSide: 2400, quality: 0.7 },
-  { maxSide: 2000, quality: 0.7 },
-  { maxSide: 1600, quality: 0.6 },
-  { maxSide: 1280, quality: 0.55 },
+  { maxSide: 3000, quality: 0.85 },
+  { maxSide: 3000, quality: 0.72 },
+  { maxSide: 2600, quality: 0.68 },
+  { maxSide: 2400, quality: 0.62 },
+  { maxSide: 2000, quality: 0.58 },
 ];
+
+/** Pisos de la preparación: el texto chico de un remito necesita resolución, así que se baja primero la calidad JPEG y nunca por debajo de este lado. */
+export const RECEIPT_MIN_SIDE = 2000;
 
 export function scaleFor(width: number, height: number, maxSide: number): number {
   const longest = Math.max(width, height);

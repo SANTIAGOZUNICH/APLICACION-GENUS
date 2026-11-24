@@ -1,5 +1,5 @@
 // E2E (Chromium real, base DESCARTABLE) de la lectura automática del remito con un Gemini SIMULADO.
-// Qué prueba: que al subir la foto GENUS OS analiza SOLO (sin segundo botón), muestra «Analizando remito…», completa el formulario
+// Qué prueba: que al subir la foto GENUS OS analiza SOLO (sin segundo botón), muestra «Leyendo remito…», completa el formulario
 // visible sin recargar, preselecciona el material solo si es inequívoco, informa los fallos con «Reintentar lectura», no mueve stock hasta
 // confirmar y no filtra la clave. Qué NO prueba: la calidad de lectura de Gemini real (eso necesita GEMINI_API_KEY y un remito de prueba).
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -53,7 +53,7 @@ const gem = http.createServer((req, res) => {
     const body = raw ? JSON.parse(raw) : {};
     const parts = body.contents?.[0]?.parts ?? [];
     const model = /models\/([^:/?]+):generateContent/.exec(req.url ?? "")?.[1] ?? null;
-    state.requests.push({ url: req.url, model, key: req.headers["x-goog-api-key"], mimes: parts.filter((p) => p.inline_data).map((p) => p.inline_data.mime_type), textOnly: parts.every((p) => p.text), gen: body.generationConfig });
+    state.requests.push({ url: req.url, model, key: req.headers["x-goog-api-key"], mimes: parts.filter((p) => p.inline_data).map((p) => p.inline_data.mime_type), textOnly: parts.every((p) => p.text), gen: body.generationConfig, prompt: String(parts[0]?.text ?? "") });
     const send = (status, obj) => {
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify(obj));
@@ -72,6 +72,16 @@ const gem = http.createServer((req, res) => {
     if (state.mode === "flaky") {
       state.flakyHits = (state.flakyHits ?? 0) + 1;
       if (state.flakyHits === 1) return send(503, { error: { code: 503, status: "UNAVAILABLE", message: "The model is overloaded. Please try again later." } });
+    }
+    const second = String(parts[0]?.text ?? "").includes("SEGUNDA LECTURA");
+    if (state.mode === "needs_enhance") {
+      // La foto original no deja leer UNA cantidad; la copia mejorada (2.ª etapa) sí.
+      const lines = remitoMP.lines.map((l, i) => (i === 1 && !second ? { ...l, quantity: null, unclearFields: ["quantity"] } : l));
+      return send(200, { candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({ ...remitoMP, lines }) }] } }] });
+    }
+    if (state.mode === "noqty") {
+      const lines = remitoMP.lines.map((l, i) => (i === 1 ? { ...l, quantity: null, unclearFields: ["quantity"] } : l));
+      return send(200, { candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({ ...remitoMP, lines }) }] } }] });
     }
     if (state.mode === "garbage") return send(200, { candidates: [{ finishReason: "STOP", content: { parts: [{ text: "Lo siento, no puedo ayudar con eso" }] } }] });
     if (state.mode === "403") return send(403, { error: { code: 403, message: "PERMISSION_DENIED" } });
@@ -130,13 +140,13 @@ try {
   const stock0 = await balance(MP_CODE);
   const ingresos0 = await count("inv_mp_ingresos");
   await mp.locator("[data-testid=remito-input-archivos]").setInputFiles([path.join(FIX, "hoja-1.jpg"), path.join(FIX, "hoja-2.pdf")]);
-  await mp.getByText("Analizando remito…").waitFor({ timeout: 20_000 }).catch(async (e) => {
+  await mp.getByText("Leyendo remito…").waitFor({ timeout: 20_000 }).catch(async (e) => {
     console.log("DEBUG diálogo:", (await dlg(mp).innerText().catch(() => "(sin diálogo)")).replace(/\n+/g, " | ").slice(0, 700));
     console.log("DEBUG pedidos a Gemini simulado:", JSON.stringify(state.requests.map((r) => ({ key: r.key === FAKE_KEY, mimes: r.mimes }))));
     await mp.screenshot({ path: `${OUT}/debug.png`, fullPage: true });
     throw e;
   });
-  check("Aparece el indicador «Analizando remito…» sin tocar nada más", true);
+  check("Aparece el indicador «Leyendo remito…» sin tocar nada más", true);
   await mp.screenshot({ path: `${OUT}/01-mp-analizando.png` });
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 60_000 });
   check("Al terminar pasa solo a la revisión, con el aviso «Remito analizado. Revisá los datos antes de confirmar.»", (await mp.getByText("Remito analizado. Revisá los datos antes de confirmar.").count()) === 1);
@@ -181,8 +191,9 @@ try {
   await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
   await mp.locator("[data-testid=remito-lectura-fallo]").waitFor({ timeout: 60_000 });
   const fallo = await mp.locator("[data-testid=remito-lectura-fallo]").innerText();
-  check("Si Gemini no puede interpretar: mensaje claro (no queda vacío sin explicar)", /No pudimos interpretar automáticamente este remito\. Podés reintentar o completar los datos manualmente\./.test(fallo), fallo.slice(0, 90));
-  check("Hay botón «Reintentar lectura» y la carga manual sigue disponible", (await mp.locator("[data-testid=remito-reintentar]").isVisible()) && (await mp.locator("[data-testid=remito-cargar-manual]").isVisible()));
+  check("Texto ilegible incluso tras mejorar la imagen: recién ahí «Necesito una imagen más clara del texto»", /Necesito una imagen más clara del texto/.test(fallo), fallo.slice(0, 90));
+  check("Antes de pedir otra foto se intentó mejorar la imagen (2.ª lectura con «SEGUNDA LECTURA»)", state.requests.filter((r) => r.model && !r.textOnly && r.prompt.includes("SEGUNDA LECTURA")).length >= 1);
+  check("Hay UN solo botón «Reintentar lectura» (sin duplicados) y la carga manual sigue disponible", (await mp.getByRole("button", { name: /^Reintentar lectura$/ }).count()) === 1 && (await mp.locator("[data-testid=remito-cargar-manual]").isVisible()));
   await mp.screenshot({ path: `${OUT}/03-mp-fallo-lectura.png` });
   state.mode = "ok";
   state.delayMs = 300;
@@ -203,7 +214,9 @@ try {
   await dlg(mp).waitFor();
   await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
   await mp.locator("[data-testid=remito-lectura-fallo]").waitFor({ timeout: 60_000 });
-  check("Permisos insuficientes: el mensaje lo dice y pide avisar a Sistemas (no confunde con modelo ni clave)", /no tiene permiso/.test(await mp.locator("[data-testid=remito-lectura-fallo]").innerText()) && !/modelo/.test(await mp.locator("[data-testid=remito-lectura-fallo]").innerText()));
+  const txt403 = await mp.locator("[data-testid=remito-lectura-fallo]").innerText();
+  const job403 = (await q("select payload->'job' j from inventory_receipts order by updated_at desc limit 1"))[0]?.j;
+  check("Permisos insuficientes del proveedor: el operario ve un mensaje claro SIN tecnicismos ni pedido de otra foto; el motivo queda en el diagnóstico para Sistemas", /La lectura automática no está disponible en este momento\. Tu imagen está guardada/.test(txt403) && !/permiso|clave|modelo|imagen más clara/i.test(txt403) && job403?.diag?.errorKind === "permission" && job403?.diag?.http === 403 && !JSON.stringify(job403).includes(FAKE_KEY));
   await mp.keyboard.press("Escape");
   state.mode = "ok";
 
@@ -228,14 +241,53 @@ try {
   await mp.locator("[data-testid=remito-lectura-fallo]").waitFor({ timeout: 90_000 });
   const sat = await mp.locator("[data-testid=remito-lectura-fallo]").innerText();
   const generate = state.requests.filter((r) => r.model && !r.textOnly).length;
-  check("Saturación sostenida: mensaje «saturado» (no el genérico «no disponible») y la foto sigue adjunta", /saturado/.test(sat) && !/no está disponible ahora/.test(sat) && (await mp.locator("[data-testid=remito-miniaturas] li").count()) === 1, sat.slice(0, 100));
-  check("Reintentos con tope (no infinitos)", generate >= 3 && generate <= 8, String(generate));
+  const jobSat = (await q("select payload->'job' j from inventory_receipts order by updated_at desc limit 1"))[0]?.j;
+  check("Saturación sostenida: mensaje de servicio no disponible (NO culpa a la imagen ni pide otra foto), la foto sigue adjunta y el diagnóstico queda para Sistemas", /La lectura automática no está disponible en este momento\. Tu imagen está guardada y podés completar los datos manualmente o reintentar\./.test(sat) && !/imagen más clara|otra foto|saturado/i.test(sat) && (await mp.locator("[data-testid=remito-miniaturas] li").count()) === 1 && jobSat?.diag?.errorKind === "overloaded" && jobSat?.diag?.http === 503, sat.slice(0, 80));
+  check("Reintentos con tope (no infinitos) pero aprovechando el tiempo: entre 6 y 9 llamadas", generate >= 6 && generate <= 9, String(generate));
   check("Se puede completar a mano sin perder la foto", await mp.locator("[data-testid=remito-cargar-manual]").isEnabled());
   state.mode = "ok";
   await mp.locator("[data-testid=remito-reintentar]").first().click();
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 60_000 });
   check("Cuando el proveedor se recupera, «Reintentar lectura» funciona", (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER);
   await mp.keyboard.press("Escape");
+
+  // ===== 2.ª etapa: la foto original no deja leer una cantidad → GENUS OS mejora la imagen SOLO y la recupera (sin pedir otra foto) =====
+  state.mode = "needs_enhance";
+  state.delayMs = 5000; // lo bastante lento como para ver el aviso de etapa
+  state.requests.length = 0;
+  await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
+  await dlg(mp).waitFor();
+  const stockAntesMejora = await balance(MP_CODE2);
+  await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
+  await mp.getByText("Mejorando la imagen para recuperar los datos.").waitFor({ timeout: 45_000 }).catch(() => undefined);
+  const vioMejora = (await mp.getByText("Mejorando la imagen para recuperar los datos.").count()) > 0 || state.requests.some((r) => r.prompt.includes("SEGUNDA LECTURA"));
+  await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 90_000 });
+  const gen2 = state.requests.filter((r) => r.model && r.model !== "gemini-2.0-flash-retirado" && !r.textOnly); // la llamada 404 del modelo retirado no cuenta; el modelo efectivo puede variar
+  check("Mejora automática: se envió una SEGUNDA lectura con la imagen mejorada solo por la cantidad que faltaba, sin pedir otra foto", gen2.length === 2 && gen2[1].prompt.includes("SEGUNDA LECTURA") && /renglón 2: cantidad/.test(gen2[1].prompt) && vioMejora, JSON.stringify({ n: gen2.length, models: state.requests.filter((r) => r.model && !r.textOnly).map((r) => r.model), second: gen2[1]?.prompt?.includes("SEGUNDA LECTURA"), renglon: /renglón 2: cantidad/.test(gen2[1]?.prompt ?? ""), vioMejora, tail: (gen2[1]?.prompt ?? "").slice(-300) }));
+  check("La cantidad faltante se recuperó y el resto quedó igual (100 kg y 40,5 kg), sin marcar pendiente", (await mp.locator("[data-testid=remito-linea]").nth(1).locator("[data-testid=linea-cantidad]").inputValue()) === "40.5" && (await mp.locator("[data-testid=remito-linea]").nth(0).locator("[data-testid=linea-cantidad]").inputValue()) === "100" && (await mp.getByText(/Mejoramos la imagen y recuperamos los datos/).count()) >= 1);
+  check("La mejora no movió stock", (await balance(MP_CODE2)) === stockAntesMejora);
+  await mp.keyboard.press("Escape");
+
+  // ===== Lectura parcial: no se puede leer UNA cantidad → se completa todo lo demás y se marca solo eso =====
+  state.mode = "noqty";
+  state.delayMs = 400;
+  state.requests.length = 0;
+  await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
+  await dlg(mp).waitFor();
+  await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
+  await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 90_000 });
+  const lq = mp.locator("[data-testid=remito-linea]");
+  check("Parcial: proveedor, n.º, fecha y la línea 1 completos; la cantidad ilegible de la línea 2 queda VACÍA (nunca 0)", (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER && (await lq.nth(0).locator("[data-testid=linea-cantidad]").inputValue()) === "100" && (await lq.nth(1).locator("[data-testid=linea-cantidad]").inputValue()) === "");
+  const aviso = await dlg(mp).innerText();
+  check("Mensaje claro: «Identificamos los datos principales…» y «No pude identificar la cantidad…» (podés completarla o fotografiar solo esa parte)", /Identificamos los datos principales\. Revisá los campos marcados\./.test(aviso) && /No pude identificar la cantidad/.test(aviso) && /fotografiar únicamente esa parte del remito/.test(aviso));
+  await mp.screenshot({ path: `${OUT}/03b-mp-lectura-parcial.png`, fullPage: true });
+  // PASAR A EXCEL usa lo ya extraído (sin volver a llamar al proveedor)
+  const llamadasAntesExcel = state.requests.filter((r) => r.model && !r.textOnly).length;
+  await mp.locator("[data-testid=remito-pasar-excel]").click();
+  await mp.waitForTimeout(2500);
+  check("PASAR A EXCEL funciona con los datos ya leídos y NO repite la lectura (sin llamadas nuevas al proveedor)", state.requests.filter((r) => r.model && !r.textOnly).length === llamadasAntesExcel);
+  await mp.keyboard.press("Escape");
+  state.mode = "ok";
 
   // ===== Respuesta PERDIDA (timeout HTTP / corte de red): el resultado se RECUPERA sin volver a fotografiar ni llamar de nuevo =====
   state.mode = "ok";

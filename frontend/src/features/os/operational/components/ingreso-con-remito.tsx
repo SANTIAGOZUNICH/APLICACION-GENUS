@@ -328,7 +328,8 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
     setError(null);
     setNotice(null);
     setReadFailed(null);
-    setBusy("Analizando remito…");
+    setBusy("Leyendo remito…");
+    let stagePoll: ReturnType<typeof setInterval> | null = null;
     try {
       const r = await ensureDraft();
       // Guarda lo escrito antes: la lectura no pisa lo que ya cargó la persona.
@@ -337,6 +338,12 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
       const id = (receiptRef.current ?? r).id;
       const previousJobId = receiptRef.current?.draft.job?.id ?? null;
       let res: ExtractRes | null = null;
+      // Mientras el servidor lee, consulta la etapa del trabajo: si se está mejorando la imagen se avisa (sin pedir nada al usuario).
+      stagePoll = setInterval(() => {
+        void call<{ receipt: Receipt }>(`${API}?module=${module}&view=get&id=${id}`)
+          .then(({ receipt: rr }) => { if (rr.draft.job?.stage === "mejora") setBusy("Mejorando la imagen para recuperar los datos."); })
+          .catch(() => undefined);
+      }, 4_000);
       try {
         // Tope propio en el navegador: si la respuesta no llega (red lenta, 504) se pasa a recuperar el resultado guardado en el servidor.
         res = await call<ExtractRes>(API, {
@@ -374,15 +381,14 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
     } catch (e) {
       setReadFailed(e instanceof ApiError ? e.message : "Error de conexión: no pudimos comunicarnos con GENUS OS. La foto y lo que cargaste siguen guardados; reintentá cuando vuelva la conexión o completá los datos a mano.");
     } finally {
+      if (stagePoll) clearInterval(stagePoll);
       setBusy(null);
     }
   }
 
+  /** Reintenta con la MISMA foto. Nunca reemplaza lo ya cargado (ni lo leído antes ni lo tipeado): solo completa lo que esté vacío. */
   function retryRead() {
-    const cur = draftRef.current;
-    const hasContent = cur.lines.some((l) => l.description || l.quantity || l.materialCode);
-    if (hasContent && !window.confirm("Volver a leer reemplaza los datos cargados por los del remito. ¿Continuar?")) return;
-    void runExtract(hasContent, true);
+    void runExtract(false, true);
   }
 
   async function goReview() {
@@ -522,14 +528,11 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
             {readFailed ? (
               <div className="space-y-2 rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-sm" role="alert" data-testid="remito-lectura-fallo">
                 <p>{readFailed}</p>
-                <div className="flex flex-wrap gap-2">
-                  <Button type="button" variant="secondary" onClick={retryRead} disabled={Boolean(busy)} data-testid="remito-reintentar">Reintentar lectura</Button>
-                </div>
               </div>
             ) : null}
             <div className="flex flex-wrap items-center gap-2 border-t border-[var(--os-border)] pt-3">
               {extraction?.available ? (
-                <Button type="button" variant="secondary" disabled={!thumbs.length || Boolean(busy)} onClick={() => void runExtract(false)} data-testid="remito-leer">
+                <Button type="button" variant="secondary" disabled={!thumbs.length || Boolean(busy)} onClick={() => (readFailed ? retryRead() : void runExtract(false))} data-testid={readFailed ? "remito-reintentar" : "remito-leer"}>
                   <ScanLine className="mr-1 size-4" /> {readFailed ? "Reintentar lectura" : "Leer la foto automáticamente"}
                 </Button>
               ) : null}

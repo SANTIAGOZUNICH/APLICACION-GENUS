@@ -67,7 +67,7 @@ export type ReceiptLineDraft = {
 };
 
 /** Trabajo de lectura persistente: sobrevive a un corte de conexión o a un timeout HTTP, así que nunca hace falta volver a fotografiar. */
-export type ReadJob = { id: string; status: "running" | "done" | "failed"; startedAt: string; finishedAt?: string; message?: string; partial?: boolean; elapsedMs?: number; fromCache?: boolean };
+export type ReadJob = { id: string; status: "running" | "done" | "failed"; startedAt: string; finishedAt?: string; message?: string; partial?: boolean; elapsedMs?: number; fromCache?: boolean; /** Etapa en curso: la pantalla muestra «Leyendo remito…» o «Mejorando la imagen…». */ stage?: "lectura" | "mejora"; /** Campos importantes que quedaron sin leer. */ pending?: string[]; /** Diagnóstico para Sistemas (sin claves ni contenido): proveedor, modelo, etapas, intentos, error, tokens. */ diag?: Record<string, unknown> };
 /** Resultado de la última lectura, ligado al conjunto de fotos (huella): releer las mismas fotos no vuelve a llamar al servicio. */
 export type ReadCache = { key: string; at: string; provider: string; partial?: boolean; data: ExtractedRemito };
 
@@ -118,7 +118,7 @@ export function parseNumber(raw: unknown): number | null {
     t = dec === "," ? t.replace(/\./g, "").replace(",", ".") : t.replace(/,/g, "");
   } else if (lastComma >= 0) {
     t = t.split(",").length > 2 ? t.replace(/,/g, "") : t.replace(",", ".");
-  } else if (lastDot >= 0 && /^[-+]?\d{1,3}(\.\d{3})+$/.test(t)) {
+  } else if (lastDot >= 0 && /^[-+]?[1-9]\d{0,2}(\.\d{3})+$/.test(t)) {
     t = t.replace(/\./g, "");
   }
   const n = Number(t);
@@ -556,7 +556,30 @@ export function sanitizeExtraction(raw: unknown): ExtractedRemito | null {
   const lines: ExtractedLine[] = rawLines.flatMap((x) => {
     if (!x || typeof x !== "object") return [];
     const o = x as Record<string, unknown>;
-    const qtyNum = parseNumber(o.quantity);
+    let qtyNum = parseNumber(o.quantity);
+    const qtyNotes: string[] = [];
+    let qtyDoubt = false;
+    // Cantidad IMPRESA tal como figura («1.000», «1,5», «10.000»): se interpreta con las reglas de Argentina y manda sobre el número que
+    // devolvió el modelo (que suele confundir 1.000 con 1 o con 10.000). Si no coinciden se muestra la discrepancia para revisar.
+    const printed = str(o.quantityText, 40);
+    const printedNum = printed ? parseNumber(printed.replace(/[^\d.,\s+-]/g, "")) : null;
+    if (printedNum != null && printedNum > 0) {
+      if (qtyNum == null || !(qtyNum > 0)) qtyNum = printedNum;
+      else if (Math.abs(qtyNum - printedNum) > 1e-9) {
+        qtyNotes.push(`Cantidad impresa «${printed}» (el modelo había leído ${qtyNum})`);
+        qtyNum = printedNum;
+        qtyDoubt = true;
+      }
+      // «1.500» / «1,500» con unidades de peso o volumen puede ser mil quinientos o uno con cinco: se toma la regla argentina y se marca.
+      if (/^\d{1,3}[.,]\d{3}$/.test(printed.trim()) && /^(kg|g|gr|l|lt|ml|m|mt|cm)$/i.test(str(o.unit, 20))) qtyDoubt = true;
+    }
+    // Anotación MANUSCRITA que parece corregir la cantidad impresa: se conserva la impresa y se muestran ambas para decidir.
+    const handwritten = str(o.handwrittenQuantity, 40);
+    const handNum = handwritten ? parseNumber(handwritten.replace(/[^\d.,\s+-]/g, "")) : null;
+    if (handNum != null && handNum > 0 && (qtyNum == null || Math.abs(handNum - qtyNum) > 1e-9)) {
+      qtyNotes.push(`Cantidad manuscrita «${handwritten}»${qtyNum != null ? ` junto a la impresa ${qtyNum}` : ""}: revisá cuál corresponde`);
+      qtyDoubt = true;
+    }
     const venc = isoOrEmpty(o.expiryDate ?? o.vencimiento);
     const review: string[] = [];
     const lote = str(o.lot ?? o.lote, 60);
@@ -566,13 +589,14 @@ export function sanitizeExtraction(raw: unknown): ExtractedRemito | null {
     if (recovered.recovered || recovered.discarded) review.push("supplierCode");
     const unit = str(o.unit, 20);
     if (!description) review.push("description");
-    if (qtyNum == null || !(qtyNum > 0)) review.push("quantity");
+    if (qtyNum == null || !(qtyNum > 0) || qtyDoubt) review.push("quantity");
     if (!unit) review.push("unit");
     if (!lote) review.push("lote");
     if (!venc) review.push("vencimiento");
     const lineUnclear = Array.isArray(o.unclearFields) ? o.unclearFields.map(String) : [];
     const doubtful = new Set<string>(lineUnclear);
     if (recovered.recovered || recovered.discarded) doubtful.add("supplierCode");
+    if (qtyDoubt) doubtful.add("quantity");
     for (const f of lineUnclear) if (!review.includes(f)) review.push(f);
     // Lo que el modelo normalizó o dedujo (no leído literalmente) también se marca para que la persona lo confirme.
     const inferred = Array.isArray(o.inferredFields) ? o.inferredFields.map(String) : [];
@@ -587,10 +611,77 @@ export function sanitizeExtraction(raw: unknown): ExtractedRemito | null {
     const pk = parseNumber(o.packages);
     return [{
       supplierCode, description, quantity: qtyNum != null && qtyNum > 0 ? String(qtyNum) : "", unit, packages: pk != null && pk > 0 ? String(pk) : "",
-      lote, vencimiento: venc, notes: str(o.notes, 300), review,
+      lote, vencimiento: venc, notes: [str(o.notes, 300), ...qtyNotes].filter(Boolean).join(" · ").slice(0, 400), review,
       confidence: lineConfidence({ description, quantity: qtyNum != null && qtyNum > 0 ? String(qtyNum) : "", doubtful: [...doubtful], modelConfidence: typeof o.confidence === "number" ? o.confidence : null }),
     }];
   });
   if (!supplier && !remitoNumber && lines.length === 0) return null;
   return { supplier, remitoNumber, remitoDate, notes: str(r.notes, 500), headerReview, lines };
+}
+
+
+// ───────────────────────── Lectura progresiva: faltantes importantes y fusión ─────────────────────────
+
+/**
+ * Qué campos IMPORTANTES siguen sin leerse (solo lo que justifica una segunda etapa): n.º de remito, fecha, proveedor, que haya renglones
+ * y, en cada renglón, descripción y cantidad. Lote / vencimiento / unidad no disparan relecturas (pueden no existir en el documento).
+ */
+export function importantMissing(d: ExtractedRemito): { header: Array<"supplier" | "remitoNumber" | "remitoDate">; lines: Array<{ index: number; fields: Array<"description" | "quantity"> }>; noLines: boolean; any: boolean } {
+  const header = (["remitoNumber", "remitoDate", "supplier"] as const).filter((f) => !d[f]);
+  const lines = d.lines.flatMap((l, index) => {
+    const fields = [!l.description ? ("description" as const) : null, !l.quantity ? ("quantity" as const) : null].filter((x): x is "description" | "quantity" => x != null);
+    return fields.length ? [{ index, fields }] : [];
+  });
+  const noLines = d.lines.length === 0;
+  return { header, lines, noLines, any: header.length > 0 || lines.length > 0 || noLines };
+}
+
+const normText = (t: string) => t.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Z0-9]+/g, " ").trim();
+
+/**
+ * Completa SOLO lo que falta de `base` con `extra` (una segunda lectura): nunca pisa un campo ya identificado. Los renglones se
+ * emparejan por código del proveedor, por descripción o —si hay la misma cantidad de renglones— por posición. Si `base` no tenía
+ * renglones se usan los de `extra`.
+ */
+export function mergeExtractions(base: ExtractedRemito, extra: ExtractedRemito): ExtractedRemito {
+  const headerPick = (a: string, b: string) => (a ? a : b);
+  const header = {
+    supplier: headerPick(base.supplier, extra.supplier),
+    remitoNumber: headerPick(base.remitoNumber, extra.remitoNumber),
+    remitoDate: headerPick(base.remitoDate, extra.remitoDate),
+    notes: headerPick(base.notes, extra.notes),
+  };
+  const headerReview = base.headerReview.filter((f) => !(header as Record<string, string>)[f]);
+  for (const f of extra.headerReview) if (!(header as Record<string, string>)[f] && !headerReview.includes(f)) headerReview.push(f);
+  if (base.lines.length === 0) return { ...header, headerReview, lines: extra.lines };
+  const used = new Set<number>();
+  const match = (l: ExtractedLine, i: number): ExtractedLine | null => {
+    const free = (j: number) => !used.has(j);
+    let j = l.supplierCode ? extra.lines.findIndex((x, k) => free(k) && x.supplierCode && normText(x.supplierCode) === normText(l.supplierCode)) : -1;
+    if (j < 0 && l.description) {
+      const nd = normText(l.description);
+      j = extra.lines.findIndex((x, k) => free(k) && x.description && (normText(x.description) === nd || normText(x.description).includes(nd) || nd.includes(normText(x.description))));
+    }
+    if (j < 0 && base.lines.length === extra.lines.length && free(i)) j = i;
+    if (j < 0) return null;
+    used.add(j);
+    return extra.lines[j]!;
+  };
+  const lines = base.lines.map((l, i) => {
+    const m = match(l, i);
+    if (!m) return l;
+    const next: ExtractedLine = { ...l };
+    const fill = (k: "supplierCode" | "description" | "quantity" | "unit" | "packages" | "lote" | "vencimiento" | "notes") => {
+      if (!next[k] && m[k]) next[k] = m[k];
+    };
+    for (const k of ["supplierCode", "description", "quantity", "unit", "packages", "lote", "vencimiento", "notes"] as const) fill(k);
+    const review = l.review.filter((f) => {
+      const v = (next as unknown as Record<string, unknown>)[f];
+      return typeof v === "string" ? !v || m.review.includes(f) : true;
+    });
+    next.review = review;
+    next.confidence = lineConfidence({ description: next.description, quantity: next.quantity, doubtful: review.filter((f) => f === "description" || f === "quantity" || f === "supplierCode"), modelConfidence: null });
+    return next;
+  });
+  return { ...header, headerReview, lines };
 }
