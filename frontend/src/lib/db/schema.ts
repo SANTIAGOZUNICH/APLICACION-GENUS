@@ -2375,4 +2375,98 @@ export const cajasGenusAudit = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("cajas_genus_audit_at_idx").on(table.createdAt)]
+// ───────────────────────── Módulo INSUMOS (migración 0088) ─────────────────────────
+// Retiro y consumo de insumos por sector. Solo consumo: no toca stock general, MP ni ME.
+
+export const insumoItems = pgTable(
+  "insumo_items",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    active: boolean("active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdBy: text("created_by"),
+    updatedBy: text("updated_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("insumo_items_name_uidx").on(sql`lower(${table.name})`)]
+);
+
+export const insumoResponsables = pgTable(
+  "insumo_responsables",
+  {
+    id: text("id").primaryKey(),
+    sector: text("sector").notNull(),
+    name: text("name").notNull(),
+    active: boolean("active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdBy: text("created_by"),
+    updatedBy: text("updated_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("insumo_responsables_sector_name_uidx").on(table.sector, sql`lower(${table.name})`),
+    index("insumo_responsables_sector_idx").on(table.sector, table.active, table.sortOrder),
+  ]
+);
+
+export const insumoRetiros = pgTable(
+  "insumo_retiros",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clientRequestId: text("client_request_id").notNull(),
+    sector: text("sector").notNull(),
+    responsableId: text("responsable_id").notNull().references(() => insumoResponsables.id),
+    responsableName: text("responsable_name").notNull(),
+    registradoPorEmail: text("registrado_por_email").notNull(),
+    registradoPorName: text("registrado_por_name").notNull(),
+    registradoPorSector: text("registrado_por_sector").notNull(),
+    status: text("status").notNull().default("ACTIVO"),
+    anuladoAt: timestamp("anulado_at", { withTimezone: true }),
+    anuladoBy: text("anulado_by"),
+    anuladoMotivo: text("anulado_motivo"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("insumo_retiros_client_request_uidx").on(table.clientRequestId),
+    index("insumo_retiros_created_idx").on(table.createdAt),
+    index("insumo_retiros_sector_idx").on(table.sector, table.createdAt),
+    index("insumo_retiros_responsable_idx").on(table.responsableId, table.createdAt),
+  ]
+);
+
+export const insumoRetiroItems = pgTable(
+  "insumo_retiro_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    retiroId: uuid("retiro_id").notNull().references(() => insumoRetiros.id),
+    insumoId: text("insumo_id").notNull().references(() => insumoItems.id),
+    insumoName: text("insumo_name").notNull(),
+    cantidad: integer("cantidad").notNull(),
+  },
+  (table) => [
+    uniqueIndex("insumo_retiro_items_retiro_insumo_uidx").on(table.retiroId, table.insumoId),
+    index("insumo_retiro_items_insumo_idx").on(table.insumoId),
+  ]
+);
+
+/** Eventos INMUTABLES (solo se insertan): creado, corregido, anulado. */
+export const insumoRetiroEvents = pgTable(
+  "insumo_retiro_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    retiroId: uuid("retiro_id").notNull().references(() => insumoRetiros.id),
+    action: text("action").notNull(),
+    actorEmail: text("actor_email").notNull(),
+    actorName: text("actor_name").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    motivo: text("motivo"),
+    beforeData: jsonb("before_data"),
+    afterData: jsonb("after_data"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("insumo_retiro_events_retiro_idx").on(table.retiroId, table.createdAt)]
 );

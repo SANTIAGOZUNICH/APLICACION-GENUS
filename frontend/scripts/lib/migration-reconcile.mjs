@@ -60,6 +60,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0080_delivery_boxes": "2eb7cfdaf246d9aa4678a77166e477afa224975f953538fbb36f254bfed292ab",
   "0081_email_order_sync_runs": "ae728e00f57a384285ccfb7f818741defaea7ff86da230ca936cf64a6b25ffb8",
   "0082_despachos_planilla": "5923cf1486ce83d47e6bb72cebb7b6b7986ad4316467ff8f7a10775eca8875ee",
+  "0088_insumos": "da0ac29be241a4982af061b05c63b201384c9913643462c062577a4b189ca27f",
   "0086_ai_provider_health": "56670f811247894b932dbd34ad9af19feb7001856fc72bc12739de97719e1188",
   "0087_cajas_genus": "0d50e03ac8ff6ce325f653f38548e663ed2f2c4d0687b410fd1cea74cdb42f94",
   "0085_envasado_delivery_list_hides": "f4424e82725c2725027bb9041b3317855afe3da18643a840498c667d7047569d",
@@ -104,11 +105,21 @@ const ALLOWED_STATEMENT_PATTERNS = [
   new RegExp(String.raw`^alter\s+table\s+${IDENT}\s+add\s+column\s+if\s+not\s+exists\s+${IDENT}\s+`, "i"),
   DROP_NOT_NULL,
 ];
+/** Siembra de catálogo: INSERT … VALUES … ON CONFLICT DO NOTHING (idempotente; nunca pisa filas existentes). */
+const SEED_INSERT = new RegExp(String.raw`^insert\s+into\s+${IDENT}\s*\([^)]*\)\s*values\s*\([\s\S]*\)\s*on\s+conflict\s+do\s+nothing$`, "i");
 const FORBIDDEN = /\b(drop|delete|truncate|update|insert|grant|revoke|copy|do|execute|call|vacuum|reindex|rename|alter\s+type|alter\s+column|set\s+not\s+null)\b/i;
 
 /** Devuelve un motivo de rechazo o null si la sentencia es DDL aditivo permitido. */
 export function rejectStatement(stmt) {
   const body = stmt.replace(/;\s*$/, "");
+  const noQuotedAll = body.replace(/'(?:[^']|'')*'/g, "''").replace(/"[^"]*"/g, '""');
+  if (SEED_INSERT.test(body)) {
+    if (noQuotedAll.includes(";")) return "varias sentencias en una";
+    // Se quitan el INSERT INTO y el ON CONFLICT DO NOTHING propios de la siembra; el resto no puede traer verbos prohibidos ni subconsultas.
+    const rest = noQuotedAll.replace(/^insert\s+into/i, "").replace(/on\s+conflict\s+do\s+nothing$/i, "");
+    if (FORBIDDEN.test(rest) || /\bselect\b/i.test(rest)) return "contiene una palabra prohibida";
+    return null;
+  }
   if (body.includes(";")) return "varias sentencias en una";
   if (!ALLOWED_STATEMENT_PATTERNS.some((re) => re.test(body))) return "no es DDL aditivo idempotente permitido";
   // Se ignoran palabras dentro de literales/identificadores citados al buscar verbos prohibidos.
@@ -224,6 +235,11 @@ export const REQUIRED_SCHEMA_OBJECTS = Object.freeze([
   { migration: "0085_envasado_delivery_list_hides", object: "internal_delivery_hides" },
   { migration: "0086_ai_provider_health", object: "ai_provider_health" },
   { migration: "0087_cajas_genus", object: "cajas_genus_movements" },
+  { migration: "0088_insumos", object: "insumo_items" },
+  { migration: "0088_insumos", object: "insumo_responsables" },
+  { migration: "0088_insumos", object: "insumo_retiros" },
+  { migration: "0088_insumos", object: "insumo_retiro_items" },
+  { migration: "0088_insumos", object: "insumo_retiro_events" },
   { migration: "0049_mp_load_order", object: "inv_mp_stock.seq_criterio" },
   { migration: "0049_mp_load_order", object: "inv_mp_ingresos.load_seq" },
   { migration: "0049_mp_load_order", object: "inv_mp_ingresos.seq_criterio" },
