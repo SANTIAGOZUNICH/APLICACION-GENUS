@@ -589,6 +589,13 @@
       "when": 1793900015000,
       "tag": "0086_ai_provider_health",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1793900017000,
+      "tag": "0088_insumos",
+      "breakpoints": true
     }
   ]
 }
