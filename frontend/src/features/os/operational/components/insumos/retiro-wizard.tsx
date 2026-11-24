@@ -130,7 +130,7 @@ export function RetiroWizard() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-xl space-y-4 pb-28" data-testid="insumos-wizard">
+    <div className="mx-auto w-full max-w-xl space-y-4 pb-2" data-testid="insumos-wizard">
       <ol className="flex gap-2 text-xs" aria-label="Pasos">
         {["1 · Insumos", "2 · Responsable", "3 · Confirmar"].map((s, i) => (
           <li key={s} className={`flex-1 rounded-full px-2 py-1 text-center ${i + 1 === step ? "bg-[var(--os-teal,#0d9488)] text-white" : "border border-[var(--os-border)] text-[var(--os-text-muted)]"}`}>{s}</li>
@@ -205,8 +205,8 @@ export function RetiroWizard() {
         </section>
       ) : null}
 
-      {/* Barra de acciones fija abajo (siempre al alcance del pulgar). */}
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--os-border)] bg-[var(--os-surface)] px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3" data-testid="insumos-acciones">
+      {/* Barra de acciones pegada abajo (sticky dentro del scroll del contenido): siempre al alcance del pulgar. */}
+      <div className="sticky bottom-0 z-30 -mx-1 border-t border-[var(--os-border)] bg-[var(--os-surface)] px-1 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3" data-testid="insumos-acciones">
         <div className="mx-auto grid w-full max-w-xl gap-2">
           {step === 1 ? (
             <>
