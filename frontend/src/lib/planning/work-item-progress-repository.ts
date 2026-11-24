@@ -1,3 +1,4 @@
+import { syncWorkItemLinesSafe } from "@/lib/cajas-genus/service";
 import "server-only";
 
 import { resolveManualLoteLinkPatch } from "@/lib/asignacion-lotes/lote-link";
@@ -1685,6 +1686,8 @@ export async function annulDeliveryInTx(tx: Tx, id: string, reason: string, acto
           .update(workItemDeliveryLines)
           .set({ status: "ANULADA", annulledAt: now, annulledBy: actorName })
           .where(and(eq(workItemDeliveryLines.deliveryId, row.id), eq(workItemDeliveryLines.status, "ACTIVA")));
+        // CAJAS GENUS: las cajas de las líneas anuladas se revierten (movimiento de diferencia auditado).
+        await syncWorkItemLinesSafe(tx, row.workItemId, { email: actorName, sector: "PRODUCCION" });
         await tx
           .update(workItems)
           .set({ operationalStatus: "revision", progressUpdatedAt: now, progressUpdatedBy: actorName, updatedAt: now })

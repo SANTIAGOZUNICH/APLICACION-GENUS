@@ -1,3 +1,4 @@
+import { syncDeliveryLineSafe } from "@/lib/cajas-genus/service";
 import { resolveWorkItemDeliveryPacking, validateDeliveryPacking } from "@/lib/remitos/delivery-packing";
 import { sumActiveCodificadoTransfers } from "./codificado-transfers-sum";
 import { mergePackingGroups } from "@/lib/remitos/delivery-boxes-input";
@@ -555,6 +556,8 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
       })
       .returning();
     line = insertedLine;
+    // CAJAS GENUS: la entrega final descuenta sus cajas (en un savepoint: una falla acá nunca frena la entrega; la barrida la recupera).
+    await syncDeliveryLineSafe(tx, insertedLine?.id, { email: actor.email, sector: actor.sector });
     // Cajas informadas en ESTA entrega: el resumen de cajas de la entrega vigente es la suma de las de sus renglones activos
     // (cada tipo de caja por separado), para que Entregados y el remito vean el mismo total sin mezclar ni duplicar.
     {

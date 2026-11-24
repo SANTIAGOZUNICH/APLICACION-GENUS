@@ -164,7 +164,7 @@ export function TwinRouter() {
     case "asignacion-lotes":
       return <AsignacionLotesView />;
     case "control-facturacion":
-      return <ControlFacturacionView key="control" initialTab="control" />;
+      return <ControlFacturacionView key={currentNav.adminTab ? `control-${currentNav.adminTab}` : "control"} initialTab={currentNav.adminTab === "cajas" ? "cajas" : currentNav.adminTab === "insumos" ? "insumos" : "control"} />;
     case "portal-clientes":
       return <PortalClientesView />;
     case "remitos":

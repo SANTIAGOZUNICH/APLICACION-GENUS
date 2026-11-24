@@ -62,6 +62,8 @@ export type TwinView =
 export interface TwinNavEntry {
   view: TwinView;
   workItemId?: string;
+  /** Pestaña de Administración a abrir (p. ej. «cajas» desde el aviso de stock crítico). */
+  adminTab?: string;
   oaRef?: string;
   oeRef?: string;
   clientName?: string;
