@@ -29,6 +29,7 @@ import {
 import { primaryOfSyncObs, syncObsMark } from "@/lib/planning/circuit/delivery-group";
 import { emitCircuitNotification } from "@/lib/planning/circuit/circuit-notifications";
 import { emitBillingForDelivery } from "@/lib/notifications/billing-notifications";
+import { emitObservationForDelivery } from "@/lib/notifications/observation-notifications";
 import { loadRemittanceByLine, remittedEditProblem } from "@/lib/remitos/delivery-remittance";
 import {
   computeLoteIdentityKey,
@@ -1582,6 +1583,7 @@ export async function deliverWorkDurable(
   // Aviso a Producción FUERA de la transacción: un fallo de la notificación nunca bloquea la entrega.
   if (result.movement) await emitCircuitNotification(result.movement);
   await emitBillingForDelivery(result, actor.displayName ?? actor.email ?? "—");
+  await emitObservationForDelivery(result, actor.displayName ?? actor.email ?? "—");
   return result;
 }
 

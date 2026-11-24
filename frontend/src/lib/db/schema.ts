@@ -2469,4 +2469,13 @@ export const insumoRetiroEvents = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("insumo_retiro_events_retiro_idx").on(table.retiroId, table.createdAt)]
+/** Observaciones de Producción «vistas por usuario» (0089): solo cuándo vio cada ámbito (FEED o id de trabajo); nunca guarda el texto. */
+export const productionObservationSeen = pgTable(
+  "production_observation_seen",
+  {
+    userKey: text("user_key").notNull(),
+    scope: text("scope").notNull(),
+    seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userKey, table.scope] })]
 );
