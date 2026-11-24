@@ -99,7 +99,7 @@ export function redactSecrets(text: string): string {
 type ModelCache = { models: string[]; working: string | null; at: number };
 let modelCache: ModelCache | null = null;
 /** Modelos que el proveedor rechazó con 404 aunque figuren en el listado: se descartan un rato (no se vuelven a pedir en cada lectura). */
-const DEAD_MODEL_MS = 30 * 60_000;
+const DEAD_MODEL_MS = Math.max(1, Number(process.env.INGRESO_REMITO_DEAD_MODEL_MS ?? 30 * 60_000) || 30 * 60_000);
 const deadModels = new Map<string, number>();
 const isDeadModel = (m: string) => {
   const at = deadModels.get(m);
