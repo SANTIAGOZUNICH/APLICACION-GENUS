@@ -573,7 +573,8 @@ try {
   await mb.evaluate(() => { document.querySelector("[data-testid=ingreso-remito-dialog]").scrollTop = 140; });
   await mb.waitForTimeout(300);
   const topAntes = await mb.evaluate(() => document.querySelector("[data-testid=ingreso-remito-dialog]").scrollTop);
-  await mb.locator("[data-testid=remito-cerrar-x]").click();
+  // Un toque real sobre el encabezado fijo no desplaza la lista (Playwright sí lo hace al «asegurar visibilidad» de un elemento sticky): se hace el clic sin scroll.
+  await mb.locator("[data-testid=remito-cerrar-x]").evaluate((el) => el.click());
   await mb.locator("[data-testid=remito-cerrar-confirmar]").waitFor();
   const txt = await mb.locator("[data-testid=remito-cerrar-confirmar]").innerText();
   check("X con trabajo en riesgo: pide «¿Querés cerrar el remito?» con Guardar y cerrar / Cerrar sin guardar / Cancelar", /¿Querés cerrar el remito\?/.test(txt) && /Guardar y cerrar/.test(txt) && /Cerrar sin guardar/.test(txt) && /Cancelar/.test(txt));
