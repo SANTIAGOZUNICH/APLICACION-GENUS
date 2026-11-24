@@ -42,6 +42,7 @@ import {
   codeKey,
   emptyHeader,
   emptyLine,
+  importantMissing,
   isIsoDate,
   mappingKey,
   descriptionKey,
@@ -57,6 +58,7 @@ import {
   type CatalogItem,
   type DuplicateWarning,
   type ExistingEntry,
+  type ExtractedRemito,
   type MappingHistory,
   type MaterialSuggestion,
   type ReceiptDraftPayload,
@@ -377,6 +379,55 @@ async function fileDuplicates(db: Db, module: ReceiptModule, receiptId: string):
 
 // ───────────────────────── Servicio ─────────────────────────
 
+/** Texto técnico para Sistemas sin posibles restos de claves. */
+const redactTechnical = (t: string | undefined) => (t ?? "").replace(/AIza[0-9A-Za-z_-]{20,}/g, "[clave oculta]").slice(0, 300);
+
+const PENDING_NAMES: Record<string, string> = { remitoNumber: "el número de remito", remitoDate: "la fecha", supplier: "el proveedor", lines: "los materiales", quantity: "la cantidad", description: "la descripción de algún material" };
+function pendingFromData(d: ExtractedRemito): string[] {
+  const m = importantMissing(d);
+  return [...m.header, ...(m.noLines ? ["lines"] : []), ...new Set(m.lines.flatMap((l) => l.fields))];
+}
+
+/** Mensaje al operario tras una lectura que SÍ devolvió datos: qué se identificó y qué falta (sin tecnicismos). */
+export function readMessage(i: { keepLines: boolean; hasLines: boolean; partial: boolean; pending: string[]; enhanced: boolean }): string {
+  if (i.keepLines) return i.pending.length ? "Se completaron los datos vacíos con la nueva lectura. Tus datos no se tocaron; revisá los campos marcados." : "Se completaron los datos vacíos con la nueva lectura. Tus datos no se tocaron.";
+  if (!i.hasLines) return "Identificamos los datos del encabezado, pero no se detectaron materiales. Podés agregarlos a mano o fotografiar únicamente la tabla del remito.";
+  if (i.pending.length === 0 && !i.partial) return i.enhanced ? "Mejoramos la imagen y recuperamos los datos. Revisá todo antes de confirmar." : "Remito analizado. Revisá los datos antes de confirmar.";
+  const faltan = i.pending.filter((f) => f !== "lines").map((f) => PENDING_NAMES[f] ?? f);
+  const base = "Identificamos los datos principales. Revisá los campos marcados.";
+  if (i.pending.includes("quantity")) return `${base} No pude identificar la cantidad de algún material: podés completarla manualmente o fotografiar únicamente esa parte del remito.`;
+  return faltan.length ? `${base} Falta ${[...new Set(faltan)].join(", ")}: completalo manualmente.` : `${base}${i.partial ? " La lectura llegó cortada: compará con la foto." : ""}`;
+}
+
+/**
+ * Completa SOLO los campos VACÍOS de los renglones que la persona ya tiene (relectura o foto complementaria de una región): empareja por
+ * código del proveedor, por descripción o por posición cuando hay la misma cantidad de renglones. Nunca pisa lo ya cargado.
+ */
+export function fillEmptyFields(lines: ReceiptLineDraft[], extracted: ExtractedRemito["lines"]): ReceiptLineDraft[] {
+  const norm = (t: string) => t.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Z0-9]+/g, " ").trim();
+  const used = new Set<number>();
+  return lines.map((l, i) => {
+    let j = l.supplierCode ? extracted.findIndex((x, k) => !used.has(k) && x.supplierCode && norm(x.supplierCode) === norm(l.supplierCode)) : -1;
+    if (j < 0 && l.description) {
+      const nd = norm(l.description);
+      j = extracted.findIndex((x, k) => !used.has(k) && x.description && (norm(x.description) === nd || norm(x.description).includes(nd) || nd.includes(norm(x.description))));
+    }
+    if (j < 0 && lines.length === extracted.length && !used.has(i)) j = i;
+    if (j < 0) return l;
+    used.add(j);
+    const m = extracted[j]!;
+    const next: ReceiptLineDraft = { ...l };
+    const filled: string[] = [];
+    const put = (k: "supplierCode" | "description" | "unit" | "packages" | "lote" | "vencimiento" | "notes") => {
+      if (!String(next[k] ?? "").trim() && m[k]) { next[k] = m[k]; filled.push(k); }
+    };
+    for (const k of ["supplierCode", "description", "unit", "packages", "lote", "vencimiento", "notes"] as const) put(k);
+    if (!next.quantity.trim() && m.quantity) { next.quantity = m.quantity; if (!next.remitoQuantity.trim()) next.remitoQuantity = m.quantity; filled.push("quantity"); }
+    if (filled.length) next.review = l.review.filter((f) => !filled.includes(f));
+    return next;
+  });
+}
+
 export class ReceiptService {
   constructor(private readonly deps: { extract?: typeof extractRemito; extractionConfig?: () => ExtractionConfig; ask?: typeof askGeminiJson } = {}) {}
 
@@ -526,10 +577,10 @@ export class ReceiptService {
     const cfg = this.config();
     const draft0 = readDraft(row);
     let job: ReadJob | null = null; // trabajo de lectura de ESTA llamada (queda guardado: se puede recuperar sin volver a fotografiar)
-    const fail = async (message: string, kind: string, persist: boolean) => {
+    const fail = async (message: string, kind: string, persist: boolean, diag?: Record<string, unknown>) => {
       let current = row;
       if (persist) {
-        const failedJob: ReadJob | null = job ? { ...job, status: "failed", finishedAt: new Date().toISOString(), message } : draft0.job ?? null;
+        const failedJob: ReadJob | null = job ? { ...job, status: "failed", finishedAt: new Date().toISOString(), message, stage: undefined, ...(diag ? { diag } : {}) } : draft0.job ?? null;
         const next = { ...draft0, job: failedJob, extraction: { provider: cfg.provider ?? "", at: new Date().toISOString(), ok: false, note: message } };
         await db.update(inventoryReceipts).set({ payload: next, updatedAt: new Date() }).where(eq(inventoryReceipts.id, id));
         current = { ...row, payload: next };
@@ -576,9 +627,23 @@ export class ReceiptService {
           console.warn("[ingreso-remito] no se pudo leer el archivo guardado para la lectura automática", err instanceof Error ? err.message : err);
           return fail("No se pudo abrir la foto guardada para leerla. Reintentá o completá los datos manualmente.", "storage", true);
         }
-        out = await (this.deps.extract ?? extractRemito)(loaded, { module });
+        out = await (this.deps.extract ?? extractRemito)(loaded, {
+          module,
+          // Etapa en curso: la pantalla lo muestra («Mejorando la imagen para recuperar los datos.»). Solo informativo.
+          onStage: async (stage) => {
+            await db
+              .update(inventoryReceipts)
+              .set({ payload: sql`jsonb_set(${inventoryReceipts.payload}, '{job,stage}', to_jsonb(${stage}::text), true)` })
+              .where(and(eq(inventoryReceipts.id, id), sql`${inventoryReceipts.payload}->'job'->>'id' = ${jobId}`));
+          },
+        });
       }
-      if (!out.ok) return fail(out.message, "kind" in out ? out.kind : "unavailable", true);
+      if (!out.ok) {
+        // Diagnóstico para Sistemas: proveedor, modelo, etapa, HTTP, intentos y causa. Sin claves ni contenido del remito.
+        const d = out.diag ? ({ ...out.diag, technical: redactTechnical(out.technical) } as unknown as Record<string, unknown>) : undefined;
+        console.warn(`[ingreso-remito] diag ${JSON.stringify({ module, kind: out.kind, ...(d ?? {}) })}`);
+        return fail(out.message, "kind" in out ? out.kind : "unavailable", true, d);
+      }
 
       const draft = readDraft(row);
       const history = await loadHistory(db, module);
@@ -593,7 +658,7 @@ export class ReceiptService {
       header.notes = pick(header.notes, d.notes);
       const keepLines = base.lines.some((l) => l.description || l.quantity || l.materialCode || l.supplierCode);
       const lines = keepLines
-        ? base.lines
+        ? fillEmptyFields(base.lines, d.lines) // foto complementaria / relectura: solo se completan los campos VACÍOS; nada de lo cargado se pisa
         : d.lines.map((l, i): ReceiptLineDraft => {
             const match = autoMatchMaterial({ supplier: header.supplier, supplierCode: l.supplierCode, description: l.description, unit: l.unit }, catalog, history, module);
             return {
@@ -609,7 +674,9 @@ export class ReceiptService {
       const noteParts = [review.length ? `Revisar: ${review.join(", ")}` : "", partial ? "Lectura parcial: la respuesta llegó cortada, puede faltar algún renglón del final. Compará con la foto." : ""].filter(Boolean);
       const note = noteParts.length ? noteParts.join(" · ") : undefined;
       const finishedAt = new Date().toISOString();
-      const doneJob: ReadJob = { id: jobId, status: "done", startedAt, finishedAt, elapsedMs: Date.now() - Date.parse(startedAt), partial, fromCache: Boolean(cached) };
+      const pendingFields = "pending" in out && Array.isArray(out.pending) ? out.pending : cached ? pendingFromData(d) : [];
+      const diagOut = "diag" in out && out.diag ? (out.diag as unknown as Record<string, unknown>) : undefined;
+      const doneJob: ReadJob = { id: jobId, status: "done", startedAt, finishedAt, elapsedMs: Date.now() - Date.parse(startedAt), partial, fromCache: Boolean(cached), ...(pendingFields.length ? { pending: pendingFields } : {}), ...(diagOut ? { diag: diagOut } : {}) };
       const next: ReceiptDraftPayload = {
         header, lines, extraction: { provider: out.provider, at: finishedAt, ok: true, note }, job: doneJob,
         readCache: cached ?? { key: fileKey, at: finishedAt, provider: out.provider, partial, data: d },
@@ -626,11 +693,8 @@ export class ReceiptService {
         .where(and(eq(inventoryReceipts.id, id), eq(inventoryReceipts.status, "BORRADOR")))
         .returning();
       const finalRow = upd ?? row;
-      const message = keepLines
-        ? "Se completaron los datos faltantes del encabezado. Tus materiales no se tocaron."
-        : lines.length
-          ? partial ? "Remito leído parcialmente. Revisá los datos y completá lo que falte." : "Remito analizado. Revisá los datos antes de confirmar."
-          : "Se leyó el encabezado pero no se detectaron materiales. Agregalos a mano.";
+      if (diagOut) console.info(`[ingreso-remito] diag ${JSON.stringify({ module, ok: true, ...diagOut })}`);
+      const message = readMessage({ keepLines, hasLines: lines.length > 0, partial, pending: pendingFields, enhanced: Boolean((diagOut as { enhanced?: boolean } | undefined)?.enhanced) });
       return { receipt: await toReceipt(db, finalRow), applied: true, message, kind: "ok", analysis: await this.analyzeRow(db, finalRow, module), partial, job: doneJob };
     } catch (err) {
       // Un error inesperado no deja el trabajo «en curso» colgado: queda como fallido y la foto sigue guardada.
