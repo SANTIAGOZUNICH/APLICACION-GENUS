@@ -115,8 +115,8 @@ await new Promise((r) => gem.listen(4599, "127.0.0.1", r));
 const browser = await chromium.launch({ executablePath: process.env.GENUS_E2E_CHROMIUM_PATH || undefined });
 const { defaultBrowserType: _ignored, ...PHONE } = devices["Pixel 7"];
 void _ignored;
-async function openAs(user, mobile) {
-  const ctx = await browser.newContext({ baseURL: BASE, ...(mobile ? PHONE : { viewport: { width: 1440, height: 900 } }) });
+async function openAs(user, mobile, viewport) {
+  const ctx = await browser.newContext({ baseURL: BASE, ...(mobile ? { ...PHONE, ...(viewport ? { viewport } : {}) } : { viewport: { width: 1440, height: 900 } }) });
   const page = await ctx.newPage();
   await page.goto("/login");
   await page.locator('input[type="email"]').fill(user.email);
@@ -134,6 +134,14 @@ const nav = async (page, label) => {
   await direct.click({ timeout: 120_000 });
 };
 const dlg = (page) => page.locator("[data-testid=ingreso-remito-dialog]");
+const closeDlg = async (page) => {
+  // Cerrar con Escape ahora pide confirmación si hay trabajo en riesgo: se elige «Guardar y cerrar» (guarda SOLO el borrador).
+  await page.keyboard.press("Escape");
+  const save = page.locator("[data-testid=remito-cerrar-guardar]");
+  if (await save.waitFor({ timeout: 1500 }).then(() => true).catch(() => false)) await save.click();
+  await page.locator("[data-testid=ingreso-remito-dialog]").waitFor({ state: "detached", timeout: 15_000 }).catch(() => undefined);
+};
+
 const balance = async (code) => Number((await q("select stock_actual from mp_stock_balances where codigo = $1", [code]))[0]?.stock_actual ?? 0);
 const count = async (table) => Number((await q(`select count(*)::int n from ${table}`))[0].n);
 async function pickMaterial(scope, page, code) {
@@ -229,7 +237,7 @@ try {
   await mp.locator("[data-testid=remito-releer]").click();
   await mp.waitForTimeout(2500);
   check("Volver a leer pide confirmación antes de reemplazar lo cargado", true);
-  await mp.keyboard.press("Escape");
+  await closeDlg(mp);
 
   // Clave/permiso rechazado → motivo para Sistemas.
   state.mode = "403";
@@ -241,7 +249,7 @@ try {
   const txt403 = await mp.locator("[data-testid=remito-lectura-fallo]").innerText();
   const job403 = (await q("select payload->'job' j from inventory_receipts order by updated_at desc limit 1"))[0]?.j;
   check("Permisos insuficientes del proveedor: el operario ve un mensaje claro SIN tecnicismos ni pedido de otra foto; el motivo queda en el diagnóstico para Sistemas", /La lectura automática no está disponible en este momento\. Tu imagen está guardada/.test(txt403) && !/permiso|clave|modelo|imagen más clara/i.test(txt403) && job403?.diag?.providers?.gemini?.kind === "permission" && job403?.diag?.providers?.gemini?.http === 403 && !JSON.stringify(job403).includes(FAKE_KEY));
-  await mp.keyboard.press("Escape");
+  await closeDlg(mp);
   state.mode = "ok";
   await resetBreaker();
 
@@ -257,7 +265,7 @@ try {
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 90_000 });
   check("503 transitorio del proveedor: reintento automático y la lectura se completa sin error visible", state.flakyHits >= 1 && (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER && (await mp.locator("[data-testid=remito-lectura-fallo]").count()) === 0, `hits=${state.flakyHits}`);
   check("el reintento no duplicó nada: sigue siendo un borrador sin stock", (await balance(MP_CODE)) === stockAntesFlaky);
-  await mp.keyboard.press("Escape");
+  await closeDlg(mp);
 
   // ===== Proveedor saturado de forma sostenida: mensaje propio, tope de reintentos, foto y carga manual intactas =====
   state.mode = "overloaded";
@@ -279,7 +287,7 @@ try {
   await mp.locator("[data-testid=remito-reintentar]").first().click();
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 60_000 });
   check("Cuando el proveedor se recupera, «Reintentar lectura» funciona", (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER);
-  await mp.keyboard.press("Escape");
+  await closeDlg(mp);
 
   // ===== NUEVO: fallback automático Gemini → OpenAI (el operario solo saca la foto) =====
   ostate.mode = "ok";
@@ -303,7 +311,7 @@ try {
   check("Diagnóstico para Sistemas: se usó el respaldo (fallback), con tokens y tiempo por proveedor, y el estado del circuit breaker de Gemini quedó guardado", jobFb?.diag?.fallback === true && jobFb?.diag?.provider === "openai" && jobFb?.diag?.providers?.gemini?.ok === false && jobFb?.diag?.providers?.openai?.tokens?.total === 1500 && (await q("select last_kind from ai_provider_health where provider = 'gemini'"))[0]?.last_kind === "overloaded");
   check("El fallback no movió stock ni creó ingresos (sigue siendo un borrador)", (await balance(MP_CODE)) === stockAntesFb);
   await mp.screenshot({ path: `${OUT}/07-mp-fallback-openai.png`, fullPage: true });
-  await mp.keyboard.press("Escape");
+  await closeDlg(mp);
 
   // 429 de Gemini: fallback inmediato y el circuit breaker evita volver a esperarlo en el remito siguiente
   state.mode = "quota";
@@ -316,7 +324,7 @@ try {
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 40_000 });
   const g429a = state.requests.filter((r) => r.model && r.model !== "gemini-2.0-flash-retirado" && !r.textOnly).length;
   check("Gemini 429 (cuota): UNA sola llamada, fallback inmediato y lectura completa", g429a === 1 && ostate.requests.length === 1 && (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER, `gemini=${g429a}`);
-  await mp.keyboard.press("Escape");
+  await closeDlg(mp);
   state.requests.length = 0;
   ostate.requests.length = 0;
   await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
@@ -326,7 +334,7 @@ try {
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 40_000 });
   const g429b = state.requests.filter((r) => r.model && r.model !== "gemini-2.0-flash-retirado" && !r.textOnly).length;
   check("Circuit breaker: el remito SIGUIENTE no llama a Gemini (0 pedidos) y lee directo con OpenAI", g429b === 0 && ostate.requests.length === 1, `gemini=${g429b} ${Date.now() - tCb}ms`);
-  await mp.keyboard.press("Escape");
+  await closeDlg(mp);
 
   // AMBOS proveedores caídos: borrador y foto conservados, carga manual, y al volver OpenAI el reintento con la MISMA foto completa
   state.mode = "overloaded";
@@ -342,7 +350,7 @@ try {
   await mp.locator("[data-testid=remito-reintentar]").first().click();
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 60_000 });
   check("Vuelve el proveedor de respaldo: «Reintentar lectura» con la MISMA foto completa el formulario", (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER);
-  await mp.keyboard.press("Escape");
+  await closeDlg(mp);
   state.mode = "ok";
   await resetBreaker();
 
@@ -362,7 +370,7 @@ try {
   check("Mejora automática: se envió una SEGUNDA lectura con la imagen mejorada solo por la cantidad que faltaba, sin pedir otra foto", gen2.length === 2 && gen2[1].prompt.includes("SEGUNDA LECTURA") && /renglón 2: cantidad/.test(gen2[1].prompt) && vioMejora, JSON.stringify({ n: gen2.length, models: state.requests.filter((r) => r.model && !r.textOnly).map((r) => r.model), second: gen2[1]?.prompt?.includes("SEGUNDA LECTURA"), renglon: /renglón 2: cantidad/.test(gen2[1]?.prompt ?? ""), vioMejora, tail: (gen2[1]?.prompt ?? "").slice(-300) }));
   check("La cantidad faltante se recuperó y el resto quedó igual (100 kg y 40,5 kg), sin marcar pendiente", (await mp.locator("[data-testid=remito-linea]").nth(1).locator("[data-testid=linea-cantidad]").inputValue()) === "40.5" && (await mp.locator("[data-testid=remito-linea]").nth(0).locator("[data-testid=linea-cantidad]").inputValue()) === "100" && (await mp.getByText(/Mejoramos la imagen y recuperamos los datos/).count()) >= 1);
   check("La mejora no movió stock", (await balance(MP_CODE2)) === stockAntesMejora);
-  await mp.keyboard.press("Escape");
+  await closeDlg(mp);
 
   // ===== Lectura parcial: no se puede leer UNA cantidad → se completa todo lo demás y se marca solo eso =====
   state.mode = "noqty";
@@ -384,7 +392,7 @@ try {
   await mp.locator("[data-testid=remito-pasar-excel]").click();
   await mp.waitForTimeout(2500);
   check("PASAR A EXCEL funciona con los datos ya leídos y NO repite la lectura (sin llamadas nuevas al proveedor)", state.requests.filter((r) => r.model && !r.textOnly).length === llamadasAntesExcel);
-  await mp.keyboard.press("Escape");
+  await closeDlg(mp);
   state.mode = "ok";
   ostate.mode = "ok";
   await resetBreaker();
@@ -415,7 +423,7 @@ try {
   check("Recuperar no duplicó nada ni movió stock", (await balance(MP_CODE)) === stockAntesRecup);
   await mp.screenshot({ path: `${OUT}/05-mp-recuperado.png` });
   await mp.unroute("**/api/v1/inventory/receipts");
-  await mp.keyboard.press("Escape");
+  await closeDlg(mp);
 
   // ===== Depósito (PC) =====
   state.mode = "me";
@@ -469,6 +477,201 @@ try {
   check("Tablet: la revisión del remito se ve completa, sin scroll horizontal", overflow <= 1 && (await tab.locator("[data-testid=remito-linea]").count()) === 2, `desborde=${overflow}px`);
   await tab.screenshot({ path: `${OUT}/06-tablet-revision.png`, fullPage: true });
   await tabCtx.close();
+
+
+  // ===== REDISEÑO MOBILE: pantalla completa, teclado, protección contra cierres accidentales y borradores =====
+  state.mode = "ok";
+  ostate.mode = "ok";
+  await resetBreaker();
+  state.delayMs = 300;
+  const receiptsBy = async (status) => Number((await q("select count(*)::int n from inventory_receipts where status = $1", [status]))[0].n);
+  const confAntes = await receiptsBy("CONFIRMADO");
+  const stockMobAntes = await balance(MP_CODE);
+  const openWizard = async (pg) => {
+    await pg.locator("[data-testid=nuevo-ingreso-remito]").waitFor({ timeout: 120_000 });
+    await pg.locator("[data-testid=nuevo-ingreso-remito]").click();
+    await dlg(pg).waitFor();
+  };
+  const uploadAndWait = async (pg) => {
+    await pg.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
+    await pg.locator("[data-testid=paso-revision]").waitFor({ timeout: 90_000 });
+  };
+  const confirmVisible = (pg) => pg.locator("[data-testid=remito-cerrar-confirmar]").isVisible().catch(() => false);
+  for (const [w, h] of [[360, 640], [375, 667], [390, 844], [412, 915]]) {
+    const sz = await openAs(E2E_USERS.materiaPrima, true, { width: w, height: h });
+    const pg = sz.page;
+    await pg.goto("/mi-trabajo");
+    await nav(pg, "Ingresos MP");
+    await openWizard(pg);
+    await uploadAndWait(pg);
+    const box = await dlg(pg).boundingBox();
+    const m = await pg.evaluate(() => {
+      const d = document.querySelector("[data-testid=ingreso-remito-dialog]");
+      const fields = [...d.querySelectorAll("input:not([type=checkbox]):not([type=file]):not([type=hidden]),select,textarea")].filter((e) => e.getBoundingClientRect().width > 0);
+      return {
+        hscroll: d.scrollWidth - d.clientWidth,
+        pageHscroll: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        small: fields.filter((e) => parseFloat(getComputedStyle(e).fontSize) < 16).length,
+        short: fields.filter((e) => e.getBoundingClientRect().height < 43.5).length,
+        fields: fields.length,
+        bodyLocked: getComputedStyle(document.body).overflow === "hidden" || document.body.hasAttribute("data-scroll-locked"),
+      };
+    });
+    check(`${w}×${h}: la ventana ocupa TODA la pantalla (sin márgenes ni ventana pequeña centrada)`, Math.abs(box.x) <= 1 && Math.abs(box.y) <= 1 && Math.abs(box.width - w) <= 2 && Math.abs(box.height - h) <= 2, JSON.stringify(box));
+    check(`${w}×${h}: sin desplazamiento horizontal, fondo bloqueado y ${m.fields} campos con 16 px y ≥44 px de alto`, m.hscroll <= 1 && m.pageHscroll <= 1 && m.small === 0 && m.short === 0 && m.fields >= 8, JSON.stringify(m));
+    if (w === 360) {
+      // Muchos renglones + último material con el «teclado» (área visible reducida): el campo queda a la vista y el pie no tapa el final.
+      for (let i = 0; i < 9; i++) await pg.locator("[data-testid=remito-agregar-linea]").click();
+      const n = await pg.locator("[data-testid=remito-linea]").count();
+      const kbH = h - 300;
+      await pg.setViewportSize({ width: w, height: kbH });
+      const lastQty = pg.locator("[data-testid=remito-linea]").last().locator("[data-testid=linea-cantidad]");
+      await lastQty.click();
+      await lastQty.fill("12,5");
+      await pg.waitForTimeout(700);
+      const vis = await pg.evaluate(() => {
+        const el = document.activeElement;
+        const r = el.getBoundingClientRect();
+        const head = document.querySelector("[data-testid=remito-encabezado]").getBoundingClientRect();
+        const d = document.querySelector("[data-testid=ingreso-remito-dialog]").getBoundingClientRect();
+        return { top: r.top, bottom: r.bottom, headBottom: head.bottom, dialogH: d.height, vh: window.innerHeight, tag: el.getAttribute("data-testid") };
+      });
+      check(`360×640 con ${n} renglones y área visible reducida (teclado): el campo enfocado queda visible bajo el encabezado y la ventana se ajusta al alto real`, vis.tag === "linea-cantidad" && vis.top >= vis.headBottom - 1 && vis.bottom <= vis.vh + 1 && Math.abs(vis.dialogH - kbH) <= 2, JSON.stringify(vis));
+      await pg.setViewportSize({ width: w, height: h });
+      await pg.waitForTimeout(500);
+      const back = await dlg(pg).boundingBox();
+      check("Al cerrarse el teclado la ventana recupera el tamaño completo", Math.abs(back.height - h) <= 2, `${back.height}`);
+      await pg.evaluate(() => { const d = document.querySelector("[data-testid=ingreso-remito-dialog]"); d.scrollTop = d.scrollHeight; });
+      await pg.waitForTimeout(300);
+      const end = await pg.evaluate(() => {
+        const lines = document.querySelectorAll("[data-testid=remito-linea]");
+        const last = lines[lines.length - 1].getBoundingClientRect();
+        const foot = document.querySelector("[data-testid=remito-barra-accion]").getBoundingClientRect();
+        const head = document.querySelector("[data-testid=remito-encabezado]").getBoundingClientRect();
+        return { lastBottom: last.bottom, footTop: foot.top, footVisible: foot.bottom <= window.innerHeight + 1 && foot.top >= 0, headTop: head.top };
+      });
+      check("Al final de la lista el pie fijo no tapa el último material y el encabezado sigue visible", end.lastBottom <= end.footTop + 1 && end.footVisible && Math.abs(end.headTop) <= 1, JSON.stringify(end));
+      await pg.screenshot({ path: `${OUT}/07-mobile-360x640.png` });
+    }
+    await sz.ctx.close();
+  }
+
+  // ----- Protección contra cierres accidentales (celular 390×844) -----
+  const mob = await openAs(E2E_USERS.materiaPrima, true, { width: 390, height: 844 });
+  const mb = mob.page;
+  await mb.goto("/mi-trabajo");
+  await nav(mb, "Ingresos MP");
+  await openWizard(mb);
+  await mb.keyboard.press("Escape");
+  await mb.waitForTimeout(600);
+  check("Sin foto ni datos: cerrar no pide confirmación", (await dlg(mb).count()) === 0 && !(await confirmVisible(mb)));
+  await openWizard(mb);
+  await uploadAndWait(mb);
+  const MARK = `${SUPPLIER} MOB-${RUN}`;
+  await mb.locator("[data-testid=remito-proveedor]").fill(MARK);
+  await mb.evaluate(() => { document.querySelector("[data-testid=ingreso-remito-dialog]").scrollTop = 140; });
+  await mb.waitForTimeout(300);
+  const topAntes = await mb.evaluate(() => document.querySelector("[data-testid=ingreso-remito-dialog]").scrollTop);
+  await mb.locator("[data-testid=remito-cerrar-x]").click();
+  await mb.locator("[data-testid=remito-cerrar-confirmar]").waitFor();
+  const txt = await mb.locator("[data-testid=remito-cerrar-confirmar]").innerText();
+  check("X con trabajo en riesgo: pide «¿Querés cerrar el remito?» con Guardar y cerrar / Cerrar sin guardar / Cancelar", /¿Querés cerrar el remito\?/.test(txt) && /Guardar y cerrar/.test(txt) && /Cerrar sin guardar/.test(txt) && /Cancelar/.test(txt));
+  const bt = await mb.locator("[data-testid=remito-cerrar-confirmar] button:visible").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+  check("Las tres opciones son grandes (≥44 px)", bt.length >= 3 && bt.every((x) => x >= 44), JSON.stringify(bt));
+  await mb.locator("[data-testid=remito-cerrar-cancelar]").click();
+  await mb.waitForTimeout(500);
+  const estado = await mb.evaluate(() => ({ top: document.querySelector("[data-testid=ingreso-remito-dialog]").scrollTop, sup: document.querySelector("[data-testid=remito-proveedor]").value }));
+  check("Cancelar vuelve al formulario en el mismo estado y posición de desplazamiento (datos intactos)", !(await confirmVisible(mb)) && estado.sup === MARK && Math.abs(estado.top - topAntes) <= 4, JSON.stringify({ estado, topAntes }));
+  await mb.keyboard.press("Escape");
+  await mb.locator("[data-testid=remito-cerrar-confirmar]").waitFor();
+  check("Escape también pide confirmación (no cierra solo)", (await dlg(mb).isVisible()) && (await confirmVisible(mb)));
+  await mb.locator("[data-testid=remito-cerrar-cancelar]").click();
+  await mb.goBack().catch(() => undefined);
+  await mb.waitForTimeout(800);
+  check("Botón «atrás» del dispositivo: pide confirmación y la ventana sigue abierta", (await confirmVisible(mb)) && (await dlg(mb).isVisible()));
+  await mb.locator("[data-testid=remito-cerrar-cancelar]").click();
+  await mb.waitForTimeout(400);
+  // Error de guardado: NO se cierra
+  await mb.route("**/api/v1/inventory/receipts", async (route) => {
+    if (route.request().method() === "POST" && /"action":"save"/.test(route.request().postData() ?? "")) return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "falla simulada" }) });
+    return route.continue();
+  });
+  await mb.locator("[data-testid=remito-cerrar-x]").click();
+  await mb.locator("[data-testid=remito-cerrar-guardar]").click();
+  await mb.locator("[data-testid=remito-cerrar-error]").waitFor({ timeout: 15_000 });
+  check("Si falla el guardado la ventana NO se cierra, se explica y no se pierde nada", (await dlg(mb).isVisible()) && (await mb.locator("[data-testid=remito-proveedor]").inputValue()) === MARK);
+  await mb.unroute("**/api/v1/inventory/receipts");
+  await mb.locator("[data-testid=remito-cerrar-guardar]").click();
+  await dlg(mb).waitFor({ state: "detached", timeout: 20_000 });
+  const guardado = (await q("select status, supplier, (select count(*)::int from inventory_ingreso_adjuntos f where f.receipt_id = r.id and f.deleted_at is null) files from inventory_receipts r where supplier like $1 order by updated_at desc limit 1", [`%${MARK}%`]))[0];
+  check("Guardar y cerrar: queda el BORRADOR con la foto y los datos editados", guardado?.status === "BORRADOR" && guardado.files >= 1, JSON.stringify({ s: guardado?.status, f: guardado?.files }));
+  check("Guardar el borrador NO confirma el ingreso ni mueve stock", (await receiptsBy("CONFIRMADO")) === confAntes && (await balance(MP_CODE)) === stockMobAntes);
+  // Recuperar el borrador con su foto
+  await mb.locator("[data-testid=remitos-recibidos]").click();
+  await mb.locator("[data-testid=remito-historial-item][data-status=BORRADOR]").filter({ hasText: MARK }).first().click();
+  await dlg(mb).waitFor();
+  await mb.locator("[data-testid=paso-revision]").waitFor({ timeout: 60_000 });
+  await mb.waitForTimeout(800);
+  check("Recuperación del borrador: vuelve con los datos y la fotografía", (await mb.locator("[data-testid=remito-proveedor]").inputValue()) === MARK && (await mb.locator("[data-testid=remito-visor], [data-testid=remito-miniaturas]").count()) >= 1);
+  // Cerrar sin guardar: solo descarta lo pendiente, NO borra el borrador guardado
+  await mb.locator("[data-testid=remito-proveedor]").fill(`${MARK} CAMBIO-NO-GUARDADO`);
+  await mb.locator("[data-testid=remito-cerrar-x]").click();
+  await mb.locator("[data-testid=remito-cerrar-sin-guardar]").click();
+  await dlg(mb).waitFor({ state: "detached", timeout: 20_000 });
+  const tras = (await q("select status, supplier from inventory_receipts where supplier like $1 order by updated_at desc limit 1", [`%${MARK}%`]))[0];
+  check("Cerrar sin guardar: el cambio pendiente se descarta y el borrador previamente guardado se conserva", tras?.status === "BORRADOR" && !/CAMBIO-NO-GUARDADO/.test(tras.supplier), tras?.status);
+  // Borrador nuevo nunca guardado: «Cerrar sin guardar» lo descarta explícitamente
+  await mb.locator("[data-testid=nuevo-ingreso-remito]").waitFor();
+  await openWizard(mb);
+  await mb.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
+  await mb.locator("[data-testid=paso-revision]").waitFor({ timeout: 90_000 });
+  const antesDesc = await receiptsBy("DESCARTADO");
+  await mb.locator("[data-testid=remito-cerrar-x]").click();
+  await mb.locator("[data-testid=remito-cerrar-sin-guardar]").click();
+  await dlg(mb).waitFor({ state: "detached", timeout: 20_000 });
+  check("Borrador de esta sesión nunca guardado + «Cerrar sin guardar»: se descarta (sin ingresos ni stock)", (await receiptsBy("DESCARTADO")) === antesDesc + 1 && (await receiptsBy("CONFIRMADO")) === confAntes);
+  // Lectura automática en curso
+  state.delayMs = 4000;
+  await openWizard(mb);
+  await mb.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
+  await mb.locator("[data-testid=remito-estado-ocupado]").waitFor({ timeout: 20_000 });
+  await mb.keyboard.press("Escape");
+  await mb.locator("[data-testid=remito-cerrar-confirmar]").waitFor({ timeout: 10_000 });
+  check("Con una lectura automática en curso cerrar también pide confirmación", await confirmVisible(mb));
+  await mb.locator("[data-testid=remito-cerrar-cancelar]").click();
+  await mb.locator("[data-testid=paso-revision]").waitFor({ timeout: 90_000 });
+  state.delayMs = 300;
+  check("Tras cancelar, la lectura terminó y completó el formulario sin perder nada", (await mb.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER);
+  // Pie: guardar borrador ≠ confirmar ingreso
+  await mb.locator("[data-testid=remito-guardar-borrador]").click();
+  await mb.getByText(/Borrador guardado/).waitFor({ timeout: 15_000 });
+  const bb = await mb.evaluate(() => {
+    const g = document.querySelector("[data-testid=remito-guardar-borrador]").getBoundingClientRect();
+    const c = document.querySelector("[data-testid=remito-revisar]").getBoundingClientRect();
+    return { g: g.height, c: c.height, gt: document.querySelector("[data-testid=remito-guardar-borrador]").innerText, ct: document.querySelector("[data-testid=remito-revisar]").innerText };
+  });
+  check("Pie: «Guardar borrador» y «Confirmar ingreso de stock» son botones distintos, grandes y diferenciados", bb.g >= 44 && bb.c >= 44 && bb.gt !== bb.ct, JSON.stringify(bb));
+  check("Guardar borrador desde el pie no suma stock ni confirma", (await receiptsBy("CONFIRMADO")) === confAntes && (await balance(MP_CODE)) === stockMobAntes);
+  await closeDlg(mb);
+  await mob.ctx.close();
+  // Tablet y computadora: la ventana sigue siendo una tarjeta centrada (no pantalla completa) y con su protección de cierre
+  for (const [label, vw, vh, mobile] of [["Tablet", 820, 1180, true], ["Computadora", 1440, 900, false]]) {
+    const dv = await openAs(E2E_USERS.materiaPrima, mobile, mobile ? { width: vw, height: vh } : undefined);
+    const dp2 = dv.page;
+    await dp2.goto("/mi-trabajo");
+    await nav(dp2, "Ingresos MP");
+    await openWizard(dp2);
+    await uploadAndWait(dp2);
+    const bx = await dlg(dp2).boundingBox();
+    const win = await dp2.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
+    await dp2.mouse.click(5, 5); // toque FUERA de la ventana
+    await dp2.waitForTimeout(500);
+    check(`${label}: tarjeta amplia y centrada; tocar fuera NO cierra directo (pide confirmación)`, bx.x >= 0 && bx.width <= win.w && (await dlg(dp2).isVisible()) && (await confirmVisible(dp2)), JSON.stringify({ bx, win }));
+    await dp2.locator("[data-testid=remito-cerrar-cancelar]").click();
+    await dp2.screenshot({ path: `${OUT}/08-${label.toLowerCase()}.png` });
+    await closeDlg(dp2);
+    await dv.ctx.close();
+  }
 
   // ===== Prueba de configuración (sin enviar remitos) y permisos =====
   const dir = await openAs(E2E_USERS.direccion, false);
