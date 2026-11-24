@@ -12,7 +12,6 @@ import {
 } from "@/features/entities/views/detail-views";
 import {
   TwinConfigView,
-  TwinInsumosView,
 } from "@/features/entities/views/stub-views";
 import { WireframePlanSemanal } from "@/features/work/views/plan-semanal";
 import { WireframeConsulta } from "@/features/work/views/consulta";
@@ -32,6 +31,9 @@ import { DepositoMeEnvasadoView } from "@/features/os/operational/views/deposito
 import { ControlMeView } from "@/features/os/operational/views/control-me-view";
 import { PedidosDepositoView } from "@/features/os/operational/views/pedidos-deposito-view";
 import { EntregasProduccionView } from "@/features/os/operational/views/entregas-produccion-view";
+import { InsumosView } from "@/features/os/operational/views/insumos-view";
+import { IngresoCajasGenusView } from "@/features/os/operational/views/ingreso-cajas-genus-view";
+import { ObservacionesProduccionView } from "@/features/os/operational/views/observaciones-produccion-view";
 import { DepositoGranelesView } from "@/features/os/operational/views/deposito-graneles-view";
 import { MeAvisosView } from "@/features/os/operational/views/me-avisos-view";
 import { InternalAvisosView } from "@/features/os/operational/views/internal-avisos-view";
@@ -77,7 +79,7 @@ export function TwinRouter() {
     case "consulta":
       return <WireframeConsulta key={currentNav.query ?? "consulta"} initialQuery={currentNav.query} />;
     case "insumos":
-      return <TwinInsumosView />;
+      return <InsumosView />;
     case "config":
       return <TwinConfigView />;
     case "produccion":
@@ -127,6 +129,10 @@ export function TwinRouter() {
       return <DepositoGranelesView />;
     case "entregas-produccion":
       return <EntregasProduccionView />;
+    case "ingreso-cajas-genus":
+      return <IngresoCajasGenusView />;
+    case "observaciones-produccion":
+      return <ObservacionesProduccionView />;
     case "inventario-deposito":
       return <InventarioDepositoView />;
     case "vista-mensual":
