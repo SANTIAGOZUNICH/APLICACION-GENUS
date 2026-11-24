@@ -50,3 +50,13 @@ export function createDbHealthStore(): ProviderHealthStore {
     },
   };
 }
+
+/** ¿Existe y responde la tabla del circuit breaker (migración 0086)? Solo lectura: no modifica nada. */
+export async function checkHealthTable(): Promise<{ persistent: boolean; table: string; error?: string }> {
+  try {
+    await getDb().select({ p: aiProviderHealth.provider }).from(aiProviderHealth).limit(1);
+    return { persistent: true, table: "ai_provider_health" };
+  } catch (e) {
+    return { persistent: false, table: "ai_provider_health", error: (e instanceof Error ? e.message : "error").replace(/postgres(ql)?:\/\/\S+/gi, "[url oculta]").slice(0, 160) };
+  }
+}

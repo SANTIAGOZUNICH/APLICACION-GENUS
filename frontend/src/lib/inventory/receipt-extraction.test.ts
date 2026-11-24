@@ -319,7 +319,7 @@ describe("prueba de configuración (view=extraction_health)", () => {
     const p = await probeExtraction({ fetchImpl: f as never, env: env({ INGRESO_REMITO_GEMINI_MODEL: "gemini-2.0-flash", CREAMY_GEMINI_MODEL: "gemini-2.5-flash" }) });
     expect(p).toMatchObject({ ok: true, configuredModel: "gemini-2.0-flash", modelSource: "INGRESO_REMITO_GEMINI_MODEL", creamyModel: "gemini-2.5-flash", effectiveModel: "gemini-2.5-flash" });
     expect(p.listing).toMatchObject({ ok: true, count: 2, candidates: ["gemini-2.5-flash", "gemini-3.5-flash"] });
-    expect(p.attempts).toEqual([{ model: "gemini-2.0-flash", status: 404, kind: "model" }, { model: "gemini-2.5-flash", status: 200, kind: "ok" }]);
+    expect(p.attempts).toMatchObject([{ model: "gemini-2.0-flash", status: 404, kind: "model" }, { model: "gemini-2.5-flash", status: 200, kind: "ok" }]);
     expect(p.providers.find((x) => x.provider === "openai")).toMatchObject({ configured: false });
     expect(p.image).toBeNull();
     expect(JSON.stringify(p)).not.toContain(KEY);

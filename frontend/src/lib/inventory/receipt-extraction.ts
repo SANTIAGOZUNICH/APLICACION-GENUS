@@ -98,8 +98,23 @@ export function redactSecrets(text: string): string {
 
 type ModelCache = { models: string[]; working: string | null; at: number };
 let modelCache: ModelCache | null = null;
+/** Modelos que el proveedor rechazó con 404 aunque figuren en el listado: se descartan un rato (no se vuelven a pedir en cada lectura). */
+const DEAD_MODEL_MS = Math.max(1, Number(process.env.INGRESO_REMITO_DEAD_MODEL_MS ?? 30 * 60_000) || 30 * 60_000);
+const deadModels = new Map<string, number>();
+const isDeadModel = (m: string) => {
+  const at = deadModels.get(m);
+  if (at == null) return false;
+  if (Date.now() - at > DEAD_MODEL_MS) {
+    deadModels.delete(m);
+    return false;
+  }
+  return true;
+};
+/** Modelos descartados por 404 (con cuánto falta para volver a probarlos): se muestra en el diagnóstico. */
+export const deadModelList = () => [...deadModels.keys()].filter((m) => isDeadModel(m));
 export function resetModelCacheForTests() {
   modelCache = null;
+  deadModels.clear();
 }
 
 /**
@@ -243,7 +258,7 @@ type GeminiBody = {
   promptFeedback?: { blockReason?: string };
   error?: GeminiError;
 };
-export type Attempt = { model: string; status: number | null; kind: "ok" | FailureKind; /** Motivo informado por Google (p. ej. SERVICE_DISABLED), sin datos sensibles. */ reason?: string };
+export type Attempt = { model: string; status: number | null; kind: "ok" | FailureKind; /** Motivo informado por Google (p. ej. SERVICE_DISABLED), sin datos sensibles. */ reason?: string; /** Mensaje del proveedor, saneado y acotado (sin clave ni contenido). */ detail?: string };
 
 function generationConfig(model: string, withThinking = true, maxOutputTokens = 12288) {
   const cfg: Record<string, unknown> = { temperature: 0, responseMimeType: "application/json", maxOutputTokens };
@@ -275,7 +290,7 @@ async function runGenerate(
   const queue: string[] = [];
   const push = (m: string | null | undefined) => {
     const name = cleanModel(m ?? "");
-    if (name && !tried.has(name) && !queue.includes(name)) queue.push(name);
+    if (name && !tried.has(name) && !queue.includes(name) && !isDeadModel(name)) queue.push(name);
   };
   for (const m of opts.exclude ?? []) tried.add(cleanModel(m)); // modelos ya usados: no se vuelven a pedir (etapa de respaldo)
   push(cfg.model);
@@ -292,7 +307,7 @@ async function runGenerate(
     const listed = await listModels(env, quick);
     if (listed.ok) {
       modelCache = { models: listed.models, working: modelCache?.working ?? null, at: modelCache?.at ?? Date.now() };
-      for (const m of listed.models.slice(0, 4)) push(m);
+      for (const m of listed.models.slice(0, 6)) push(m); // el listado ya viene ordenado: estables primero
     } else {
       logFailure("no se pudo listar modelos", listed.status, null, listed.kind);
       for (const m of STATIC_FALLBACK_MODELS) push(m);
@@ -358,6 +373,8 @@ async function runGenerate(
   // Un 403 puede ser de UN modelo (no habilitado para el proyecto) y no de toda la clave: se prueban otros candidatos (tope 3) antes de informarlo.
   let permissionFail: { model: string; diag: GeminiDiag; detail: string } | null = null;
   let permissionModels = 0;
+  let modelMisses = 0;
+  const MAX_MODEL_MISSES = 6;
   /** Vuelve a la ronda de modelos que fallaron de forma transitoria, si todavía hay presupuesto y no se superó el tope de intentos. */
   const requeue = async (): Promise<boolean> => {
     if (opts.fast || !lastTransient || ring.length === 0 || calls >= maxCalls || rounds >= 3 || remaining() < minAttemptMs * 1.5) return false;
@@ -370,6 +387,7 @@ async function runGenerate(
   };
   try {
     for (;;) {
+      if (modelMisses >= MAX_MODEL_MISSES) break;
       if (!queue.length && !(await requeue())) break;
       const model = queue.shift()!;
       tried.add(model);
@@ -440,10 +458,16 @@ async function runGenerate(
           withThinking = false; // este modelo no acepta «thinkingConfig»: se reintenta igual sin él
           continue;
         }
-        attempts.push({ model, status: res.status, kind: cls.kind, reason: diagOf(res.status, body?.error).reason || undefined });
+        attempts.push({ model, status: res.status, kind: cls.kind, reason: diagOf(res.status, body?.error).reason || undefined, detail: cls.detail || undefined });
         logFailure(cls.kind, res.status, model, `${diagText(diagOf(res.status, body?.error))} ${cls.detail}`);
         if (cls.kind === "model") {
+          // Un 404 es una respuesta inmediata sobre ESE modelo (aparecer en el listado no garantiza que se pueda usar): se descarta y se pasa al
+          // siguiente SIN gastar el cupo de llamadas pensado para saturación o timeout, con un tope propio de modelos descartados.
+          deadModels.set(model, Date.now());
+          modelMisses += 1;
+          calls -= 1;
           if (modelCache?.working === model) modelCache = { ...modelCache, working: null };
+          if (modelMisses >= MAX_MODEL_MISSES) break;
           if (!queue.length && !discovered) await discover();
           moveOn = true;
           continue;
@@ -540,6 +564,8 @@ export type ProviderOutcome = {
   tokens?: { prompt?: number; output?: number; total?: number };
   /** El circuit breaker lo salteó (no se lo llamó). */
   skipped?: "breaker";
+  /** Motivo técnico del rechazo, saneado (código/mensaje del proveedor) para Sistemas. */
+  detail?: string;
 };
 /** Diagnóstico para Sistemas (sin claves ni contenido del remito): permite ver rápido si falla GENUS OS, Vercel, el proveedor o la imagen. */
 export type ReadStageDiag = {
@@ -650,7 +676,7 @@ const tokensOf = (body: GeminiBody): ReadStageDiag["tokens"] | undefined => {
 /** Salida de un proveedor, normalizada: texto JSON (mismo esquema para todos) o fallo clasificado. */
 type ProviderResult =
   | { ok: true; provider: ProviderId; model: string; text: string; finishReason: string; blocked?: string; attempts: Attempt[]; calls: number; tokens?: ReadStageDiag["tokens"]; ms: number }
-  | { ok: false; provider: ProviderId; kind: ExtractionFailureKind; message: string; model: string | null; attempts: Attempt[]; calls: number; http: number | null; retryAfterMs: number | null; ms: number };
+  | { ok: false; provider: ProviderId; kind: ExtractionFailureKind; message: string; model: string | null; attempts: Attempt[]; calls: number; http: number | null; retryAfterMs: number | null; ms: number; detail?: string };
 
 async function callGemini(parts: Array<Record<string, unknown>>, env: Partial<NodeJS.ProcessEnv>, doFetch: typeof fetch, opts: { exclude?: string[]; fast?: boolean }): Promise<ProviderResult> {
   const t0 = Date.now();
@@ -667,10 +693,10 @@ async function callGemini(parts: Array<Record<string, unknown>>, env: Partial<No
 
 async function callOpenAI(parts: Array<Record<string, unknown>>, env: Partial<NodeJS.ProcessEnv>, doFetch: typeof fetch): Promise<ProviderResult> {
   const r = await runOpenAI(parts, env, doFetch);
-  const attempts = r.attempts.map((a) => ({ model: a.model, status: a.status, kind: (a.kind === "unsupported" ? "bad_request" : a.kind) as Attempt["kind"] }));
+  const attempts = r.attempts.map((a) => ({ model: a.model, status: a.status, kind: (a.kind === "unsupported" ? "bad_request" : a.kind) as Attempt["kind"], detail: a.error ? [a.error.type, a.error.code, a.error.param ? `param ${a.error.param}` : "", a.error.message].filter(Boolean).join(" · ").slice(0, 300) : undefined }));
   if (r.ok) return { ok: true, provider: "openai", model: r.model, text: r.text, finishReason: r.finishReason, attempts, calls: r.calls, tokens: r.tokens, ms: r.ms };
   const kind: ExtractionFailureKind = r.kind === "unsupported" ? "unreadable" : r.kind === "bad_request" ? "bad_request" : r.kind;
-  return { ok: false, provider: "openai", kind, message: r.message, model: r.model, attempts, calls: r.calls, http: r.http, retryAfterMs: r.retryAfterMs, ms: r.ms };
+  return { ok: false, provider: "openai", kind, message: r.message, model: r.model, attempts, calls: r.calls, http: r.http, retryAfterMs: r.retryAfterMs, ms: r.ms, detail: attempts.at(-1)?.detail };
 }
 
 /** Interpreta el texto de un proveedor con el saneamiento ÚNICO (mismo esquema para Gemini y OpenAI). */
@@ -754,7 +780,7 @@ async function readStage(
       return { ok: false, kind: "unreadable", technical: parsed.technical, model: r.model, provider, attempts: allAttempts, calls: r.calls, http: null, outcomes };
     }
     last = r;
-    outcomes.push({ provider, ok: false, ms: r.ms, calls: r.calls, model: r.model, kind: r.kind, http: r.http });
+    outcomes.push({ provider, ok: false, ms: r.ms, calls: r.calls, model: r.model, kind: r.kind, http: r.http, detail: r.detail ?? r.attempts.at(-1)?.detail });
     await opts.health.recordFailure(provider, { kind: r.kind, http: r.http, retryAfterMs: r.retryAfterMs });
     logFailure(`proveedor ${provider} no disponible${hasBackup ? " → respaldo" : ""}`, r.http, r.model, `${r.kind} · ${Math.round(r.ms)} ms`);
   }
@@ -955,16 +981,37 @@ export async function generateJsonFromParts(
 
 // ───────────────────────── Prueba de configuración ─────────────────────────
 
+/** Resultado de UNA prueba (texto o imagen) de un proveedor: código HTTP, error técnico saneado y tiempo. */
+export type ProbeStep = {
+  ok: boolean;
+  kind?: string;
+  message: string;
+  http?: number | null;
+  /** Error técnico del proveedor (tipo/código/parámetro/mensaje), saneado y acotado. Solo lo ve quien puede ejecutar el diagnóstico. */
+  detail?: string;
+  requestId?: string | null;
+  ms?: number;
+  read?: { supplier: string; remitoNumber: string; remitoDate: string; lines: number };
+};
 export type ProviderProbe = {
   provider: ProviderId;
   configured: boolean;
   /** Variable de entorno que aporta la clave (solo el NOMBRE; nunca el valor). */
   keySource: string | null;
+  /** Endpoint y versión de API (sin secretos ni parámetros). */
+  endpoint: string | null;
+  apiVersion: string | null;
+  /** Modelo pedido a mano (o null si se elige solo) y modelo que efectivamente respondió. */
+  requestedModel: string | null;
   model: string | null;
   ok: boolean;
   ms: number;
-  text: { ok: boolean; kind?: string; message: string };
-  image: null | { ok: boolean; kind?: string; message: string; read?: { supplier: string; remitoNumber: string; remitoDate: string; lines: number } };
+  /** Prueba de TEXTO (sin imagen). Un OK acá NO prueba la visión. */
+  text: ProbeStep;
+  /** Prueba de IMAGEN (remito ficticio incorporado). null = no se pidió (`image=1`). */
+  image: null | ProbeStep;
+  /** Intentos por modelo (Gemini): modelo, HTTP, tipo y motivo saneado. */
+  attempts?: Attempt[];
   /** Estado del circuit breaker de este proveedor (compartido entre instancias si hay base). */
   breaker: { open: boolean; until: string | null; consecutiveFailures: number; lastKind: string | null; lastHttp: number | null; lastFailureAt: string | null; lastSuccessAt: string | null };
 };
@@ -986,6 +1033,10 @@ export type ProbeResult = {
   attempts: Attempt[];
   text: { ok: boolean; kind?: string; message: string };
   image: null | { ok: boolean; kind?: string; message: string; read?: { supplier: string; remitoNumber: string; remitoDate: string; lines: number } };
+  /** Modelos de Gemini descartados por 404 (figuran en el listado pero no sirven): no se vuelven a pedir por un rato. */
+  skippedModels: string[];
+  /** Almacenamiento del circuit breaker: `persistent` = la tabla `ai_provider_health` (migración 0086) existe y responde. */
+  breakerStore: { persistent: boolean; table: string; error?: string } | null;
   /** Una entrada por proveedor configurado (o faltante de configurar): resultado real, modelo y breaker. */
   providers: ProviderProbe[];
   /** Presupuesto real de una lectura (ms) y reparto entre proveedor principal y respaldo. */
@@ -998,7 +1049,7 @@ export type ProbeResult = {
  * remito ficticio incorporado al sistema con CADA proveedor configurado, por separado, para confirmar disponibilidad real, modelo,
  * tiempos y estado del circuit breaker. Devuelve solo estado y nombres de modelos: jamás claves ni contenido de remitos reales.
  */
-export async function probeExtraction(deps: { fetchImpl?: typeof fetch; env?: Partial<NodeJS.ProcessEnv>; image?: boolean; health?: ProviderHealthStore } = {}): Promise<ProbeResult> {
+export async function probeExtraction(deps: { fetchImpl?: typeof fetch; env?: Partial<NodeJS.ProcessEnv>; image?: boolean; health?: ProviderHealthStore; /** Comprueba que la tabla del circuit breaker (migración 0086) exista y responda. */ storeCheck?: () => Promise<{ persistent: boolean; table: string; error?: string }> } = {}): Promise<ProbeResult> {
   const env = deps.env ?? process.env;
   const doFetch = deps.fetchImpl ?? fetch;
   const health = deps.health ?? memoryHealth;
@@ -1018,39 +1069,65 @@ export async function probeExtraction(deps: { fetchImpl?: typeof fetch; env?: Pa
     return { open: st.openUntil > Date.now(), until: iso(st.openUntil || null), consecutiveFailures: st.consecutiveFailures, lastKind: st.lastKind, lastHttp: st.lastHttp, lastFailureAt: iso(st.lastFailureAt), lastSuccessAt: iso(st.lastSuccessAt) };
   };
   const probeImg = { bytes: new Uint8Array(Buffer.from(PROBE_IMAGE_BASE64, "base64")), contentType: PROBE_IMAGE_MIME };
-  const imageResult = (out: ExtractionOutcome): ProviderProbe["image"] =>
-    out.ok
-      ? { ok: out.data.lines.length > 0, message: out.data.lines.length ? `El modelo «${out.model}» analizó la imagen de prueba y encontró ${out.data.lines.length} renglón(es).` : "El modelo respondió pero no encontró renglones en la imagen de prueba.", read: { supplier: out.data.supplier, remitoNumber: out.data.remitoNumber, remitoDate: out.data.remitoDate, lines: out.data.lines.length } }
-      : { ok: false, kind: out.kind, message: out.technical || out.message };
+
+  const stepOf = (run: { ok: boolean; kind?: string; message?: string; http?: number | null; detail?: string; requestId?: string | null }, okMsg: string, ms: number): ProbeStep =>
+    run.ok ? { ok: true, message: okMsg, http: run.http ?? 200, ms } : { ok: false, kind: run.kind, message: run.message ?? "", http: run.http ?? null, detail: run.detail ? redactSecrets(run.detail).slice(0, 400) : undefined, requestId: run.requestId ?? null, ms };
+  const imageStep = (out: ExtractionOutcome, ms: number): ProbeStep => {
+    const failing = out.ok ? undefined : out.diag?.stages.flatMap((st) => st.providers ?? []).find((o) => !o.ok);
+    return out.ok
+      ? {
+          ok: out.data.lines.length > 0,
+          message: out.data.lines.length ? `El modelo «${out.model}» analizó la imagen de prueba y encontró ${out.data.lines.length} renglón(es).` : "El modelo respondió pero no encontró renglones en la imagen de prueba.",
+          http: 200,
+          ms,
+          read: { supplier: out.data.supplier, remitoNumber: out.data.remitoNumber, remitoDate: out.data.remitoDate, lines: out.data.lines.length },
+        }
+      : { ok: false, kind: out.kind, message: redactSecrets(out.technical || out.message).slice(0, 400), http: failing?.http ?? out.diag?.http ?? null, detail: failing?.detail, ms };
+  };
+  const readImage = async (provider: ProviderId): Promise<ProbeStep> => {
+    const t = Date.now();
+    const out = await extractRemito([probeImg], { fetchImpl: doFetch, env: { ...env, INGRESO_REMITO_PROVIDERS: provider, INGRESO_REMITO_BUDGET_MS: "20000" }, health: createNoopHealth() });
+    return imageStep(out, Date.now() - t);
+  };
   const providers: ProviderProbe[] = [];
 
   // ── Gemini ──
-  let geminiTop: { effectiveModel: string | null; listing: ProbeResult["listing"]; attempts: Attempt[]; text: ProbeResult["text"]; image: ProbeResult["image"] } = { effectiveModel: null, listing: empty, attempts: [], text: { ok: false, message: "Gemini no está configurado (falta GEMINI_API_KEY)." }, image: null };
+  let geminiTop: { effectiveModel: string | null; listing: ProbeResult["listing"]; attempts: Attempt[]; text: ProbeResult["text"]; image: ProbeResult["image"] } = { effectiveModel: null, listing: empty, attempts: [], text: { ok: false, message: "Gemini no está configurado." }, image: null };
+  const gBase = baseUrl(env);
   if (geminiAvailable(env)) {
     const t = Date.now();
     const listed = await listModels(env, doFetch);
-    const listing = listed.ok ? { ok: true, status: 200, count: listed.models.length, candidates: listed.models.slice(0, 6) } : { ok: false, status: listed.status, count: 0, candidates: [], kind: listed.kind };
+    const listing = listed.ok ? { ok: true, status: 200, count: listed.models.length, candidates: listed.models.slice(0, 8) } : { ok: false, status: listed.status, count: 0, candidates: [], kind: listed.kind };
+    const tt = Date.now();
     const run = await runGenerate([{ text: 'Respondé únicamente la palabra "OK".' }], env, doFetch, { maxOutputTokens: 16, json: false, fast: Boolean(providerOrder(env).length > 1) });
-    const text = run.ok ? { ok: true, message: `El modelo «${run.model}» respondió correctamente.` } : { ok: false, kind: run.kind, message: run.message };
-    let image: ProbeResult["image"] = null;
-    if (deps.image && run.ok) image = imageResult(await extractRemito([probeImg], { fetchImpl: doFetch, env: { ...env, INGRESO_REMITO_PROVIDERS: "gemini" }, health: createNoopHealth() }));
+    const last = run.attempts.at(-1);
+    const text = stepOf(run.ok ? { ok: true } : { ok: false, kind: run.kind, message: run.message, http: last?.status ?? null, detail: last?.detail }, run.ok ? `El modelo «${run.model}» respondió correctamente (prueba de texto).` : "", Date.now() - tt);
+    const image = deps.image ? await readImage("gemini") : null;
     geminiTop = { effectiveModel: run.ok ? run.model : null, listing, attempts: run.attempts, text, image };
-    providers.push({ provider: "gemini", configured: true, keySource: "GEMINI_API_KEY", model: run.ok ? run.model : null, ok: text.ok && (!deps.image || Boolean(image?.ok)), ms: Date.now() - t, text, image, breaker: await breakerOf("gemini") });
-  } else providers.push({ provider: "gemini", configured: false, keySource: null, model: null, ok: false, ms: 0, text: { ok: false, message: "Gemini no está configurado (falta GEMINI_API_KEY)." }, image: null, breaker: await breakerOf("gemini") });
+    providers.push({
+      provider: "gemini", configured: true, keySource: "GEMINI_API_KEY", endpoint: `POST ${gBase}/v1beta/models/{modelo}:generateContent`, apiVersion: "v1beta",
+      requestedModel: cfg.model || null, model: run.ok ? run.model : null,
+      ok: text.ok && (!deps.image || Boolean(image?.ok)), ms: Date.now() - t, text, image, attempts: run.attempts, breaker: await breakerOf("gemini"),
+    });
+  } else providers.push({ provider: "gemini", configured: false, keySource: null, endpoint: null, apiVersion: null, requestedModel: null, model: null, ok: false, ms: 0, text: { ok: false, message: "Gemini no está configurado (falta GEMINI_API_KEY)." }, image: null, breaker: await breakerOf("gemini") });
 
   // ── OpenAI (respaldo) ──
   if (openaiAvailable(env)) {
     const t = Date.now();
-    const oenv = { ...env, INGRESO_REMITO_BUDGET_MS: "25000" } as Partial<NodeJS.ProcessEnv>;
-    const r = await runOpenAI([{ text: 'Respondé únicamente la palabra "OK".' }, { inline_data: { mime_type: PROBE_IMAGE_MIME, data: PROBE_IMAGE_BASE64 } }], oenv, doFetch, { maxOutputTokens: 32 });
-    const text = r.ok ? { ok: true, message: `El modelo «${r.model}» respondió correctamente.` } : { ok: false, kind: r.kind, message: r.message };
-    let image: ProbeResult["image"] = null;
-    if (deps.image && r.ok) image = imageResult(await extractRemito([probeImg], { fetchImpl: doFetch, env: { ...env, INGRESO_REMITO_PROVIDERS: "openai" }, health: createNoopHealth() }));
-    providers.push({ provider: "openai", configured: true, keySource: openaiKeySource(env), model: r.model ?? openaiModel(env), ok: text.ok && (!deps.image || Boolean(image?.ok)), ms: Date.now() - t, text, image, breaker: await breakerOf("openai") });
-  } else providers.push({ provider: "openai", configured: false, keySource: null, model: null, ok: false, ms: 0, text: { ok: false, message: "OpenAI no está configurado: definí CREAMY_OPENAI_API_KEY u OPENAI_API_KEY (o INGRESO_REMITO_OPENAI_API_KEY) en Vercel para activar el respaldo." }, image: null, breaker: await breakerOf("openai") });
+    const oenv = { ...env, INGRESO_REMITO_BUDGET_MS: "20000" } as Partial<NodeJS.ProcessEnv>;
+    const tt = Date.now();
+    const r = await runOpenAI([{ text: 'Respondé únicamente la palabra "OK".' }], oenv, doFetch, { maxOutputTokens: 16, json: false, textOnly: true });
+    const text = stepOf(r.ok ? { ok: true } : { ok: false, kind: r.kind, message: r.message, http: r.http, detail: r.error ? [r.error.type, r.error.code, r.error.param ? `param ${r.error.param}` : "", r.error.message].filter(Boolean).join(" · ") : undefined, requestId: r.error?.requestId }, r.ok ? `El modelo «${r.model}» respondió correctamente (prueba de texto).` : "", Date.now() - tt);
+    const image = deps.image ? await readImage("openai") : null;
+    providers.push({
+      provider: "openai", configured: true, keySource: openaiKeySource(env), endpoint: "POST https://api.openai.com/v1/responses", apiVersion: "v1 (Responses API)",
+      requestedModel: openaiModel(env), model: r.ok ? r.model : null, ok: text.ok && (!deps.image || Boolean(image?.ok)), ms: Date.now() - t, text, image, breaker: await breakerOf("openai"),
+    });
+  } else providers.push({ provider: "openai", configured: false, keySource: null, endpoint: null, apiVersion: null, requestedModel: null, model: null, ok: false, ms: 0, text: { ok: false, message: "OpenAI no está configurado: definí CREAMY_OPENAI_API_KEY u OPENAI_API_KEY (o INGRESO_REMITO_OPENAI_API_KEY) en el servidor." }, image: null, breaker: await breakerOf("openai") });
 
+  const breakerStore = deps.storeCheck ? await deps.storeCheck().catch((e: unknown) => ({ persistent: false, table: "ai_provider_health", error: e instanceof Error ? redactSecrets(e.message).slice(0, 160) : "error" })) : null;
   if (!cfg.available) {
-    return { ...base, ok: false, code: cfg.code, effectiveModel: null, listing: empty, attempts: [], text: { ok: false, message: cfg.reason }, image: null, providers, message: cfg.reason };
+    return { ...base, ok: false, code: cfg.code, effectiveModel: null, listing: empty, attempts: [], text: { ok: false, message: cfg.reason }, image: null, providers, skippedModels: deadModelList(), breakerStore, message: cfg.reason };
   }
   const anyOk = providers.some((p) => p.configured && p.ok);
   const firstOk = providers.find((p) => p.configured && p.ok);
@@ -1065,7 +1142,9 @@ export async function probeExtraction(deps: { fetchImpl?: typeof fetch; env?: Pa
     text: geminiTop.text, // el diagnóstico de Gemini no se disfraza: el estado del respaldo va en `providers`
     image: geminiTop.image,
     providers,
-    message: anyOk ? (providers.every((p) => !p.configured || p.ok) ? (deps.image ? "Los proveedores configurados analizaron correctamente una imagen de prueba." : "Los proveedores configurados respondieron correctamente.") : `Funciona con ${firstOk?.provider}; algún proveedor falló: ${failMsg}`) : failMsg,
+    skippedModels: deadModelList(),
+    breakerStore,
+    message: anyOk ? (providers.every((p) => !p.configured || p.ok) ? (deps.image ? "Los proveedores configurados analizaron correctamente una imagen de prueba." : "Los proveedores configurados respondieron a la prueba de TEXTO; la visión no se probó (agregá image=1).") : `Funciona con ${firstOk?.provider}; algún proveedor falló: ${failMsg}`) : failMsg,
   };
 }
 

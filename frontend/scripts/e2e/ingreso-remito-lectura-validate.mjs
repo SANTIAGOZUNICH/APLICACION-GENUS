@@ -269,7 +269,7 @@ try {
   await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
   await mp.locator("[data-testid=remito-lectura-fallo]").waitFor({ timeout: 90_000 });
   const sat = await mp.locator("[data-testid=remito-lectura-fallo]").innerText();
-  const generate = state.requests.filter((r) => r.model && !r.textOnly).length;
+  const generate = state.requests.filter((r) => r.model && r.model !== "gemini-2.0-flash-retirado" && !r.textOnly).length; // el 404 del modelo retirado se descarta sin gastar cupo
   const jobSat = (await q("select payload->'job' j from inventory_receipts order by updated_at desc limit 1"))[0]?.j;
   check("Saturación sostenida: mensaje de servicio no disponible (NO culpa a la imagen ni pide otra foto), la foto sigue adjunta y el diagnóstico queda para Sistemas", /La lectura automática no está disponible en este momento\. Tu imagen está guardada y podés completar los datos manualmente o reintentar\./.test(sat) && !/imagen más clara|otra foto|saturado/i.test(sat) && (await mp.locator("[data-testid=remito-miniaturas] li").count()) === 1 && jobSat?.diag?.providers?.gemini?.kind === "overloaded" && jobSat?.diag?.providers?.gemini?.http === 503, sat.slice(0, 80));
   check("Con respaldo configurado Gemini NO monopoliza el tiempo: máximo 2 intentos rápidos y luego el respaldo (que también falló: servicio no disponible, borrador y foto intactos)", generate >= 1 && generate <= 2 && ostate.requests.length >= 1 && jobSat?.diag?.providers?.gemini?.ok === false && jobSat?.diag?.providers?.openai?.ok === false, `gemini=${generate} openai=${ostate.requests.length}`);
@@ -410,7 +410,7 @@ try {
   await mp.getByText(/recuperando el resultado/i).waitFor({ timeout: 30_000 });
   check("Si la respuesta se pierde, la pantalla lo dice («recuperando el resultado») en vez de dar error", true);
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 90_000 });
-  const generacion = state.requests.filter((r) => r.model === "gemini-2.5-flash-lite" && !r.textOnly).length; // el modelo configurado inexistente (404) no cuenta: la lectura efectiva es una sola
+  const generacion = state.requests.filter((r) => r.model && r.model !== "gemini-2.0-flash-retirado" && !r.textOnly).length; // el modelo configurado inexistente (404) no cuenta: la lectura efectiva es una sola
   check("Resultado RECUPERADO sin sacar otra foto: formulario completo y UNA sola llamada al proveedor de IA", (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER && (await mp.locator("[data-testid=remito-linea]").count()) === 2 && generacion === 1, `llamadas=${generacion}`);
   check("Recuperar no duplicó nada ni movió stock", (await balance(MP_CODE)) === stockAntesRecup);
   await mp.screenshot({ path: `${OUT}/05-mp-recuperado.png` });
@@ -476,7 +476,7 @@ try {
   await resetBreaker();
   const health = await dir.page.request.get("/api/v1/inventory/receipts?module=MP&view=extraction_health");
   const hb = await health.json();
-  check("Dirección prueba la configuración (solo texto, sin documentos): informa modelo configurado, efectivo, modelos de la clave e intentos", health.status() === 200 && hb.health.ok === true && hb.health.configuredModel === "gemini-2.0-flash-retirado" && hb.health.effectiveModel === "gemini-2.5-flash-lite" && hb.health.listing.candidates[0] === "gemini-2.5-flash-lite" && !hb.health.listing.candidates.includes("embedding-001") && !JSON.stringify(hb).includes(FAKE_KEY), JSON.stringify({ c: hb.health.configuredModel, e: hb.health.effectiveModel, l: hb.health.listing?.candidates }));
+  check("Dirección prueba la configuración (solo texto, sin documentos): informa modelo configurado, efectivo, modelos de la clave e intentos", health.status() === 200 && hb.health.ok === true && hb.health.configuredModel === "gemini-2.0-flash-retirado" && ["gemini-2.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"].includes(hb.health.effectiveModel) && hb.health.listing.candidates[0] === "gemini-2.5-flash-lite" && !hb.health.listing.candidates.includes("embedding-001") && !JSON.stringify(hb).includes(FAKE_KEY), JSON.stringify({ c: hb.health.configuredModel, e: hb.health.effectiveModel, l: hb.health.listing?.candidates }));
   const textOnlyCalls = state.requests.filter((r) => r.model && r.textOnly);
   check("La prueba de texto no envió ningún documento", textOnlyCalls.length >= 1);
   const imgHealth = await (await dir.page.request.get("/api/v1/inventory/receipts?module=MP&view=extraction_health&image=1")).json();
