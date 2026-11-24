@@ -579,11 +579,18 @@ try {
   check("X con trabajo en riesgo: pide «¿Querés cerrar el remito?» con Guardar y cerrar / Cerrar sin guardar / Cancelar", /¿Querés cerrar el remito\?/.test(txt) && /Guardar y cerrar/.test(txt) && /Cerrar sin guardar/.test(txt) && /Cancelar/.test(txt));
   const bt = await mb.locator("[data-testid=remito-cerrar-confirmar] button:visible").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
   check("Las tres opciones son grandes (≥44 px)", bt.length >= 3 && bt.every((x) => x >= 44), JSON.stringify(bt));
+  await mb.evaluate(() => {
+    const d = document.querySelector("[data-testid=ingreso-remito-dialog]");
+    window.__sl = [];
+    const t0 = Date.now();
+    d.addEventListener("scroll", () => window.__sl.push([Date.now() - t0, d.scrollTop, document.activeElement?.getAttribute("data-testid") || document.activeElement?.tagName, d.scrollHeight - d.clientHeight]));
+  });
   await mb.locator("[data-testid=remito-cerrar-cancelar]").click();
   await mb.locator("[data-testid=remito-cerrar-confirmar]").waitFor({ state: "hidden", timeout: 5000 }).catch(() => undefined);
   await mb.waitForTimeout(700);
   const estado = await mb.evaluate(() => ({ top: document.querySelector("[data-testid=ingreso-remito-dialog]").scrollTop, sup: document.querySelector("[data-testid=remito-proveedor]").value }));
-  check("Cancelar vuelve al formulario en el mismo estado y posición de desplazamiento (datos intactos)", !(await confirmVisible(mb)) && estado.sup === MARK && Math.abs(estado.top - topAntes) <= 4, JSON.stringify({ estado, topAntes }));
+  const slog = await mb.evaluate(() => window.__sl);
+  check("Cancelar vuelve al formulario en el mismo estado y posición de desplazamiento (datos intactos)", !(await confirmVisible(mb)) && estado.sup === MARK && Math.abs(estado.top - topAntes) <= 4, JSON.stringify({ estado, topAntes, slog }));
   await mb.keyboard.press("Escape");
   await mb.locator("[data-testid=remito-cerrar-confirmar]").waitFor();
   check("Escape también pide confirmación (no cierra solo)", (await dlg(mb).isVisible()) && (await confirmVisible(mb)));
