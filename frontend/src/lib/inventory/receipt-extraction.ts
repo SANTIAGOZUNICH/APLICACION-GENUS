@@ -15,15 +15,20 @@ import "server-only";
 
 import { importantMissing, mergeExtractions, sanitizeExtraction, type ExtractedRemito } from "@/lib/inventory/receipt-rules";
 import { enhanceReceiptImages } from "@/lib/inventory/receipt-image-enhance";
+import { openaiKey, openaiKeySource, openaiModel, runOpenAI } from "@/lib/inventory/receipt-openai";
+import { isProviderOpen, memoryHealth, type ProviderHealthStore, type ProviderId } from "@/lib/inventory/receipt-provider-health";
 import { PROBE_IMAGE_BASE64, PROBE_IMAGE_MIME } from "@/lib/inventory/receipt-probe-image";
 
 export type ExtractionConfig = {
   available: boolean;
-  provider: "gemini" | null;
-  /** Modelo explícito (INGRESO_REMITO_GEMINI_MODEL) o "" si se elige automáticamente. */
+  /** Proveedor principal (el primero configurado). */
+  provider: "gemini" | "openai" | null;
+  /** Proveedores con credenciales, en orden de uso (el primero lee; el siguiente respalda si falla). */
+  providers: ProviderId[];
+  /** Modelo explícito de Gemini (INGRESO_REMITO_GEMINI_MODEL) o "" si se elige automáticamente. */
   model: string;
   modelSource: "INGRESO_REMITO_GEMINI_MODEL" | "automático";
-  /** ok | disabled (falta INGRESO_REMITO_EXTRACTION=gemini) | missing_key (falta GEMINI_API_KEY). */
+  /** ok | disabled (apagada por Sistemas) | missing_key (no hay ninguna clave: GEMINI_API_KEY ni OpenAI). */
   code: "ok" | "disabled" | "missing_key";
   reason: string;
 };
@@ -43,7 +48,7 @@ const MODEL_CACHE_MS = 6 * 60 * 60 * 1000;
 const MAX_FILES = 10;
 const MAX_TOTAL_BYTES = 14 * 1024 * 1024;
 /** Si ni siquiera se puede listar modelos: alias mantenido por Google y últimos nombres conocidos. */
-const STATIC_FALLBACK_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-3.5-flash"];
+const STATIC_FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest"];
 
 /** Solo cuando el texto siguió siendo ilegible DESPUÉS de los intentos razonables (incluida la mejora automática de la imagen). */
 export const MSG_UNREADABLE = "Necesito una imagen más clara del texto.";
@@ -52,19 +57,29 @@ export const MSG_PROVIDER_DOWN = "La lectura automática no está disponible en 
 
 const cleanModel = (v: string | undefined) => (v ?? "").trim().replace(/^models\//, "");
 
+export const geminiAvailable = (env: Partial<NodeJS.ProcessEnv>) => Boolean(env.GEMINI_API_KEY?.trim());
+export const openaiAvailable = (env: Partial<NodeJS.ProcessEnv>) => !["off", "false", "0", "no"].includes(String(env.INGRESO_REMITO_OPENAI ?? "").trim().toLowerCase()) && Boolean(openaiKey(env));
+
+/** Orden de proveedores: `INGRESO_REMITO_PROVIDERS` (p. ej. «gemini,openai»); por defecto Gemini principal y OpenAI de respaldo. Solo los que tienen clave. */
+export function providerOrder(env: Partial<NodeJS.ProcessEnv>): ProviderId[] {
+  const wanted = String(env.INGRESO_REMITO_PROVIDERS ?? "gemini,openai").split(",").map((x) => x.trim().toLowerCase()).filter((x): x is ProviderId => x === "gemini" || x === "openai");
+  const seen = [...new Set(wanted.length ? wanted : (["gemini", "openai"] as ProviderId[]))];
+  return seen.filter((p) => (p === "gemini" ? geminiAvailable(env) : openaiAvailable(env)));
+}
+
 export function extractionConfig(env: Partial<NodeJS.ProcessEnv> = process.env): ExtractionConfig {
   const mode = (env.INGRESO_REMITO_EXTRACTION ?? "").trim().toLowerCase();
   const model = cleanModel(env.INGRESO_REMITO_GEMINI_MODEL);
   const modelSource = model ? "INGRESO_REMITO_GEMINI_MODEL" : "automático";
-  // Se activa sola cuando existe GEMINI_API_KEY (antes exigía además INGRESO_REMITO_EXTRACTION=gemini y, sin esa variable,
-  // la lectura quedaba «apagada» aunque la clave estuviera cargada). Solo se apaga con una orden explícita.
+  // Se activa sola cuando existe alguna clave (Gemini u OpenAI). Solo se apaga con una orden explícita.
   if (["off", "false", "0", "no", "disabled", "desactivada"].includes(mode)) {
-    return { available: false, provider: null, model, modelSource, code: "disabled", reason: "La lectura automática de fotos está desactivada por Sistemas. Cargá los datos a mano: la foto queda adjunta igual." };
+    return { available: false, provider: null, providers: [], model, modelSource, code: "disabled", reason: "La lectura automática de fotos está desactivada por Sistemas. Cargá los datos a mano: la foto queda adjunta igual." };
   }
-  if (!env.GEMINI_API_KEY?.trim()) {
-    return { available: false, provider: null, model, modelSource, code: "missing_key", reason: "La lectura automática está habilitada pero falta la clave del servicio (GEMINI_API_KEY). Cargá los datos a mano y avisá a Sistemas." };
+  const providers = providerOrder(env);
+  if (providers.length === 0) {
+    return { available: false, provider: null, providers: [], model, modelSource, code: "missing_key", reason: "La lectura automática está habilitada pero falta la clave del servicio (GEMINI_API_KEY, o CREAMY_OPENAI_API_KEY / OPENAI_API_KEY para OpenAI). Cargá los datos a mano y avisá a Sistemas." };
   }
-  return { available: true, provider: "gemini", model, modelSource, code: "ok", reason: "" };
+  return { available: true, provider: providers[0]!, providers, model, modelSource, code: "ok", reason: "" };
 }
 
 /** Base de la API. Solo se acepta otra distinta de Google para pruebas locales (localhost / 127.0.0.1). */
@@ -87,7 +102,11 @@ export function resetModelCacheForTests() {
   modelCache = null;
 }
 
-/** Cuánto «sirve» un modelo para leer remitos: estable > alias > preview; flash antes que lite y que pro; versión más nueva primero. */
+/**
+ * Orden de preferencia para LEER REMITOS: modelos GA, económicos y con capacidad probada (no «el de versión más alta»: en producción los
+ * 3.5–3.8 respondían 503 por alta demanda mientras 2.5 estaba disponible). Primero la lista fija de estables, luego el resto por grupo.
+ */
+export const STABLE_PREFERRED = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.0-flash"];
 export function rankVisionModels(names: string[]): string[] {
   const version = (n: string) => Number(/gemini-(\d+(?:\.\d+)?)/.exec(n)?.[1] ?? 0);
   const group = (n: string) => {
@@ -98,7 +117,12 @@ export function rankVisionModels(names: string[]): string[] {
     if (/pro/.test(n)) return preview ? 7 : 6;
     return 8;
   };
-  return [...new Set(names)].sort((a, b) => group(a) - group(b) || version(b) - version(a) || a.length - b.length || a.localeCompare(b));
+  const fixed = (n: string) => {
+    const i = STABLE_PREFERRED.indexOf(n);
+    return i < 0 ? 999 : i;
+  };
+  // Dentro de cada grupo se prefiere una versión estable conocida y, recién después, la de número más alto.
+  return [...new Set(names)].sort((a, b) => fixed(a) - fixed(b) || group(a) - group(b) || version(b) - version(a) || a.length - b.length || a.localeCompare(b));
 }
 
 const NOT_FOR_VISION = /embedding|aqa|imagen|veo|tts|audio|live|image|robotics|computer-use|learnlm|gemma|vision$|thinking|customtools/;
@@ -154,7 +178,6 @@ export function classifyHttp(status: number, err: GeminiError | null | undefined
   if (/api key not valid|api_key_invalid|api key expired|key.*(invalid|expired)/i.test(msg) || st === "UNAUTHENTICATED" || status === 401) return { kind: "key", detail };
   if (/location is not supported|not available in your (country|region)/i.test(msg)) return { kind: "region", detail };
   if (status === 404 || st === "NOT_FOUND" || /models\/[\w.-]+ is not found|no longer available|is not supported for generatecontent/i.test(msg)) return { kind: "model", detail };
-  if (status === 403 || st === "PERMISSION_DENIED" || /has not been used in project|service_disabled|billing|permission/i.test(msg)) return { kind: "permission", detail };
   if (status === 429 || st === "RESOURCE_EXHAUSTED" || /quota|rate limit/i.test(msg)) {
     // Cuota DIARIA / sin cupo (límite 0): reintentar no sirve. Google usa el mismo texto («You exceeded your current quota») para el límite por
     // minuto, así que se mira el detalle estructurado (QuotaFailure.quotaId): «PerDay» = agotada; «PerMinute» o sin detalle = transitorio.
@@ -162,6 +185,7 @@ export function classifyHttp(status: number, err: GeminiError | null | undefined
     if (/PerDay|Daily/i.test(blob) || /limit:\s*0\b/i.test(msg)) return { kind: "quota", detail };
     return { kind: "limit", detail };
   }
+  if (status === 403 || st === "PERMISSION_DENIED" || /has not been used in project|service_disabled|billing|permission/i.test(msg)) return { kind: "permission", detail };
   if (status === 503 || st === "UNAVAILABLE" || /overloaded|high demand|try again later/i.test(msg)) return { kind: "overloaded", detail };
   if (status === 400) return { kind: "bad_request", detail };
   return { kind: "unavailable", detail };
@@ -233,7 +257,7 @@ function generationConfig(model: string, withThinking = true, maxOutputTokens = 
 
 type RunResult =
   | { ok: true; body: GeminiBody; model: string; attempts: Attempt[]; calls?: number }
-  | { ok: false; kind: FailureKind | "timeout"; message: string; attempts: Attempt[]; model: string | null; diag?: GeminiDiag };
+  | { ok: false; kind: FailureKind | "timeout"; message: string; attempts: Attempt[]; model: string | null; diag?: GeminiDiag; retryAfterMs?: number | null; calls?: number };
 
 /**
  * Llama a generateContent probando modelos en orden: el explícito, el último que funcionó y, si hace falta, los que Google dice que existen.
@@ -243,7 +267,7 @@ async function runGenerate(
   parts: Array<Record<string, unknown>>,
   env: Partial<NodeJS.ProcessEnv>,
   doFetch: typeof fetch,
-  opts: { maxOutputTokens?: number; json?: boolean; exclude?: string[] } = {}
+  opts: { maxOutputTokens?: number; json?: boolean; exclude?: string[]; /** Lectura RÁPIDA (hay otro proveedor de respaldo): 2 llamadas como máximo, sin esperas ni rondas; 429 y cuota abandonan de inmediato. */ fast?: boolean } = {}
 ): Promise<RunResult> {
   const cfg = extractionConfig(env);
   const attempts: Attempt[] = [];
@@ -274,7 +298,10 @@ async function runGenerate(
       for (const m of STATIC_FALLBACK_MODELS) push(m);
     }
   };
-  if (!queue.length) await discover();
+  if (!queue.length) {
+    if (opts.fast) for (const m of STATIC_FALLBACK_MODELS.slice(0, 2)) push(m); // sin ListModels: cada ida y vuelta cuenta cuando hay un respaldo esperando
+    else await discover();
+  }
 
   const budgetMs = Math.max(50, Number(env.INGRESO_REMITO_BUDGET_MS ?? DEFAULT_BUDGET_MS) || DEFAULT_BUDGET_MS);
   const attemptMs = Math.max(20, Number(env.INGRESO_REMITO_ATTEMPT_MS ?? DEFAULT_ATTEMPT_MS) || DEFAULT_ATTEMPT_MS);
@@ -301,7 +328,8 @@ async function runGenerate(
   // propia capacidad y su propio límite) y vuelve a la ronda mientras quede presupuesto y no se supere el tope de intentos.
   // Nunca reintenta errores de clave, permisos, región, modelo ni cuota agotada.
   const base = Math.max(0, Number(env.INGRESO_REMITO_RETRY_BASE_MS ?? 700) || 0);
-  const maxCalls = Math.max(2, Number(env.INGRESO_REMITO_MAX_ATTEMPTS ?? 9) || 9);
+  const maxCalls = opts.fast ? 2 : Math.max(2, Number(env.INGRESO_REMITO_MAX_ATTEMPTS ?? 9) || 9);
+  let lastHint: number | null = null;
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
   let calls = 0;
   let transientStreak = 0; // fallos transitorios seguidos: hace crecer la espera
@@ -332,7 +360,7 @@ async function runGenerate(
   let permissionModels = 0;
   /** Vuelve a la ronda de modelos que fallaron de forma transitoria, si todavía hay presupuesto y no se superó el tope de intentos. */
   const requeue = async (): Promise<boolean> => {
-    if (!lastTransient || ring.length === 0 || calls >= maxCalls || rounds >= 3 || remaining() < minAttemptMs * 1.5) return false;
+    if (opts.fast || !lastTransient || ring.length === 0 || calls >= maxCalls || rounds >= 3 || remaining() < minAttemptMs * 1.5) return false;
     rounds += 1;
     const pause = waitFor(null);
     if (pause > 0) await sleep(pause);
@@ -434,9 +462,12 @@ async function runGenerate(
         }
         if (cls.kind === "overloaded" || cls.kind === "unavailable" || cls.kind === "limit") {
           const hint = retryAfterOf(res, body?.error);
+          lastHint = hint;
           // Límite por minuto: cada modelo tiene su propio cupo, así que se pasa al siguiente sin esperar; con un único modelo se espera lo que pide el proveedor.
-          const sameModelRetries = cls.kind === "limit" ? 0 : 1;
+          const sameModelRetries = cls.kind === "limit" || opts.fast ? 0 : 1;
           lastTransient = { kind: cls.kind, model };
+          // Con respaldo disponible (lectura rápida) un 429 no se espera ni se rota: el cupo se agotó, se pasa al otro proveedor YA.
+          if (opts.fast && cls.kind === "limit") return { ok: false, kind: "limit", message: messageFor("limit", model, [...tried]), attempts, model, retryAfterMs: hint, calls };
           if (transientTries < sameModelRetries || (cls.kind === "limit" && !queue.length && !ring.length && transientTries < 1)) {
             transientTries += 1;
             await sleep(waitFor(hint));
@@ -450,13 +481,13 @@ async function runGenerate(
         }
         if (cls.kind === "quota") {
           // Cuota agotada (diaria / facturación): reintentar no sirve. Se informa y queda el diagnóstico para Sistemas.
-          return { ok: false, kind: "quota", message: messageFor("quota", model, [...tried]), attempts, model, diag: diagOf(res.status, body?.error) };
+          return { ok: false, kind: "quota", message: messageFor("quota", model, [...tried]), attempts, model, diag: diagOf(res.status, body?.error), retryAfterMs: retryAfterOf(res, body?.error), calls };
         }
         return { ok: false, kind: cls.kind, message: messageFor(cls.kind, model, [...tried]), attempts, model, diag: diagOf(res.status, body?.error) };
       }
     }
     if (permissionFail) return { ok: false, kind: "permission", message: messageFor("permission", permissionFail.model, [...tried], permissionFail.diag, permissionFail.detail), attempts, model: permissionFail.model, diag: permissionFail.diag };
-    if (lastTransient) return { ok: false, kind: lastTransient.kind, message: messageFor(lastTransient.kind, lastTransient.model, [...tried]), attempts, model: lastTransient.model };
+    if (lastTransient) return { ok: false, kind: lastTransient.kind, message: messageFor(lastTransient.kind, lastTransient.model, [...tried]), attempts, model: lastTransient.model, retryAfterMs: lastHint, calls };
     return { ok: false, kind: "model", message: messageFor("model", null, [...tried]), attempts, model: null };
   } catch (err) {
     const aborted = err instanceof Error && err.name === "AbortError";
@@ -497,12 +528,27 @@ function promptFor(module: "MP" | "ME" | undefined): string {
 }
 
 export type ExtractionFile = { bytes: Uint8Array; contentType: string };
+/** Resultado de UN proveedor dentro de una etapa (para Sistemas: quién respondió, cuánto tardó, cuánto consumió y por qué falló). */
+export type ProviderOutcome = {
+  provider: ProviderId;
+  ok: boolean;
+  ms: number;
+  calls: number;
+  model?: string | null;
+  kind?: string;
+  http?: number | null;
+  tokens?: { prompt?: number; output?: number; total?: number };
+  /** El circuit breaker lo salteó (no se lo llamó). */
+  skipped?: "breaker";
+};
 /** Diagnóstico para Sistemas (sin claves ni contenido del remito): permite ver rápido si falla GENUS OS, Vercel, el proveedor o la imagen. */
 export type ReadStageDiag = {
   stage: "lectura" | "mejora" | "respaldo";
   ok: boolean;
   ms: number;
   model?: string | null;
+  provider?: ProviderId;
+  providers?: ProviderOutcome[];
   calls?: number;
   kind?: string;
   http?: number | null;
@@ -512,7 +558,7 @@ export type ReadStageDiag = {
   note?: string;
 };
 export type ReadDiag = {
-  provider: "gemini";
+  provider: ProviderId;
   model: string | null;
   elapsedMs: number;
   stages: ReadStageDiag[];
@@ -525,6 +571,11 @@ export type ReadDiag = {
   failedStage?: string;
   http?: number | null;
   tokens?: { prompt?: number; output?: number; total?: number };
+  /** Resumen por proveedor (llamadas, tiempo, tokens, resultado). */
+  providers?: Record<string, { calls: number; ms: number; ok: boolean; kind?: string; http?: number | null; model?: string | null; tokens?: { prompt?: number; output?: number; total?: number }; skipped?: number }>;
+  /** true = respondió el proveedor de respaldo porque el principal falló o estaba salteado. */
+  fallback?: boolean;
+  configured?: ProviderId[];
 };
 
 export type ExtractionOutcome =
@@ -586,58 +637,129 @@ export function salvagePartialJson(text: string): Record<string, unknown> | null
   return out;
 }
 
-type StageRead =
-  | { ok: true; data: ExtractedRemito; model: string; partial: boolean; calls: number; attempts: Attempt[]; tokens?: ReadStageDiag["tokens"] }
-  | { ok: false; kind: ExtractionFailureKind; technical: string; model: string | null; attempts: Attempt[]; calls: number; http: number | null };
 type ExtractionFailureKind = FailureKind | "unreadable" | "timeout";
+type StageOk = { ok: true; data: ExtractedRemito; model: string; provider: ProviderId; partial: boolean; calls: number; attempts: Attempt[]; tokens?: ReadStageDiag["tokens"]; outcomes: ProviderOutcome[] };
+type StageFail = { ok: false; kind: ExtractionFailureKind; technical: string; model: string | null; provider: ProviderId | null; attempts: Attempt[]; calls: number; http: number | null; outcomes: ProviderOutcome[] };
+type StageRead = StageOk | StageFail;
 
 const tokensOf = (body: GeminiBody): ReadStageDiag["tokens"] | undefined => {
   const u = (body as { usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } }).usageMetadata;
   return u ? { prompt: u.promptTokenCount, output: u.candidatesTokenCount, total: u.totalTokenCount } : undefined;
 };
 
-/** Una lectura (una o varias llamadas por reintentos): pide, interpreta y sanea. Nunca lanza. */
-async function readStage(parts: Array<Record<string, unknown>>, env: Partial<NodeJS.ProcessEnv>, doFetch: typeof fetch, opts: { exclude?: string[] } = {}): Promise<StageRead> {
-  let run = await runGenerate(parts, env, doFetch, { exclude: opts.exclude });
+/** Salida de un proveedor, normalizada: texto JSON (mismo esquema para todos) o fallo clasificado. */
+type ProviderResult =
+  | { ok: true; provider: ProviderId; model: string; text: string; finishReason: string; blocked?: string; attempts: Attempt[]; calls: number; tokens?: ReadStageDiag["tokens"]; ms: number }
+  | { ok: false; provider: ProviderId; kind: ExtractionFailureKind; message: string; model: string | null; attempts: Attempt[]; calls: number; http: number | null; retryAfterMs: number | null; ms: number };
+
+async function callGemini(parts: Array<Record<string, unknown>>, env: Partial<NodeJS.ProcessEnv>, doFetch: typeof fetch, opts: { exclude?: string[]; fast?: boolean }): Promise<ProviderResult> {
+  const t0 = Date.now();
+  let run = await runGenerate(parts, env, doFetch, { exclude: opts.exclude, fast: opts.fast });
   // Respuesta cortada por tokens (modelo que «piensa» de más): un único reintento con más margen.
   if (run.ok && !run.body.candidates?.[0]?.content?.parts?.some((p) => (p.text ?? "").trim()) && run.body.candidates?.[0]?.finishReason === "MAX_TOKENS") {
     logFailure("respuesta cortada (MAX_TOKENS)", null, run.model, "reintento con más margen");
-    run = await runGenerate(parts, env, doFetch, { maxOutputTokens: 24576, exclude: opts.exclude });
+    run = await runGenerate(parts, env, doFetch, { maxOutputTokens: 24576, exclude: opts.exclude, fast: opts.fast });
   }
-  if (!run.ok) return { ok: false, kind: run.kind, technical: run.message, model: run.model, attempts: run.attempts, calls: run.attempts.length, http: run.attempts.at(-1)?.status ?? null };
-  const calls = run.calls ?? run.attempts.length;
-  const base = { model: run.model, attempts: run.attempts, calls, http: null as number | null };
-  const body = run.body;
-  if (body.promptFeedback?.blockReason) {
-    logFailure("bloqueado", null, run.model, body.promptFeedback.blockReason);
-    return { ok: false, kind: "unreadable", technical: `bloqueado: ${body.promptFeedback.blockReason}`, ...base };
+  if (!run.ok) return { ok: false, provider: "gemini", kind: run.kind, message: run.message, model: run.model, attempts: run.attempts, calls: run.calls ?? run.attempts.length, http: run.attempts.at(-1)?.status ?? null, retryAfterMs: run.retryAfterMs ?? null, ms: Date.now() - t0 };
+  const cand = run.body.candidates?.[0];
+  return { ok: true, provider: "gemini", model: run.model, text: cand?.content?.parts?.map((p) => p.text ?? "").join("") ?? "", finishReason: cand?.finishReason ?? "", blocked: run.body.promptFeedback?.blockReason, attempts: run.attempts, calls: run.calls ?? run.attempts.length, tokens: tokensOf(run.body), ms: Date.now() - t0 };
+}
+
+async function callOpenAI(parts: Array<Record<string, unknown>>, env: Partial<NodeJS.ProcessEnv>, doFetch: typeof fetch): Promise<ProviderResult> {
+  const r = await runOpenAI(parts, env, doFetch);
+  const attempts = r.attempts.map((a) => ({ model: a.model, status: a.status, kind: (a.kind === "unsupported" ? "bad_request" : a.kind) as Attempt["kind"] }));
+  if (r.ok) return { ok: true, provider: "openai", model: r.model, text: r.text, finishReason: r.finishReason, attempts, calls: r.calls, tokens: r.tokens, ms: r.ms };
+  const kind: ExtractionFailureKind = r.kind === "unsupported" ? "unreadable" : r.kind === "bad_request" ? "bad_request" : r.kind;
+  return { ok: false, provider: "openai", kind, message: r.message, model: r.model, attempts, calls: r.calls, http: r.http, retryAfterMs: r.retryAfterMs, ms: r.ms };
+}
+
+/** Interpreta el texto de un proveedor con el saneamiento ÚNICO (mismo esquema para Gemini y OpenAI). */
+function parseProviderText(r: Extract<ProviderResult, { ok: true }>): { ok: true; data: ExtractedRemito; partial: boolean } | { ok: false; technical: string } {
+  if (r.blocked) {
+    logFailure("bloqueado", null, r.model, r.blocked);
+    return { ok: false, technical: `bloqueado: ${r.blocked}` };
   }
-  const cand = body.candidates?.[0];
-  const text = cand?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-  if (!text.trim()) {
-    logFailure("respuesta vacía", null, run.model, cand?.finishReason ?? "");
-    return { ok: false, kind: "unreadable", technical: `respuesta vacía (${cand?.finishReason ?? "?"})`, ...base };
+  if (!r.text.trim()) {
+    logFailure("respuesta vacía", null, r.model, r.finishReason);
+    return { ok: false, technical: `respuesta vacía (${r.finishReason || "?"})` };
   }
   let parsed: unknown;
   let partial = false;
   try {
-    parsed = JSON.parse(text.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, ""));
+    parsed = JSON.parse(r.text.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, ""));
   } catch {
     // Respuesta cortada: se aprovecha lo que quedó completo en vez de rechazar todo el remito.
-    parsed = salvagePartialJson(text);
+    parsed = salvagePartialJson(r.text);
     partial = parsed != null;
     if (!partial) {
-      logFailure("JSON inválido", null, run.model, cand?.finishReason ?? "");
-      return { ok: false, kind: "unreadable", technical: `JSON inválido (${cand?.finishReason ?? "?"})`, ...base };
+      logFailure("JSON inválido", null, r.model, r.finishReason);
+      return { ok: false, technical: `JSON inválido (${r.finishReason || "?"})` };
     }
-    logFailure("JSON cortado: lectura parcial", null, run.model, cand?.finishReason ?? "");
+    logFailure("JSON cortado: lectura parcial", null, r.model, r.finishReason);
   }
   const data = sanitizeExtraction(parsed);
   if (!data) {
-    logFailure("sin datos de remito", null, run.model, "");
-    return { ok: false, kind: "unreadable", technical: "sin datos de remito", ...base };
+    logFailure("sin datos de remito", null, r.model, "");
+    return { ok: false, technical: "sin datos de remito" };
   }
-  return { ok: true, data, model: run.model, partial, calls, attempts: run.attempts, tokens: tokensOf(body) };
+  return { ok: true, data, partial };
+}
+
+/**
+ * UNA lectura con respaldo automático entre proveedores. Orden: el principal (Gemini) en modo RÁPIDO (máx. 2 llamadas, sin esperas, tope de
+ * ~14 s) y, si falla por disponibilidad (503, 429, cuota, timeout, modelo caído, configuración), pasa SOLO al respaldo (OpenAI) con el
+ * presupuesto que se reservó para eso. El circuit breaker saltea un proveedor que viene fallando: un remito nuevo no vuelve a esperar a
+ * un proveedor caído. Si hay un único proveedor, usa todo el presupuesto con reintentos. Nunca lanza.
+ */
+async function readStage(
+  parts: Array<Record<string, unknown>>,
+  env: Partial<NodeJS.ProcessEnv>,
+  doFetch: typeof fetch,
+  opts: { budgetMs: number; health: ProviderHealthStore; exclude?: string[]; excludeProviders?: ProviderId[]; prefer?: ProviderId | null }
+): Promise<StageRead> {
+  const t0 = Date.now();
+  const left = () => opts.budgetMs - (Date.now() - t0);
+  let order = providerOrder(env).filter((p) => !(opts.excludeProviders ?? []).includes(p));
+  if (opts.prefer && order.includes(opts.prefer)) order = [opts.prefer, ...order.filter((p) => p !== opts.prefer)];
+  const outcomes: ProviderOutcome[] = [];
+  const allAttempts: Attempt[] = [];
+  let last: Extract<ProviderResult, { ok: false }> | null = null;
+  if (order.length === 0) {
+    return { ok: false, kind: "unavailable", technical: "sin proveedores de lectura configurados", model: null, provider: null, attempts: [], calls: 0, http: null, outcomes };
+  }
+  // Un proveedor con el circuito abierto se saltea mientras haya otro que probar; si TODOS están abiertos se prueban igual (último recurso).
+  const states = await Promise.all(order.map((p) => isProviderOpen(opts.health, p)));
+  const openSet = new Set(order.filter((_, i) => states[i]!.open));
+  const usable = order.filter((p) => !openSet.has(p));
+  const plan = usable.length > 0 ? usable : order;
+  for (const p of order) if (!plan.includes(p)) outcomes.push({ provider: p, ok: false, ms: 0, calls: 0, skipped: "breaker", kind: states[order.indexOf(p)]!.state.lastKind ?? "unavailable", http: states[order.indexOf(p)]!.state.lastHttp });
+  const FAST_BUDGET = Math.max(50, Number(env.INGRESO_REMITO_FAST_BUDGET_MS ?? 14_000) || 14_000);
+  const FAST_ATTEMPT = Math.max(20, Number(env.INGRESO_REMITO_FAST_ATTEMPT_MS ?? 8_000) || 8_000);
+  for (let i = 0; i < plan.length; i++) {
+    const provider = plan[i]!;
+    const hasBackup = i < plan.length - 1;
+    if (left() < 50) break;
+    // Con respaldo esperando, el principal usa solo una porción (tope ~14 s) y deja el resto del tiempo para el respaldo.
+    const slice = hasBackup ? Math.max(50, Math.min(FAST_BUDGET, Math.round(left() * 0.35))) : Math.max(50, left());
+    const attempt = hasBackup ? Math.min(FAST_ATTEMPT, Math.max(20, Math.round(slice * 0.7))) : Number(env.INGRESO_REMITO_ATTEMPT_MS ?? DEFAULT_ATTEMPT_MS) || DEFAULT_ATTEMPT_MS;
+    const pEnv = { ...env, INGRESO_REMITO_BUDGET_MS: String(slice), INGRESO_REMITO_ATTEMPT_MS: String(Math.min(attempt, slice)) } as Partial<NodeJS.ProcessEnv>;
+    const r = provider === "gemini" ? await callGemini(parts, pEnv, doFetch, { exclude: opts.exclude, fast: hasBackup }) : await callOpenAI(parts, pEnv, doFetch);
+    allAttempts.push(...r.attempts);
+    if (r.ok) {
+      await opts.health.recordSuccess(provider);
+      const parsed = parseProviderText(r);
+      outcomes.push({ provider, ok: true, ms: r.ms, calls: r.calls, model: r.model, tokens: r.tokens });
+      if (parsed.ok) return { ok: true, data: parsed.data, model: r.model, provider, partial: parsed.partial, calls: r.calls, attempts: allAttempts, tokens: r.tokens, outcomes };
+      // El proveedor respondió pero no hay nada legible: NO es una falla de disponibilidad (se sigue con la mejora de imagen).
+      return { ok: false, kind: "unreadable", technical: parsed.technical, model: r.model, provider, attempts: allAttempts, calls: r.calls, http: null, outcomes };
+    }
+    last = r;
+    outcomes.push({ provider, ok: false, ms: r.ms, calls: r.calls, model: r.model, kind: r.kind, http: r.http });
+    await opts.health.recordFailure(provider, { kind: r.kind, http: r.http, retryAfterMs: r.retryAfterMs });
+    logFailure(`proveedor ${provider} no disponible${hasBackup ? " → respaldo" : ""}`, r.http, r.model, `${r.kind} · ${Math.round(r.ms)} ms`);
+  }
+  const f = last;
+  return { ok: false, kind: f?.kind ?? "unavailable", technical: f ? `${f.provider}: ${f.message}` : "ningún proveedor respondió a tiempo", model: f?.model ?? null, provider: f?.provider ?? null, attempts: allAttempts, calls: allAttempts.length, http: f?.http ?? null, outcomes };
 }
 
 const PENDING_LABEL: Record<string, string> = { remitoNumber: "n.º de remito", remitoDate: "fecha", supplier: "proveedor", lines: "materiales", quantity: "cantidad", description: "descripción" };
@@ -668,12 +790,13 @@ const sumAttempts = (a: Attempt[]) => a.reduce<Record<string, number>>((acc, x) 
  * Etapa 3 (solo si todavía falta y hay otro modelo disponible): el mismo pedido con otro modelo. Presupuesto total acotado: si la 1.ª lectura
  * alcanza no hay más llamadas. Nunca lanza: ante cualquier falla devuelve ok:false con un mensaje claro (y el diagnóstico para Sistemas).
  */
-export async function extractRemito(files: ExtractionFile[], deps: { fetchImpl?: typeof fetch; env?: Partial<NodeJS.ProcessEnv>; module?: "MP" | "ME"; /** Avisa al cambiar de etapa (la pantalla muestra «Mejorando la imagen…»). Un error acá nunca frena la lectura. */ onStage?: (stage: "lectura" | "mejora") => Promise<void> | void } = {}): Promise<ExtractionOutcome> {
+export async function extractRemito(files: ExtractionFile[], deps: { fetchImpl?: typeof fetch; env?: Partial<NodeJS.ProcessEnv>; module?: "MP" | "ME"; /** Circuit breaker de proveedores (por defecto en memoria; el servicio inyecta el compartido en la base). */ health?: ProviderHealthStore; /** Avisa al cambiar de etapa (la pantalla muestra «Mejorando la imagen…»). Un error acá nunca frena la lectura. */ onStage?: (stage: "lectura" | "mejora") => Promise<void> | void } = {}): Promise<ExtractionOutcome> {
   const env = deps.env ?? process.env;
   const cfg = extractionConfig(env);
   if (!cfg.available) return { ok: false, kind: cfg.code === "missing_key" ? "config" : "disabled", message: cfg.reason };
   if (files.length === 0) return { ok: false, kind: "unreadable", message: "No hay archivos para leer." };
   const doFetch = deps.fetchImpl ?? fetch;
+  const health = deps.health ?? memoryHealth;
   const used: ExtractionFile[] = [];
   let total = 0;
   for (const f of files.slice(0, MAX_FILES)) {
@@ -686,26 +809,42 @@ export async function extractRemito(files: ExtractionFile[], deps: { fetchImpl?:
   const left = () => budget - (Date.now() - startedAt);
   const stages: ReadStageDiag[] = [];
   const allAttempts: Attempt[] = [];
-  const diagBase = (extra: Partial<ReadDiag> = {}): ReadDiag => ({ provider: "gemini", model: null, elapsedMs: Date.now() - startedAt, stages, attempts: sumAttempts(allAttempts), pending: [], enhanced: false, ...extra });
-  const stageEnv = (ms: number) => ({ ...env, INGRESO_REMITO_BUDGET_MS: String(Math.max(50, Math.round(ms))), INGRESO_REMITO_ATTEMPT_MS: String(Math.min(Number(env.INGRESO_REMITO_ATTEMPT_MS ?? DEFAULT_ATTEMPT_MS) || DEFAULT_ATTEMPT_MS, Math.max(20, Math.round(ms)))) }) as Partial<NodeJS.ProcessEnv>;
+  const outcomesAll: ProviderOutcome[] = [];
+  const addOutcomes = (o: ProviderOutcome[]) => outcomesAll.push(...o);
+  const providerSummary = (): NonNullable<ReadDiag["providers"]> => {
+    const sum: NonNullable<ReadDiag["providers"]> = {};
+    for (const o of outcomesAll) {
+      const cur = sum[o.provider] ?? { calls: 0, ms: 0, ok: false, skipped: 0 };
+      const tokens = o.tokens ? { prompt: (cur.tokens?.prompt ?? 0) + (o.tokens.prompt ?? 0), output: (cur.tokens?.output ?? 0) + (o.tokens.output ?? 0), total: (cur.tokens?.total ?? 0) + (o.tokens.total ?? 0) } : cur.tokens;
+      sum[o.provider] = { calls: cur.calls + o.calls, ms: cur.ms + o.ms, ok: cur.ok || o.ok, kind: o.ok ? cur.kind : o.kind ?? cur.kind, http: o.ok ? cur.http : o.http ?? cur.http, model: o.model ?? cur.model, ...(tokens ? { tokens } : {}), skipped: (cur.skipped ?? 0) + (o.skipped ? 1 : 0) };
+    }
+    return sum;
+  };
+  const diagBase = (extra: Partial<ReadDiag> = {}): ReadDiag => ({ provider: cfg.providers[0] ?? "gemini", model: null, elapsedMs: Date.now() - startedAt, stages, attempts: sumAttempts(allAttempts), pending: [], enhanced: false, providers: providerSummary(), configured: cfg.providers, ...extra });
+  const stageEnv = (ms: number) => ({ ...env, INGRESO_REMITO_BUDGET_MS: String(Math.max(50, Math.round(ms))) }) as Partial<NodeJS.ProcessEnv>;
   const withImages = (prompt: string, imgs: Array<{ bytes: Uint8Array; contentType: string }>) => [{ text: prompt }, ...imgs.map((f) => ({ inline_data: { mime_type: f.contentType, data: Buffer.from(f.bytes).toString("base64") } }))] as Array<Record<string, unknown>>;
+  const stageDiag = (stage: ReadStageDiag["stage"], t: number, r: StageRead, extra: Partial<ReadStageDiag> = {}): ReadStageDiag => ({
+    stage, ok: r.ok, ms: Date.now() - t, model: r.model, provider: r.provider ?? undefined, providers: r.outcomes, calls: r.calls, ...(r.ok ? { tokens: r.tokens } : { kind: r.kind, http: r.http }), ...extra,
+  });
 
-  // ── Etapa 1: imagen original, solo los campos necesarios ──
+  // ── Etapa 1: imagen original, solo los campos necesarios (Gemini rápido → OpenAI si falla) ──
   const t1 = Date.now();
-  const r1 = await readStage(withImages(promptFor(deps.module), used), stageEnv(Math.min(left(), budget * 0.72)), doFetch);
+  const r1 = await readStage(withImages(promptFor(deps.module), used), stageEnv(Math.min(left(), budget * 0.72)), doFetch, { budgetMs: Math.min(left(), budget * 0.72), health });
   allAttempts.push(...r1.attempts);
-  stages.push({ stage: "lectura", ok: r1.ok, ms: Date.now() - t1, model: r1.model, calls: r1.calls, ...(r1.ok ? { tokens: r1.tokens } : { kind: r1.kind, http: r1.http }) });
-  // Falla del SERVICIO (no de la imagen): no se pide otra foto ni se gasta tiempo mejorando la imagen.
+  addOutcomes(r1.outcomes);
+  stages.push(stageDiag("lectura", t1, r1));
+  // Ningún proveedor disponible (NO es culpa de la imagen): no se pide otra foto ni se gasta tiempo mejorando la imagen.
   if (!r1.ok && r1.kind !== "unreadable") {
-    return { ok: false, kind: r1.kind, message: operatorMessage(r1.kind), technical: r1.technical, diag: diagBase({ model: r1.model, errorKind: r1.kind, failedStage: "lectura", http: r1.http, pending: pendingNames(null) }) };
+    return { ok: false, kind: r1.kind, message: operatorMessage(r1.kind), technical: r1.technical, diag: diagBase({ model: r1.model, errorKind: r1.kind, failedStage: "lectura", http: r1.http, pending: pendingNames(null), fallback: false }) };
   }
   let data: ExtractedRemito | null = r1.ok ? r1.data : null;
   let model = r1.model ?? "";
+  let usedProvider: ProviderId | null = r1.provider;
   let partial = r1.ok ? r1.partial : false;
   let enhanced = false;
   let pending = pendingNames(data);
 
-  // ── Etapa 2: mejora automática de la imagen, solo si falta algo importante ──
+  // ── Etapa 2: mejora automática de la imagen, solo si falta algo importante (con el proveedor que SÍ respondió) ──
   const enhanceOn = !["0", "false", "off", "no"].includes(String(env.INGRESO_REMITO_ENHANCE ?? "").toLowerCase());
   const MIN_STAGE_MS = Math.min(9_000, Math.round(budget / 5));
   if (pending.length > 0 && enhanceOn && left() >= MIN_STAGE_MS) {
@@ -718,44 +857,51 @@ export async function extractRemito(files: ExtractionFile[], deps: { fetchImpl?:
     const enh = await enhanceReceiptImages(used, { regions });
     if (enh.applied) {
       enhanced = true;
-      const r2 = await readStage(withImages(stage2Prompt(deps.module, data, regions.map((r) => (r === "encabezado" ? "el encabezado" : "la tabla"))), enh.images), stageEnv(left() * (pending.length > 0 ? 0.65 : 1)), doFetch);
+      const budget2 = left() * 0.65;
+      const r2 = await readStage(withImages(stage2Prompt(deps.module, data, regions.map((r) => (r === "encabezado" ? "el encabezado" : "la tabla"))), enh.images), stageEnv(budget2), doFetch, { budgetMs: budget2, health, prefer: usedProvider });
       allAttempts.push(...r2.attempts);
+      addOutcomes(r2.outcomes);
       const before = pendingNames(data);
       if (r2.ok) {
         data = data ? mergeExtractions(data, r2.data) : r2.data;
         model = model || r2.model;
+        usedProvider = usedProvider ?? r2.provider;
         partial = partial && r2.partial;
         pending = pendingNames(data);
       }
-      stages.push({ stage: "mejora", ok: r2.ok, ms: Date.now() - t2, model: r2.model, calls: r2.calls, recovered: before.filter((f) => !pending.includes(f)), ...(r2.ok ? { tokens: r2.tokens } : { kind: r2.kind, http: r2.http }) });
+      stages.push(stageDiag("mejora", t2, r2, { recovered: before.filter((f) => !pending.includes(f)) }));
     } else {
       stages.push({ stage: "mejora", ok: false, ms: Date.now() - t2, kind: "no_aplicable", note: enh.reason });
     }
   }
 
-  // ── Etapa 3: otro modelo, solo si todavía falta lo importante, hay tiempo y la 2.ª etapa tuvo imágenes mejoradas ──
+  // ── Etapa 3: otro proveedor (o, con uno solo, otro modelo), si todavía falta lo importante y hay tiempo ──
   if (pending.length > 0 && enhanced && left() >= MIN_STAGE_MS && model) {
     const t3 = Date.now();
     const miss = data ? importantMissing(data) : null;
     const enh = await enhanceReceiptImages(used, { regions: miss && !miss.header.length && !miss.noLines ? ["tabla"] : [] });
     if (enh.applied) {
-      const r3 = await readStage(withImages(stage2Prompt(deps.module, data, []), enh.images), stageEnv(left()), doFetch, { exclude: [model] });
+      const others = providerOrder(env).filter((p) => p !== usedProvider);
+      const r3 = await readStage(withImages(stage2Prompt(deps.module, data, []), enh.images), stageEnv(left()), doFetch, { budgetMs: left(), health, ...(others.length ? { excludeProviders: usedProvider ? [usedProvider] : [] } : { exclude: [model] }) });
       allAttempts.push(...r3.attempts);
+      addOutcomes(r3.outcomes);
       const before = pending;
       if (r3.ok) {
         data = data ? mergeExtractions(data, r3.data) : r3.data;
         pending = pendingNames(data);
       }
-      stages.push({ stage: "respaldo", ok: r3.ok, ms: Date.now() - t3, model: r3.model, calls: r3.calls, recovered: before.filter((f) => !pending.includes(f)), ...(r3.ok ? { tokens: r3.tokens } : { kind: r3.kind, http: r3.http }) });
+      stages.push(stageDiag("respaldo", t3, r3, { recovered: before.filter((f) => !pending.includes(f)) }));
     }
   }
 
-  const diag = diagBase({ model: model || null, enhanced, pending, tokens: stages.reduce<ReadDiag["tokens"]>((acc, st) => (st.tokens ? { prompt: (acc?.prompt ?? 0) + (st.tokens.prompt ?? 0), output: (acc?.output ?? 0) + (st.tokens.output ?? 0), total: (acc?.total ?? 0) + (st.tokens.total ?? 0) } : acc), undefined) });
+  const primary = cfg.providers[0];
+  const fallback = Boolean(usedProvider && primary && usedProvider !== primary);
+  const diag = diagBase({ provider: usedProvider ?? primary ?? "gemini", model: model || null, enhanced, pending, fallback, tokens: stages.reduce<ReadDiag["tokens"]>((acc, st) => (st.tokens ? { prompt: (acc?.prompt ?? 0) + (st.tokens.prompt ?? 0), output: (acc?.output ?? 0) + (st.tokens.output ?? 0), total: (acc?.total ?? 0) + (st.tokens.total ?? 0) } : acc), undefined) });
   if (!data || (data.lines.length === 0 && !data.supplier && !data.remitoNumber)) {
-    // El servicio respondió pero no hay nada legible incluso después de mejorar la imagen: recién ahora se pide una imagen más clara.
+    // Un proveedor respondió pero no hay nada legible incluso después de mejorar la imagen: recién ahora se pide una imagen más clara.
     return { ok: false, kind: "unreadable", message: MSG_UNREADABLE, technical: r1.ok ? "sin datos legibles" : r1.technical, diag: { ...diag, errorKind: "unreadable", failedStage: stages.at(-1)?.stage } };
   }
-  return { ok: true, data, provider: `gemini:${model}`, model, elapsedMs: Date.now() - startedAt, pending, diag, ...(partial ? { partial: true } : {}) };
+  return { ok: true, data, provider: `${usedProvider ?? "gemini"}:${model}`, model, elapsedMs: Date.now() - startedAt, pending, diag, ...(partial ? { partial: true } : {}) };
 }
 
 /** Mensaje para el OPERARIO según la causa: fallas del servicio no culpan a la imagen ni piden otra foto. */
@@ -770,7 +916,7 @@ export function operatorMessage(kind: ExtractionFailureKind | "disabled" | "conf
 export async function askGeminiJson(prompt: string, deps: { fetchImpl?: typeof fetch; env?: Partial<NodeJS.ProcessEnv>; budgetMs?: number } = {}): Promise<{ ok: true; json: unknown; ms: number } | { ok: false; message: string }> {
   const baseEnv = deps.env ?? process.env;
   const cfg = extractionConfig(baseEnv);
-  if (!cfg.available) return { ok: false, message: cfg.reason };
+  if (!cfg.available || !geminiAvailable(baseEnv)) return { ok: false, message: cfg.available ? "Esta ayuda usa Gemini y no está configurado." : cfg.reason };
   const budget = String(deps.budgetMs ?? 22_000);
   const env = { ...baseEnv, INGRESO_REMITO_BUDGET_MS: budget, INGRESO_REMITO_ATTEMPT_MS: String(Math.min(16_000, deps.budgetMs ?? 16_000)) };
   const t0 = Date.now();
@@ -794,7 +940,7 @@ export async function generateJsonFromParts(
 ): Promise<{ ok: true; json: unknown; ms: number; model: string } | { ok: false; message: string; kind: string; diag?: GeminiDiag }> {
   const baseEnv = deps.env ?? process.env;
   const cfg = extractionConfig(baseEnv);
-  if (!cfg.available) return { ok: false, message: cfg.reason, kind: cfg.code };
+  if (!cfg.available || !geminiAvailable(baseEnv)) return { ok: false, message: cfg.available ? "Esta función usa Gemini y no está configurado." : cfg.reason, kind: cfg.available ? "config" : cfg.code };
   const env = deps.budgetMs ? { ...baseEnv, INGRESO_REMITO_BUDGET_MS: String(deps.budgetMs), INGRESO_REMITO_ATTEMPT_MS: String(Math.min(30_000, deps.budgetMs)) } : baseEnv;
   const t0 = Date.now();
   const run = await runGenerate(parts, env, deps.fetchImpl ?? fetch, { maxOutputTokens: deps.maxOutputTokens ?? 8192 });
@@ -809,10 +955,27 @@ export async function generateJsonFromParts(
 
 // ───────────────────────── Prueba de configuración ─────────────────────────
 
+export type ProviderProbe = {
+  provider: ProviderId;
+  configured: boolean;
+  /** Variable de entorno que aporta la clave (solo el NOMBRE; nunca el valor). */
+  keySource: string | null;
+  model: string | null;
+  ok: boolean;
+  ms: number;
+  text: { ok: boolean; kind?: string; message: string };
+  image: null | { ok: boolean; kind?: string; message: string; read?: { supplier: string; remitoNumber: string; remitoDate: string; lines: number } };
+  /** Estado del circuit breaker de este proveedor (compartido entre instancias si hay base). */
+  breaker: { open: boolean; until: string | null; consecutiveFailures: number; lastKind: string | null; lastHttp: number | null; lastFailureAt: string | null; lastSuccessAt: string | null };
+};
+
 export type ProbeResult = {
   ok: boolean;
   code: ExtractionConfig["code"] | "tested";
-  provider: "gemini" | null;
+  /** Proveedor principal (primero configurado). */
+  provider: ProviderId | null;
+  /** Orden de uso: el principal lee; el siguiente respalda. */
+  order: ProviderId[];
   /** Modelo definido a mano en INGRESO_REMITO_GEMINI_MODEL (o null si se elige solo). */
   configuredModel: string | null;
   modelSource: ExtractionConfig["modelSource"];
@@ -823,49 +986,90 @@ export type ProbeResult = {
   attempts: Attempt[];
   text: { ok: boolean; kind?: string; message: string };
   image: null | { ok: boolean; kind?: string; message: string; read?: { supplier: string; remitoNumber: string; remitoDate: string; lines: number } };
+  /** Una entrada por proveedor configurado (o faltante de configurar): resultado real, modelo y breaker. */
+  providers: ProviderProbe[];
+  /** Presupuesto real de una lectura (ms) y reparto entre proveedor principal y respaldo. */
+  budget: { totalMs: number; primaryFastMs: number; primaryAttemptMs: number; routeMaxMs: number };
   message: string;
 };
 
 /**
- * Prueba de configuración para administradores. Sin `image`: texto fijo (ningún documento). Con `image`: lee un remito ficticio
- * incorporado al sistema para confirmar que el modelo elegido puede analizar una IMAGEN. Devuelve solo estado y nombres de modelos:
- * jamás la clave ni contenido de remitos reales.
+ * Prueba de configuración para administradores (sin movimientos de inventario). Sin `image`: pedido mínimo por proveedor. Con `image`: lee un
+ * remito ficticio incorporado al sistema con CADA proveedor configurado, por separado, para confirmar disponibilidad real, modelo,
+ * tiempos y estado del circuit breaker. Devuelve solo estado y nombres de modelos: jamás claves ni contenido de remitos reales.
  */
-export async function probeExtraction(deps: { fetchImpl?: typeof fetch; env?: Partial<NodeJS.ProcessEnv>; image?: boolean } = {}): Promise<ProbeResult> {
+export async function probeExtraction(deps: { fetchImpl?: typeof fetch; env?: Partial<NodeJS.ProcessEnv>; image?: boolean; health?: ProviderHealthStore } = {}): Promise<ProbeResult> {
   const env = deps.env ?? process.env;
   const doFetch = deps.fetchImpl ?? fetch;
+  const health = deps.health ?? memoryHealth;
   const cfg = extractionConfig(env);
   const base = {
     provider: cfg.provider,
+    order: cfg.providers,
     configuredModel: cfg.model || null,
     modelSource: cfg.modelSource,
     creamyModel: cleanModel(env.CREAMY_GEMINI_MODEL) || null,
+    budget: { totalMs: Number(env.INGRESO_REMITO_BUDGET_MS ?? DEFAULT_BUDGET_MS) || DEFAULT_BUDGET_MS, primaryFastMs: Number(env.INGRESO_REMITO_FAST_BUDGET_MS ?? 14_000) || 14_000, primaryAttemptMs: Number(env.INGRESO_REMITO_FAST_ATTEMPT_MS ?? 8_000) || 8_000, routeMaxMs: 60_000 },
   };
   const empty = { ok: false, status: null, count: 0, candidates: [] as string[] };
-  if (!cfg.available) {
-    return { ...base, ok: false, code: cfg.code, effectiveModel: null, listing: empty, attempts: [], text: { ok: false, message: cfg.reason }, image: null, message: cfg.reason };
-  }
-  const listed = await listModels(env, doFetch);
-  const listing = listed.ok ? { ok: true, status: 200, count: listed.models.length, candidates: listed.models.slice(0, 6) } : { ok: false, status: listed.status, count: 0, candidates: [], kind: listed.kind };
-  const run = await runGenerate([{ text: 'Respondé únicamente la palabra "OK".' }], env, doFetch, { maxOutputTokens: 16, json: false });
-  const text = run.ok ? { ok: true, message: `El modelo «${run.model}» respondió correctamente.` } : { ok: false, kind: run.kind, message: run.message };
-  let image: ProbeResult["image"] = null;
-  if (deps.image && run.ok) {
-    const out = await extractRemito([{ bytes: new Uint8Array(Buffer.from(PROBE_IMAGE_BASE64, "base64")), contentType: PROBE_IMAGE_MIME }], { fetchImpl: doFetch, env });
-    image = out.ok
+  const breakerOf = async (p: ProviderId): Promise<ProviderProbe["breaker"]> => {
+    const st = await health.state(p);
+    const iso = (n: number | null) => (n ? new Date(n).toISOString() : null);
+    return { open: st.openUntil > Date.now(), until: iso(st.openUntil || null), consecutiveFailures: st.consecutiveFailures, lastKind: st.lastKind, lastHttp: st.lastHttp, lastFailureAt: iso(st.lastFailureAt), lastSuccessAt: iso(st.lastSuccessAt) };
+  };
+  const probeImg = { bytes: new Uint8Array(Buffer.from(PROBE_IMAGE_BASE64, "base64")), contentType: PROBE_IMAGE_MIME };
+  const imageResult = (out: ExtractionOutcome): ProviderProbe["image"] =>
+    out.ok
       ? { ok: out.data.lines.length > 0, message: out.data.lines.length ? `El modelo «${out.model}» analizó la imagen de prueba y encontró ${out.data.lines.length} renglón(es).` : "El modelo respondió pero no encontró renglones en la imagen de prueba.", read: { supplier: out.data.supplier, remitoNumber: out.data.remitoNumber, remitoDate: out.data.remitoDate, lines: out.data.lines.length } }
-      : { ok: false, kind: out.kind, message: out.message };
+      : { ok: false, kind: out.kind, message: out.technical || out.message };
+  const providers: ProviderProbe[] = [];
+
+  // ── Gemini ──
+  let geminiTop: { effectiveModel: string | null; listing: ProbeResult["listing"]; attempts: Attempt[]; text: ProbeResult["text"]; image: ProbeResult["image"] } = { effectiveModel: null, listing: empty, attempts: [], text: { ok: false, message: "Gemini no está configurado (falta GEMINI_API_KEY)." }, image: null };
+  if (geminiAvailable(env)) {
+    const t = Date.now();
+    const listed = await listModels(env, doFetch);
+    const listing = listed.ok ? { ok: true, status: 200, count: listed.models.length, candidates: listed.models.slice(0, 6) } : { ok: false, status: listed.status, count: 0, candidates: [], kind: listed.kind };
+    const run = await runGenerate([{ text: 'Respondé únicamente la palabra "OK".' }], env, doFetch, { maxOutputTokens: 16, json: false, fast: Boolean(providerOrder(env).length > 1) });
+    const text = run.ok ? { ok: true, message: `El modelo «${run.model}» respondió correctamente.` } : { ok: false, kind: run.kind, message: run.message };
+    let image: ProbeResult["image"] = null;
+    if (deps.image && run.ok) image = imageResult(await extractRemito([probeImg], { fetchImpl: doFetch, env: { ...env, INGRESO_REMITO_PROVIDERS: "gemini" }, health: createNoopHealth() }));
+    geminiTop = { effectiveModel: run.ok ? run.model : null, listing, attempts: run.attempts, text, image };
+    providers.push({ provider: "gemini", configured: true, keySource: "GEMINI_API_KEY", model: run.ok ? run.model : null, ok: text.ok && (!deps.image || Boolean(image?.ok)), ms: Date.now() - t, text, image, breaker: await breakerOf("gemini") });
+  } else providers.push({ provider: "gemini", configured: false, keySource: null, model: null, ok: false, ms: 0, text: { ok: false, message: "Gemini no está configurado (falta GEMINI_API_KEY)." }, image: null, breaker: await breakerOf("gemini") });
+
+  // ── OpenAI (respaldo) ──
+  if (openaiAvailable(env)) {
+    const t = Date.now();
+    const oenv = { ...env, INGRESO_REMITO_BUDGET_MS: "25000" } as Partial<NodeJS.ProcessEnv>;
+    const r = await runOpenAI([{ text: 'Respondé únicamente la palabra "OK".' }, { inline_data: { mime_type: PROBE_IMAGE_MIME, data: PROBE_IMAGE_BASE64 } }], oenv, doFetch, { maxOutputTokens: 32 });
+    const text = r.ok ? { ok: true, message: `El modelo «${r.model}» respondió correctamente.` } : { ok: false, kind: r.kind, message: r.message };
+    let image: ProbeResult["image"] = null;
+    if (deps.image && r.ok) image = imageResult(await extractRemito([probeImg], { fetchImpl: doFetch, env: { ...env, INGRESO_REMITO_PROVIDERS: "openai" }, health: createNoopHealth() }));
+    providers.push({ provider: "openai", configured: true, keySource: openaiKeySource(env), model: r.model ?? openaiModel(env), ok: text.ok && (!deps.image || Boolean(image?.ok)), ms: Date.now() - t, text, image, breaker: await breakerOf("openai") });
+  } else providers.push({ provider: "openai", configured: false, keySource: null, model: null, ok: false, ms: 0, text: { ok: false, message: "OpenAI no está configurado: definí CREAMY_OPENAI_API_KEY u OPENAI_API_KEY (o INGRESO_REMITO_OPENAI_API_KEY) en Vercel para activar el respaldo." }, image: null, breaker: await breakerOf("openai") });
+
+  if (!cfg.available) {
+    return { ...base, ok: false, code: cfg.code, effectiveModel: null, listing: empty, attempts: [], text: { ok: false, message: cfg.reason }, image: null, providers, message: cfg.reason };
   }
-  const ok = text.ok && (!deps.image || Boolean(image?.ok));
+  const anyOk = providers.some((p) => p.configured && p.ok);
+  const firstOk = providers.find((p) => p.configured && p.ok);
+  const failMsg = providers.filter((p) => p.configured).map((p) => `${p.provider}: ${(p.image && !p.image.ok ? p.image.message : p.text.message)}`).join(" · ");
   return {
     ...base,
-    ok,
+    ok: anyOk,
     code: "tested",
-    effectiveModel: run.ok ? run.model : null,
-    listing,
-    attempts: run.attempts,
-    text,
-    image,
-    message: ok ? (deps.image ? "Gemini analizó correctamente una imagen de prueba." : "Gemini respondió correctamente con la clave configurada.") : image && !image.ok ? image.message : text.message,
+    effectiveModel: geminiTop.effectiveModel ?? firstOk?.model ?? null,
+    listing: geminiTop.listing,
+    attempts: geminiTop.attempts,
+    text: geminiTop.text, // el diagnóstico de Gemini no se disfraza: el estado del respaldo va en `providers`
+    image: geminiTop.image,
+    providers,
+    message: anyOk ? (providers.every((p) => !p.configured || p.ok) ? (deps.image ? "Los proveedores configurados analizaron correctamente una imagen de prueba." : "Los proveedores configurados respondieron correctamente.") : `Funciona con ${firstOk?.provider}; algún proveedor falló: ${failMsg}`) : failMsg,
   };
+}
+
+/** Salud «nula» para pruebas de configuración: no toca el circuit breaker real. */
+function createNoopHealth(): ProviderHealthStore {
+  return { async state() { return { consecutiveFailures: 0, openUntil: 0, lastKind: null, lastHttp: null, lastFailureAt: null, lastSuccessAt: null }; }, async recordSuccess() {}, async recordFailure() {} };
 }

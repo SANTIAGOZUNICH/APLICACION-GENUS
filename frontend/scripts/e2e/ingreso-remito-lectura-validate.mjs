@@ -46,6 +46,27 @@ const remitoMP = {
   ],
 };
 const remitoME = { supplier: SUPPLIER, remitoNumber: `0002-${RUN}02`, remitoDate: "2026-10-14", notes: "", unclearFields: [], lines: [{ supplierCode: "FR-9", description: "Frasco PET 250 ml", quantity: "1.200", unit: "un", packages: 12, lot: "", expiryDate: "", notes: "", confidence: 0.9, unclearFields: [] }] };
+// ───── OpenAI SIMULADO (Responses API): proveedor de respaldo ─────
+const ostate = { mode: "down", requests: [] };
+const oai = http.createServer((req, res) => {
+  let raw = "";
+  req.on("data", (c) => (raw += c));
+  req.on("end", () => {
+    const body = raw ? JSON.parse(raw) : {};
+    const parts = body.input?.[0]?.content ?? [];
+    ostate.requests.push({ url: req.url, auth: req.headers.authorization, model: body.model, types: parts.map((p) => p.type), prompt: String(parts[0]?.text ?? ""), store: body.store });
+    const send = (status, obj) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(obj)); };
+    if (ostate.mode === "down") return send(503, { error: { type: "server_error", code: "server_error", message: "The server is overloaded" } });
+    if (ostate.mode === "quota") return send(429, { error: { type: "insufficient_quota", code: "insufficient_quota", message: "You exceeded your current quota" } });
+    const second = String(parts[0]?.text ?? "").includes("SEGUNDA LECTURA");
+    const payload = ostate.mode === "me" ? remitoME : remitoMP;
+    void second;
+    setTimeout(() => send(200, { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(payload) }] }], usage: { input_tokens: 1200, output_tokens: 300, total_tokens: 1500 } }), ostate.delayMs ?? 400);
+  });
+});
+await new Promise((r) => oai.listen(4598, "127.0.0.1", r));
+const resetBreaker = () => q("delete from ai_provider_health");
+
 const gem = http.createServer((req, res) => {
   let raw = "";
   req.on("data", (c) => (raw += c));
@@ -150,10 +171,10 @@ try {
   await mp.screenshot({ path: `${OUT}/01-mp-analizando.png` });
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 60_000 });
   check("Al terminar pasa solo a la revisión, con el aviso «Remito analizado. Revisá los datos antes de confirmar.»", (await mp.getByText("Remito analizado. Revisá los datos antes de confirmar.").count()) === 1);
-  const reqs = state.requests.filter((r) => !r.textOnly && r.model === "gemini-3.5-flash");
+  const reqs = state.requests.filter((r) => !r.textOnly && r.model === "gemini-2.5-flash-lite");
   check("Una sola llamada a Gemini con las 2 hojas (JPG + PDF), clave en cabecera y sin salir de la URL local", reqs.length === 1 && reqs[0].mimes.join() === "image/jpeg,application/pdf" && reqs[0].key === FAKE_KEY && !reqs[0].url.includes(FAKE_KEY), JSON.stringify(reqs[0]?.mimes));
   const genReqs = state.requests.filter((r) => r.model);
-  check("El modelo configurado NO EXISTE (404): GENUS OS consultó qué modelos tiene la clave y siguió con el mejor (gemini-3.5-flash), sin error para el operario", genReqs[0]?.model === "gemini-2.0-flash-retirado" && genReqs[1]?.model === "gemini-3.5-flash" && state.lists === 1, JSON.stringify(genReqs.map((r) => r.model)));
+  check("El modelo configurado NO EXISTE (404): GENUS OS consultó qué modelos tiene la clave y siguió con el modelo estable y económico (gemini-2.5-flash-lite, NO el de versión más alta), sin error para el operario", genReqs[0]?.model === "gemini-2.0-flash-retirado" && genReqs[1]?.model === "gemini-2.5-flash-lite" && state.lists === 1, JSON.stringify(genReqs.map((r) => r.model)));
   check("Pidió respuesta JSON y temperatura 0, sin opciones propias de otros modelos (razonamiento mínimo en modelos 3.x)", reqs[0]?.gen?.responseMimeType === "application/json" && reqs[0]?.gen?.temperature === 0 && (reqs[0]?.gen?.thinkingConfig === undefined || reqs[0]?.gen?.thinkingConfig?.thinkingLevel === "low"));
   check("El formulario se completó SOLO (sin recargar): proveedor, n.º y fecha del remito", (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER && (await mp.locator("[data-testid=remito-numero]").inputValue()) === REM && (await mp.locator("[data-testid=remito-fecha]").inputValue()) === "2026-10-14");
   check("La fecha de recepción sigue siendo la de hoy (distinta de la del remito)", (await mp.locator("[data-testid=remito-recepcion]").inputValue()) === new Date().toISOString().slice(0, 10));
@@ -185,6 +206,7 @@ try {
 
   // ===== Fallo de lectura: mensaje claro + «Reintentar lectura» =====
   state.mode = "garbage";
+  await resetBreaker();
   state.delayMs = 300;
   await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
   await dlg(mp).waitFor();
@@ -196,6 +218,7 @@ try {
   check("Hay UN solo botón «Reintentar lectura» (sin duplicados) y la carga manual sigue disponible", (await mp.getByRole("button", { name: /^Reintentar lectura$/ }).count()) === 1 && (await mp.locator("[data-testid=remito-cargar-manual]").isVisible()));
   await mp.screenshot({ path: `${OUT}/03-mp-fallo-lectura.png` });
   state.mode = "ok";
+  await resetBreaker();
   state.delayMs = 300;
   await mp.locator("[data-testid=remito-reintentar]").first().click();
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 60_000 });
@@ -210,30 +233,36 @@ try {
 
   // Clave/permiso rechazado → motivo para Sistemas.
   state.mode = "403";
+  await resetBreaker();
   await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
   await dlg(mp).waitFor();
   await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
   await mp.locator("[data-testid=remito-lectura-fallo]").waitFor({ timeout: 60_000 });
   const txt403 = await mp.locator("[data-testid=remito-lectura-fallo]").innerText();
   const job403 = (await q("select payload->'job' j from inventory_receipts order by updated_at desc limit 1"))[0]?.j;
-  check("Permisos insuficientes del proveedor: el operario ve un mensaje claro SIN tecnicismos ni pedido de otra foto; el motivo queda en el diagnóstico para Sistemas", /La lectura automática no está disponible en este momento\. Tu imagen está guardada/.test(txt403) && !/permiso|clave|modelo|imagen más clara/i.test(txt403) && job403?.diag?.errorKind === "permission" && job403?.diag?.http === 403 && !JSON.stringify(job403).includes(FAKE_KEY));
+  check("Permisos insuficientes del proveedor: el operario ve un mensaje claro SIN tecnicismos ni pedido de otra foto; el motivo queda en el diagnóstico para Sistemas", /La lectura automática no está disponible en este momento\. Tu imagen está guardada/.test(txt403) && !/permiso|clave|modelo|imagen más clara/i.test(txt403) && job403?.diag?.providers?.gemini?.kind === "permission" && job403?.diag?.providers?.gemini?.http === 403 && !JSON.stringify(job403).includes(FAKE_KEY));
   await mp.keyboard.press("Escape");
   state.mode = "ok";
+  await resetBreaker();
 
   // ===== Fallo TRANSITORIO del proveedor: GENUS OS reintenta solo (el operario no ve ningún error) =====
   state.mode = "flaky";
+  ostate.mode = "ok"; // con respaldo disponible, un 503 de Gemini pasa al otro proveedor (no se insiste en el saturado)
+  await resetBreaker();
   state.flakyHits = 0;
   await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
   await dlg(mp).waitFor();
   const stockAntesFlaky = await balance(MP_CODE);
   await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 90_000 });
-  check("503 transitorio del proveedor: reintento automático y la lectura se completa sin error visible", state.flakyHits >= 2 && (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER && (await mp.locator("[data-testid=remito-lectura-fallo]").count()) === 0, `hits=${state.flakyHits}`);
+  check("503 transitorio del proveedor: reintento automático y la lectura se completa sin error visible", state.flakyHits >= 1 && (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER && (await mp.locator("[data-testid=remito-lectura-fallo]").count()) === 0, `hits=${state.flakyHits}`);
   check("el reintento no duplicó nada: sigue siendo un borrador sin stock", (await balance(MP_CODE)) === stockAntesFlaky);
   await mp.keyboard.press("Escape");
 
   // ===== Proveedor saturado de forma sostenida: mensaje propio, tope de reintentos, foto y carga manual intactas =====
   state.mode = "overloaded";
+  ostate.mode = "down";
+  await resetBreaker();
   state.requests.length = 0;
   await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
   await dlg(mp).waitFor();
@@ -242,17 +271,84 @@ try {
   const sat = await mp.locator("[data-testid=remito-lectura-fallo]").innerText();
   const generate = state.requests.filter((r) => r.model && !r.textOnly).length;
   const jobSat = (await q("select payload->'job' j from inventory_receipts order by updated_at desc limit 1"))[0]?.j;
-  check("Saturación sostenida: mensaje de servicio no disponible (NO culpa a la imagen ni pide otra foto), la foto sigue adjunta y el diagnóstico queda para Sistemas", /La lectura automática no está disponible en este momento\. Tu imagen está guardada y podés completar los datos manualmente o reintentar\./.test(sat) && !/imagen más clara|otra foto|saturado/i.test(sat) && (await mp.locator("[data-testid=remito-miniaturas] li").count()) === 1 && jobSat?.diag?.errorKind === "overloaded" && jobSat?.diag?.http === 503, sat.slice(0, 80));
-  check("Reintentos con tope (no infinitos) pero aprovechando el tiempo: entre 6 y 9 llamadas", generate >= 6 && generate <= 9, String(generate));
+  check("Saturación sostenida: mensaje de servicio no disponible (NO culpa a la imagen ni pide otra foto), la foto sigue adjunta y el diagnóstico queda para Sistemas", /La lectura automática no está disponible en este momento\. Tu imagen está guardada y podés completar los datos manualmente o reintentar\./.test(sat) && !/imagen más clara|otra foto|saturado/i.test(sat) && (await mp.locator("[data-testid=remito-miniaturas] li").count()) === 1 && jobSat?.diag?.providers?.gemini?.kind === "overloaded" && jobSat?.diag?.providers?.gemini?.http === 503, sat.slice(0, 80));
+  check("Con respaldo configurado Gemini NO monopoliza el tiempo: máximo 2 intentos rápidos y luego el respaldo (que también falló: servicio no disponible, borrador y foto intactos)", generate >= 1 && generate <= 2 && ostate.requests.length >= 1 && jobSat?.diag?.providers?.gemini?.ok === false && jobSat?.diag?.providers?.openai?.ok === false, `gemini=${generate} openai=${ostate.requests.length}`);
   check("Se puede completar a mano sin perder la foto", await mp.locator("[data-testid=remito-cargar-manual]").isEnabled());
   state.mode = "ok";
+  await resetBreaker();
   await mp.locator("[data-testid=remito-reintentar]").first().click();
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 60_000 });
   check("Cuando el proveedor se recupera, «Reintentar lectura» funciona", (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER);
   await mp.keyboard.press("Escape");
 
+  // ===== NUEVO: fallback automático Gemini → OpenAI (el operario solo saca la foto) =====
+  ostate.mode = "ok";
+  state.mode = "overloaded"; // Gemini 503 «alta demanda»
+  await resetBreaker();
+  state.requests.length = 0;
+  ostate.requests.length = 0;
+  state.delayMs = 300;
+  const stockAntesFb = await balance(MP_CODE);
+  await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
+  await dlg(mp).waitFor();
+  const tFb = Date.now();
+  await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
+  await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 40_000 });
+  const msFb = Date.now() - tFb;
+  const gFb = state.requests.filter((r) => r.model && r.model !== "gemini-2.0-flash-retirado" && !r.textOnly).length;
+  check("Gemini 503 → OpenAI lee el remito SOLO: la pantalla pasa a la revisión sin botón «Reintentar» ni error", (await mp.locator("[data-testid=remito-lectura-fallo]").count()) === 0 && (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER && (await mp.locator("[data-testid=remito-linea]").count()) === 2);
+  check("Gemini solo tuvo ≤2 intentos rápidos (sin esperas) y OpenAI recibió 1 pedido con la clave en cabecera, fotos como input_image y sin guardar (store:false)", gFb <= 2 && ostate.requests.length === 1 && ostate.requests[0].auth === "Bearer e2e-openai-falsa" && ostate.requests[0].types.includes("input_image") && ostate.requests[0].store === false, `gemini=${gFb} openai=${ostate.requests.length} ${msFb}ms`);
+  check("El tiempo total es de segundos (antes ~39 s de espera a Gemini y timeout)", msFb < 25_000, `${msFb} ms`);
+  const jobFb = (await q("select payload->'job' j from inventory_receipts order by updated_at desc limit 1"))[0]?.j;
+  check("Diagnóstico para Sistemas: se usó el respaldo (fallback), con tokens y tiempo por proveedor, y el estado del circuit breaker de Gemini quedó guardado", jobFb?.diag?.fallback === true && jobFb?.diag?.provider === "openai" && jobFb?.diag?.providers?.gemini?.ok === false && jobFb?.diag?.providers?.openai?.tokens?.total === 1500 && (await q("select last_kind from ai_provider_health where provider = 'gemini'"))[0]?.last_kind === "overloaded");
+  check("El fallback no movió stock ni creó ingresos (sigue siendo un borrador)", (await balance(MP_CODE)) === stockAntesFb);
+  await mp.screenshot({ path: `${OUT}/07-mp-fallback-openai.png`, fullPage: true });
+  await mp.keyboard.press("Escape");
+
+  // 429 de Gemini: fallback inmediato y el circuit breaker evita volver a esperarlo en el remito siguiente
+  state.mode = "quota";
+  await resetBreaker();
+  state.requests.length = 0;
+  ostate.requests.length = 0;
+  await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
+  await dlg(mp).waitFor();
+  await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
+  await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 40_000 });
+  const g429a = state.requests.filter((r) => r.model && r.model !== "gemini-2.0-flash-retirado" && !r.textOnly).length;
+  check("Gemini 429 (cuota): UNA sola llamada, fallback inmediato y lectura completa", g429a === 1 && ostate.requests.length === 1 && (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER, `gemini=${g429a}`);
+  await mp.keyboard.press("Escape");
+  state.requests.length = 0;
+  ostate.requests.length = 0;
+  await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
+  await dlg(mp).waitFor();
+  const tCb = Date.now();
+  await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
+  await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 40_000 });
+  const g429b = state.requests.filter((r) => r.model && r.model !== "gemini-2.0-flash-retirado" && !r.textOnly).length;
+  check("Circuit breaker: el remito SIGUIENTE no llama a Gemini (0 pedidos) y lee directo con OpenAI", g429b === 0 && ostate.requests.length === 1, `gemini=${g429b} ${Date.now() - tCb}ms`);
+  await mp.keyboard.press("Escape");
+
+  // AMBOS proveedores caídos: borrador y foto conservados, carga manual, y al volver OpenAI el reintento con la MISMA foto completa
+  state.mode = "overloaded";
+  ostate.mode = "down";
+  await resetBreaker();
+  await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
+  await dlg(mp).waitFor();
+  await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
+  await mp.locator("[data-testid=remito-lectura-fallo]").waitFor({ timeout: 60_000 });
+  const bothDown = await mp.locator("[data-testid=remito-lectura-fallo]").innerText();
+  check("Ambos proveedores caídos: mensaje de servicio (no culpa a la imagen), foto conservada, UN solo «Reintentar lectura» y carga manual disponible", /La lectura automática no está disponible en este momento\. Tu imagen está guardada/.test(bothDown) && !/imagen más clara/i.test(bothDown) && (await mp.locator("[data-testid=remito-miniaturas] li").count()) === 1 && (await mp.getByRole("button", { name: /^Reintentar lectura$/ }).count()) === 1 && (await mp.locator("[data-testid=remito-cargar-manual]").isEnabled()));
+  ostate.mode = "ok";
+  await mp.locator("[data-testid=remito-reintentar]").first().click();
+  await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 60_000 });
+  check("Vuelve el proveedor de respaldo: «Reintentar lectura» con la MISMA foto completa el formulario", (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER);
+  await mp.keyboard.press("Escape");
+  state.mode = "ok";
+  await resetBreaker();
+
   // ===== 2.ª etapa: la foto original no deja leer una cantidad → GENUS OS mejora la imagen SOLO y la recupera (sin pedir otra foto) =====
   state.mode = "needs_enhance";
+  await resetBreaker();
   state.delayMs = 5000; // lo bastante lento como para ver el aviso de etapa
   state.requests.length = 0;
   await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
@@ -270,6 +366,8 @@ try {
 
   // ===== Lectura parcial: no se puede leer UNA cantidad → se completa todo lo demás y se marca solo eso =====
   state.mode = "noqty";
+  ostate.mode = "down"; // sin otro proveedor que pueda recuperar la cantidad: queda el parcial
+  await resetBreaker();
   state.delayMs = 400;
   state.requests.length = 0;
   await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
@@ -288,9 +386,12 @@ try {
   check("PASAR A EXCEL funciona con los datos ya leídos y NO repite la lectura (sin llamadas nuevas al proveedor)", state.requests.filter((r) => r.model && !r.textOnly).length === llamadasAntesExcel);
   await mp.keyboard.press("Escape");
   state.mode = "ok";
+  ostate.mode = "ok";
+  await resetBreaker();
 
   // ===== Respuesta PERDIDA (timeout HTTP / corte de red): el resultado se RECUPERA sin volver a fotografiar ni llamar de nuevo =====
   state.mode = "ok";
+  await resetBreaker();
   state.delayMs = 800;
   state.requests.length = 0;
   const stockAntesRecup = await balance(MP_CODE);
@@ -309,7 +410,7 @@ try {
   await mp.getByText(/recuperando el resultado/i).waitFor({ timeout: 30_000 });
   check("Si la respuesta se pierde, la pantalla lo dice («recuperando el resultado») en vez de dar error", true);
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 90_000 });
-  const generacion = state.requests.filter((r) => r.model === "gemini-3.5-flash" && !r.textOnly).length; // el modelo configurado inexistente (404) no cuenta: la lectura efectiva es una sola
+  const generacion = state.requests.filter((r) => r.model === "gemini-2.5-flash-lite" && !r.textOnly).length; // el modelo configurado inexistente (404) no cuenta: la lectura efectiva es una sola
   check("Resultado RECUPERADO sin sacar otra foto: formulario completo y UNA sola llamada al proveedor de IA", (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER && (await mp.locator("[data-testid=remito-linea]").count()) === 2 && generacion === 1, `llamadas=${generacion}`);
   check("Recuperar no duplicó nada ni movió stock", (await balance(MP_CODE)) === stockAntesRecup);
   await mp.screenshot({ path: `${OUT}/05-mp-recuperado.png` });
@@ -318,6 +419,7 @@ try {
 
   // ===== Depósito (PC) =====
   state.mode = "me";
+  await resetBreaker();
   state.delayMs = 500;
   const dpu = await openAs(E2E_USERS.deposito, false);
   const dp = dpu.page;
@@ -350,13 +452,19 @@ try {
   await tab.locator('button[type="submit"]').click();
   await tab.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 60_000 });
   state.mode = "ok";
+  await resetBreaker();
   state.delayMs = 300;
   await tab.goto("/mi-trabajo");
   await nav(tab, "Ingresos MP");
   await tab.locator("[data-testid=nuevo-ingreso-remito]").click();
   await dlg(tab).waitFor();
+  state.mode = "overloaded"; // en tablet también: Gemini saturado, lee el respaldo
+  ostate.mode = "ok";
+  await resetBreaker();
   await tab.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
   await tab.locator("[data-testid=paso-revision]").waitFor({ timeout: 60_000 });
+  check("Tablet: con Gemini saturado la lectura sale igual por el respaldo, sin error", (await tab.locator("[data-testid=remito-lectura-fallo]").count()) === 0 && (await tab.locator("[data-testid=remito-linea]").count()) === 2);
+  state.mode = "ok";
   const overflow = await tab.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   check("Tablet: la revisión del remito se ve completa, sin scroll horizontal", overflow <= 1 && (await tab.locator("[data-testid=remito-linea]").count()) === 2, `desborde=${overflow}px`);
   await tab.screenshot({ path: `${OUT}/06-tablet-revision.png`, fullPage: true });
@@ -365,20 +473,24 @@ try {
   // ===== Prueba de configuración (sin enviar remitos) y permisos =====
   const dir = await openAs(E2E_USERS.direccion, false);
   state.mode = "ok";
+  await resetBreaker();
   const health = await dir.page.request.get("/api/v1/inventory/receipts?module=MP&view=extraction_health");
   const hb = await health.json();
-  check("Dirección prueba la configuración (solo texto, sin documentos): informa modelo configurado, efectivo, modelos de la clave e intentos", health.status() === 200 && hb.health.ok === true && hb.health.configuredModel === "gemini-2.0-flash-retirado" && hb.health.effectiveModel === "gemini-3.5-flash" && hb.health.listing.candidates[0] === "gemini-3.5-flash" && !hb.health.listing.candidates.includes("embedding-001") && !JSON.stringify(hb).includes(FAKE_KEY), JSON.stringify({ c: hb.health.configuredModel, e: hb.health.effectiveModel, l: hb.health.listing?.candidates }));
+  check("Dirección prueba la configuración (solo texto, sin documentos): informa modelo configurado, efectivo, modelos de la clave e intentos", health.status() === 200 && hb.health.ok === true && hb.health.configuredModel === "gemini-2.0-flash-retirado" && hb.health.effectiveModel === "gemini-2.5-flash-lite" && hb.health.listing.candidates[0] === "gemini-2.5-flash-lite" && !hb.health.listing.candidates.includes("embedding-001") && !JSON.stringify(hb).includes(FAKE_KEY), JSON.stringify({ c: hb.health.configuredModel, e: hb.health.effectiveModel, l: hb.health.listing?.candidates }));
   const textOnlyCalls = state.requests.filter((r) => r.model && r.textOnly);
   check("La prueba de texto no envió ningún documento", textOnlyCalls.length >= 1);
   const imgHealth = await (await dir.page.request.get("/api/v1/inventory/receipts?module=MP&view=extraction_health&image=1")).json();
   check("Prueba con IMAGEN (remito ficticio incorporado): el modelo analizó la imagen y encontró renglones", imgHealth.health.ok === true && imgHealth.health.image?.ok === true && imgHealth.health.image.read.lines >= 1, imgHealth.health.message);
   state.mode = "keyinvalid";
+  await resetBreaker();
   const hKey = await (await dir.page.request.get("/api/v1/inventory/receipts?module=MP&view=extraction_health")).json();
-  check("Diagnóstico: clave inválida se distingue del modelo inexistente", hKey.health.ok === false && hKey.health.text.kind === "key" && /clave de Gemini/.test(hKey.health.text.message));
+  check("Diagnóstico: clave inválida se distingue del modelo inexistente", hKey.health.providers?.find((p) => p.provider === "gemini")?.ok === false && hKey.health.text.kind === "key" && /clave de Gemini/.test(hKey.health.text.message));
   state.mode = "quota";
+  await resetBreaker();
   const hQuota = await (await dir.page.request.get("/api/v1/inventory/receipts?module=MP&view=extraction_health")).json();
-  check("Diagnóstico: límite de uso se distingue", hQuota.health.ok === false && hQuota.health.text.kind === "limit");
+  check("Diagnóstico: límite de uso se distingue", hQuota.health.providers?.find((p) => p.provider === "gemini")?.ok === false && hQuota.health.text.kind === "limit");
   state.mode = "ok";
+  await resetBreaker();
   check("Un operario no puede usar la prueba de configuración (403)", (await mp.request.get("/api/v1/inventory/receipts?module=MP&view=extraction_health")).status() === 403);
   const cfg = await (await mp.request.get("/api/v1/inventory/receipts?module=MP&view=config")).json();
   check("La configuración que ve la pantalla no expone la clave", cfg.extraction.available === true && !JSON.stringify(cfg).includes(FAKE_KEY));
@@ -389,6 +501,7 @@ try {
 } finally {
   await browser.close();
   gem.close();
+  oai.close();
   await pool.end();
 }
 const failed = results.filter((r) => !r.ok);

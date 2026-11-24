@@ -31,6 +31,8 @@ import { normalizeMeCodigo } from "@/lib/inventory/me-codigo";
 import { auditRow, lockCodigos } from "@/lib/inventory/me-planilla-db";
 import { runMpInventoryOp } from "@/lib/inventory/mp-planilla-db";
 import { askGeminiJson, extractRemito, extractionConfig, type ExtractionConfig } from "@/lib/inventory/receipt-extraction";
+import { createDbHealthStore } from "@/lib/inventory/receipt-provider-health-db";
+import type { ProviderHealthStore } from "@/lib/inventory/receipt-provider-health";
 import { AI_MAX_CANDIDATES, AI_MAX_LINES, buildIdentifyPrompt, parseIdentifyAnswer, type AiLineInput, type AiSuggestion } from "@/lib/mp-control/mp-ai-identify";
 import { idNorm, identifyMaterial } from "@/lib/mp-control/mp-identity";
 import {
@@ -379,6 +381,26 @@ async function fileDuplicates(db: Db, module: ReceiptModule, receiptId: string):
 
 // ───────────────────────── Servicio ─────────────────────────
 
+let healthStore: ProviderHealthStore | null = null;
+/** Circuit breaker compartido entre instancias (tabla ai_provider_health); si la base falla no frena la lectura. */
+const sharedHealth = () => (healthStore ??= createDbHealthStore());
+
+const READ_WINDOW_MS = 60_000;
+const READ_MAX_PER_WINDOW = Math.max(1, Number(process.env.INGRESO_REMITO_READS_PER_MIN ?? 8) || 8);
+const recentReads = new Map<string, number[]>();
+/** Máximo de lecturas reales por usuario y minuto (por instancia). */
+export function allowRead(who: string, now = Date.now()): boolean {
+  const list = (recentReads.get(who) ?? []).filter((t) => now - t < READ_WINDOW_MS);
+  if (list.length >= READ_MAX_PER_WINDOW) {
+    recentReads.set(who, list);
+    return false;
+  }
+  list.push(now);
+  recentReads.set(who, list);
+  return true;
+}
+export const resetReadLimiterForTests = () => recentReads.clear();
+
 /** Texto técnico para Sistemas sin posibles restos de claves. */
 const redactTechnical = (t: string | undefined) => (t ?? "").replace(/AIza[0-9A-Za-z_-]{20,}/g, "[clave oculta]").slice(0, 300);
 
@@ -429,7 +451,7 @@ export function fillEmptyFields(lines: ReceiptLineDraft[], extracted: ExtractedR
 }
 
 export class ReceiptService {
-  constructor(private readonly deps: { extract?: typeof extractRemito; extractionConfig?: () => ExtractionConfig; ask?: typeof askGeminiJson } = {}) {}
+  constructor(private readonly deps: { extract?: typeof extractRemito; extractionConfig?: () => ExtractionConfig; ask?: typeof askGeminiJson; health?: ProviderHealthStore } = {}) {}
 
   config(): ExtractionConfig {
     return (this.deps.extractionConfig ?? extractionConfig)();
@@ -627,8 +649,13 @@ export class ReceiptService {
           console.warn("[ingreso-remito] no se pudo leer el archivo guardado para la lectura automática", err instanceof Error ? err.message : err);
           return fail("No se pudo abrir la foto guardada para leerla. Reintentá o completá los datos manualmente.", "storage", true);
         }
+        // Protección contra abuso / llamadas duplicadas: tope de lecturas REALES por usuario y minuto (una relectura con la misma foto sale de la caché).
+        if (!this.deps.extract && !allowRead(actor.email)) {
+          return fail("Hiciste muchas lecturas seguidas. Esperá unos segundos y volvé a intentar: tu foto y tus datos siguen guardados.", "rate_limited", true);
+        }
         out = await (this.deps.extract ?? extractRemito)(loaded, {
           module,
+          health: this.deps.health ?? sharedHealth(),
           // Etapa en curso: la pantalla lo muestra («Mejorando la imagen para recuperar los datos.»). Solo informativo.
           onStage: async (stage) => {
             await db

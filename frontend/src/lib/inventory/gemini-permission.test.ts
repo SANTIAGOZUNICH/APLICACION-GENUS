@@ -51,10 +51,12 @@ describe("403 de Gemini: se distingue la causa y se dice dónde corregirla (sin 
     expect(classifyHttp(403, { status: "PERMISSION_DENIED" }).kind).toBe("permission");
   });
   it("403 de UN modelo (no habilitado para el proyecto): se prueba el siguiente y la lectura se completa", async () => {
-    const f = server((m) => (m === "gemini-3.5-flash" ? gErr(403, "PERMISSION_DENIED", "The caller does not have permission") : okRes({ ok: true })));
+    const f = server((m) => (m === "gemini-2.5-flash" ? gErr(403, "PERMISSION_DENIED", "The caller does not have permission") : okRes({ ok: true })));
     const r = await generateJsonFromParts([{ text: "x" }], { fetchImpl: f as never, env: env() });
-    expect(r).toMatchObject({ ok: true, model: "gemini-2.5-flash" });
-    expect(f.gens).toEqual(["gemini-3.5-flash", "gemini-2.5-flash"]);
+    // El modelo estable y económico va primero; si el proyecto no lo tiene habilitado se prueba el siguiente.
+    expect(f.gens[0]).toBe("gemini-2.5-flash");
+    expect(r).toMatchObject({ ok: true });
+    expect(f.gens.length).toBe(2);
   });
   it("403 en todos los modelos: tope de 3 intentos y se informa el rechazo con su diagnóstico", async () => {
     const f = server(() => gErr(403, "PERMISSION_DENIED", "denied", "API_KEY_SERVICE_BLOCKED"), ["m1", "m2", "m3", "m4", "m5"].map((m) => `gemini-2.5-flash-${m}`));

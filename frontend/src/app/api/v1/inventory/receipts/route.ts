@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { inventoryErrorResponse, resolveInventoryActor } from "@/lib/inventory/http";
 import { InventoryForbiddenError, InventoryValidationError } from "@/lib/inventory/inventory-service";
 import { probeExtraction } from "@/lib/inventory/receipt-extraction";
+import { createDbHealthStore } from "@/lib/inventory/receipt-provider-health-db";
 import { parseReceiptModule } from "@/lib/inventory/receipt-rules";
 import { getReceiptService, ReceiptError } from "@/lib/inventory/receipt-service";
 import { getStorageHealth } from "@/lib/storage/file-storage";
@@ -37,14 +38,14 @@ export async function GET(request: Request) {
       const cfg = svc.config();
       const storage = getStorageHealth();
       return NextResponse.json({
-        extraction: { available: cfg.available, reason: cfg.reason, code: cfg.code },
+        extraction: { available: cfg.available, reason: cfg.reason, code: cfg.code, providers: cfg.providers },
         storage: { configured: storage.configured, reason: storage.configured ? "" : "El almacenamiento de fotos no está configurado en el servidor: no se pueden adjuntar fotos hasta que Sistemas lo habilite. Podés cargar los datos a mano." },
       });
     }
     if (view === "extraction_health") {
       // Solo supervisión (Dirección / Producción / superadmin): prueba clave y modelo SIN enviar ningún remito real (con &image=1 lee un remito ficticio incorporado).
       if (!actor.isSuperadmin && actor.sector !== "DIRECCION" && actor.sector !== "PRODUCCION") throw new InventoryForbiddenError("Solo Dirección o Producción pueden probar la lectura automática.");
-      return NextResponse.json({ health: await probeExtraction({ image: url.searchParams.get("image") === "1" }) });
+      return NextResponse.json({ health: await probeExtraction({ image: url.searchParams.get("image") === "1", health: createDbHealthStore() }) });
     }
     if (view === "catalog") return NextResponse.json({ items: await svc.catalog(actor, mod, url.searchParams.get("q") ?? "") });
     if (view === "get") return NextResponse.json({ receipt: await svc.get(actor, id, mod) });

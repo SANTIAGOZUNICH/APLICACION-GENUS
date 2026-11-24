@@ -680,4 +680,130 @@ describe.skipIf(Boolean(PROBLEM))(`Ingreso con remito en Postgres real${PROBLEM 
     expect(await meStock(ME_CODE2)).toBe(stockBefore); // leer / completar nunca mueve stock
     expect(saved.version).toBeGreaterThan(0);
   });
+
+  // ── Proveedores múltiples (Gemini → OpenAI): orquestación REAL + circuit breaker compartido en la base + borrador intacto ──
+  const FAKE = { g: "AIzaSyFAKE_GEMINI_IT_0123456789abcdef", o: "sk-proj-FAKE_OPENAI_IT_0123456789abcdef" };
+  const provEnv = (over: Record<string, string> = {}) => ({ INGRESO_REMITO_EXTRACTION: "gemini", GEMINI_API_KEY: FAKE.g, CREAMY_OPENAI_API_KEY: FAKE.o, INGRESO_REMITO_RETRY_BASE_MS: "1", INGRESO_REMITO_BUDGET_MS: "6000", INGRESO_REMITO_FAST_BUDGET_MS: "900", INGRESO_REMITO_FAST_ATTEMPT_MS: "400", ...over }) as Partial<NodeJS.ProcessEnv>;
+  const rj = (status: number, body: unknown, headers: Record<string, string> = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
+  const dataOf = (remito: string) => ({ supplier: `Proveedor IT ${RUN} SA`, remitoNumber: remito, remitoDate: tomorrow(), notes: "", lines: [{ supplierCode: "FR-9", description: "Frasco PET 250 ml", quantity: 1000, quantityText: "1.000", unit: "un", confidence: 0.95 }] });
+  /** Proveedores simulados: `g`/`o` deciden cada llamada. Cuenta llamadas por proveedor. */
+  const fakeProviders = (g: (n: number) => Response, o: (n: number) => Response) => {
+    const count = { gemini: 0, openai: 0 };
+    const fn = async (url: string | URL | Request) => {
+      const u = String(url);
+      if (/\/v1beta\/models\?/.test(u)) return rj(200, { models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }, { name: "models/gemini-2.5-flash-lite", supportedGenerationMethods: ["generateContent"] }] });
+      if (/openai\.com/.test(u)) return o(count.openai++);
+      return g(count.gemini++);
+    };
+    return Object.assign(fn, { count });
+  };
+  const gOkR = (d: unknown) => rj(200, { candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(d) }] } }] });
+  const oOkR = (d: unknown) => rj(200, { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(d) }] }], usage: { input_tokens: 1000, output_tokens: 200, total_tokens: 1200 } });
+  const g503R = () => rj(503, { error: { code: 503, status: "UNAVAILABLE", message: "This model is currently experiencing high demand." } });
+  const g429R = () => rj(429, { error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "You exceeded your current quota, please check your plan and billing details." } }, { "retry-after": "20" });
+  const healthRow = async (p: string) => (await q("select consecutive_failures, open_until, last_kind, last_http, total_success, total_failure from ai_provider_health where provider = $1", [p]))[0];
+  const withProviders = async (fake: ReturnType<typeof fakeProviders>, env = provEnv()) => {
+    const { ReceiptService } = await lib();
+    const { extractRemito } = await import("@/lib/inventory/receipt-extraction");
+    const { createDbHealthStore } = await import("@/lib/inventory/receipt-provider-health-db");
+    return new ReceiptService({
+      extractionConfig: robustCfg,
+      health: createDbHealthStore(),
+      extract: (files, d) => extractRemito(files, { ...d, fetchImpl: fake as never, env }),
+    });
+  };
+
+  it("Gemini 503 → OpenAI recupera la lectura SIN intervención: borrador completo, foto y stock intactos, diagnóstico y circuit breaker guardados en la base; confirmar registra una sola vez", async () => {
+    await q("delete from ai_provider_health");
+    const remito = `R-${RUN}-PV1`;
+    const fake = fakeProviders(() => g503R(), () => oOkR(dataOf(remito)));
+    const svcP = await withProviders(fake);
+    const stockBefore = await meStock(ME_CODE);
+    const r = await draft("ME", dep, "", [], { files: 1, header: { supplier: "", remitoNumber: "", remitoDate: "", notes: "" } });
+    const out = await svcP.extract(dep as never, r.id, "ME");
+    expect(out).toMatchObject({ applied: true, kind: "ok" });
+    expect(out.receipt.draft.header.remitoNumber).toBe(remito);
+    expect(out.receipt.draft.lines).toHaveLength(1);
+    expect(out.receipt.draft.lines[0]!.quantity).toBe("1000");
+    expect(out.receipt.draft.extraction?.provider).toMatch(/^openai:gpt-4o-mini/);
+    expect(fake.count.gemini).toBeLessThanOrEqual(2);
+    expect(fake.count.openai).toBe(1);
+    const diag = (out.receipt.draft.job as { diag?: { fallback?: boolean; providers?: Record<string, { ok: boolean; kind?: string }> } }).diag;
+    expect(diag).toMatchObject({ fallback: true });
+    expect(diag?.providers?.gemini).toMatchObject({ ok: false, kind: "overloaded" });
+    expect(diag?.providers?.openai).toMatchObject({ ok: true });
+    expect(JSON.stringify(out.receipt.draft)).not.toMatch(/AIza|sk-proj/);
+    expect(await meStock(ME_CODE)).toBe(stockBefore); // leer no mueve stock
+    expect(await healthRow("gemini")).toMatchObject({ last_kind: "overloaded", last_http: 503, total_failure: 1 });
+    expect(await healthRow("openai")).toMatchObject({ consecutive_failures: 0, total_success: 1 });
+    // confirmar: una sola vez
+    const lines = out.receipt.draft.lines.map((l) => ({ ...l, materialCode: ME_CODE }));
+    const saved = await (await svc()).saveDraft(dep as never, r.id, "ME", { expectedVersion: out.receipt.version, header: out.receipt.draft.header, lines });
+    const key = `k-${randomUUID()}`;
+    await (await svc()).confirm(dep as never, r.id, "ME", { expectedVersion: saved.version, confirmKey: key } as never);
+    await (await svc()).confirm(dep as never, r.id, "ME", { expectedVersion: saved.version, confirmKey: key } as never).catch(() => undefined);
+    expect(await meStock(ME_CODE)).toBe(stockBefore + 1000);
+    expect((await q("select count(*)::int n from inv_me_ingresos where payload->>'remitoNro' = $1", [remito]))[0]!.n).toBe(1);
+  });
+
+  it("circuit breaker compartido: Gemini devuelve 429 → se abre en la BASE; otra instancia (servicio nuevo) saltea Gemini sin esperarlo y lee con OpenAI", async () => {
+    await q("delete from ai_provider_health");
+    const remito = `R-${RUN}-PV2`;
+    const fake1 = fakeProviders(() => g429R(), () => oOkR(dataOf(remito)));
+    const a = await draft("ME", dep, "", [], { files: 1, header: { supplier: "", remitoNumber: "", remitoDate: "" } });
+    expect(await (await withProviders(fake1)).extract(dep as never, a.id, "ME")).toMatchObject({ applied: true });
+    expect(fake1.count.gemini).toBe(1); // 429: sin reintentos ni esperas
+    const row = await healthRow("gemini");
+    expect(row).toMatchObject({ last_kind: "limit", last_http: 429, consecutive_failures: 1 });
+    expect(new Date(row!.open_until as string).getTime()).toBeGreaterThan(Date.now());
+    // «otra instancia»: caché local vacía, mismo estado en la base
+    vi.resetModules();
+    const fake2 = fakeProviders(() => gOkR(dataOf(remito)), () => oOkR(dataOf(remito)));
+    const b = await draft("ME", dep, "", [], { files: 1, header: { supplier: "", remitoNumber: "", remitoDate: "" } });
+    const t0 = Date.now();
+    const outB = await (await withProviders(fake2)).extract(dep as never, b.id, "ME");
+    expect(outB).toMatchObject({ applied: true });
+    expect(fake2.count.gemini).toBe(0); // circuito abierto: no se vuelve a esperar a un proveedor caído
+    expect(fake2.count.openai).toBe(1);
+    expect(Date.now() - t0).toBeLessThan(2500);
+    expect((outB.receipt.draft.job as { diag?: { providers?: Record<string, { skipped?: number }> } }).diag?.providers?.gemini).toMatchObject({ skipped: 1 });
+  });
+
+  it("AMBOS proveedores caídos: la foto, lo escrito y el diagnóstico quedan guardados, se puede cargar a mano y, al volver un proveedor, el reintento con la MISMA foto completa", async () => {
+    await q("delete from ai_provider_health");
+    const remito = `R-${RUN}-PV3`;
+    let up = false;
+    const fake = fakeProviders(() => g503R(), (n) => (up ? oOkR(dataOf(remito)) : rj(503, { error: { type: "server_error", message: "overloaded" } })));
+    const svcP = await withProviders(fake);
+    const r = await draft("ME", dep, "", [], { files: 1, header: { supplier: "", remitoNumber: "", remitoDate: "", notes: "nota a mano" } });
+    const down = await svcP.extract(dep as never, r.id, "ME");
+    expect(down).toMatchObject({ applied: false, kind: "overloaded" });
+    expect(down.message).toMatch(/no está disponible en este momento.*imagen está guardada/);
+    expect(down.message).not.toMatch(/imagen más clara|otra foto/i);
+    expect(down.receipt.files).toHaveLength(1);
+    expect(down.receipt.draft.header.notes).toBe("nota a mano");
+    const diag = (down.receipt.draft.job as { diag?: { providers?: Record<string, { ok: boolean; kind?: string }>; failedStage?: string } }).diag;
+    expect(diag?.providers).toMatchObject({ gemini: { ok: false }, openai: { ok: false, kind: "overloaded" } });
+    expect(diag?.failedStage).toBe("lectura");
+    // se puede seguir a mano: el borrador sigue editable (no se cierra nada)
+    const manual = await (await svc()).saveDraft(dep as never, r.id, "ME", { expectedVersion: down.receipt.version, header: { ...down.receipt.draft.header, supplier: `Proveedor IT ${RUN} SA`, remitoNumber: `${remito}-MANUAL` }, lines: [] });
+    expect(manual.draft.header.remitoNumber).toBe(`${remito}-MANUAL`);
+    // vuelve OpenAI: reintento con la misma foto, sin volver a subirla y sin pisar lo escrito a mano
+    up = true;
+    const retry = await svcP.extract(dep as never, r.id, "ME", { fresh: true });
+    expect(retry).toMatchObject({ applied: true, kind: "ok" });
+    expect(retry.receipt.files).toHaveLength(1);
+    expect(retry.receipt.draft.header.remitoNumber).toBe(`${remito}-MANUAL`); // lo escrito a mano no se pisa
+    expect(retry.receipt.draft.lines).toHaveLength(1);
+  });
+
+  it("protección contra abuso: máximo de lecturas reales por usuario y minuto", async () => {
+    const { allowRead, resetReadLimiterForTests } = await lib();
+    resetReadLimiterForTests();
+    const t = Date.now();
+    const results = Array.from({ length: 10 }, (_, i) => allowRead("u@x", t + i));
+    expect(results.filter(Boolean)).toHaveLength(8);
+    expect(allowRead("otro@x", t)).toBe(true);
+    expect(allowRead("u@x", t + 61_000)).toBe(true);
+  });
 });
