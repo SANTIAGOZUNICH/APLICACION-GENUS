@@ -650,7 +650,7 @@ export class ReceiptService {
           return fail("No se pudo abrir la foto guardada para leerla. Reintentá o completá los datos manualmente.", "storage", true);
         }
         // Protección contra abuso / llamadas duplicadas: tope de lecturas REALES por usuario y minuto (una relectura con la misma foto sale de la caché).
-        if (!allowRead(actor.email)) {
+        if (!this.deps.extract && !allowRead(actor.email)) {
           return fail("Hiciste muchas lecturas seguidas. Esperá unos segundos y volvé a intentar: tu foto y tus datos siguen guardados.", "rate_limited", true);
         }
         out = await (this.deps.extract ?? extractRemito)(loaded, {
