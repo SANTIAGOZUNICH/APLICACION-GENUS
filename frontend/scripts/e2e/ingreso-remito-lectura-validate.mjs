@@ -588,6 +588,7 @@ try {
   await mb.locator("[data-testid=remito-cerrar-confirmar]").waitFor();
   check("Escape también pide confirmación (no cierra solo)", (await dlg(mb).isVisible()) && (await confirmVisible(mb)));
   await mb.locator("[data-testid=remito-cerrar-cancelar]").click();
+  await mb.waitForTimeout(900);
   await mb.goBack().catch(() => undefined);
   await mb.waitForTimeout(800);
   check("Botón «atrás» del dispositivo: pide confirmación y la ventana sigue abierta", (await confirmVisible(mb)) && (await dlg(mb).isVisible()));

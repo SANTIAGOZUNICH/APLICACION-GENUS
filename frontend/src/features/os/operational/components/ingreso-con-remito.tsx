@@ -524,9 +524,8 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
     lastCancelAt.current = Date.now();
     setCloseAsk(null);
     const top = scrollBeforeAsk.current;
-    requestAnimationFrame(() => {
-      if (contentNode) contentNode.scrollTop = top; // vuelve exactamente a donde estaba
-    });
+    // Vuelve exactamente a donde estaba (se repite porque el foco que regresa de la confirmación puede mover el scroll).
+    for (const ms of [0, 80, 250]) setTimeout(() => { if (contentNode) contentNode.scrollTop = top; }, ms);
   }
 
   /** «Guardar y cerrar»: guarda SOLO el borrador (foto, datos leídos y cambios manuales). No confirma ni mueve stock. Si falla, NO se cierra. */
@@ -632,7 +631,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
         ref={setContentNode}
         hideCloseButton
         onFocusOutside={(e) => e.preventDefault()}
-        className="[&_fieldset]:min-w-0 [&_label]:min-w-0 max-sm:left-0 max-sm:top-[var(--vvt,0px)] max-sm:h-[var(--vvh,100dvh)] max-sm:max-h-none max-sm:w-screen max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 auto-rows-min content-start gap-3 overscroll-contain p-3 pb-0 w-[min(72rem,100vw)] max-w-none overflow-y-auto sm:max-h-[94dvh] sm:w-[min(72rem,calc(100vw-16px))] sm:p-6 sm:pb-0"
+        className="grid-cols-[minmax(0,1fr)] [&_fieldset]:min-w-0 [&_label]:min-w-0 max-sm:left-0 max-sm:top-[var(--vvt,0px)] max-sm:h-[var(--vvh,100dvh)] max-sm:max-h-none max-sm:w-screen max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 auto-rows-min content-start gap-3 overscroll-contain p-3 pb-0 w-[min(72rem,100vw)] max-w-none overflow-y-auto sm:max-h-[94dvh] sm:w-[min(72rem,calc(100vw-16px))] sm:p-6 sm:pb-0"
         style={{ ...(vp.h ? { maxHeight: `${vp.h}px`, "--vvh": `${vp.h}px`, "--vvt": `${vp.top}px` } : {}) } as CSSProperties}
         data-testid="ingreso-remito-dialog"
       >
@@ -840,7 +839,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
 function CloseConfirm({ state, onSaveClose, onDiscardClose, onCancel }: { state: { saving: boolean; error: string | null } | null; onSaveClose: () => void; onDiscardClose: () => void; onCancel: () => void }) {
   return (
     <Dialog open={Boolean(state)} onOpenChange={(o) => !o && !state?.saving && onCancel()}>
-      <DialogContent hideCloseButton className="z-[60] w-[min(26rem,calc(100vw-24px))]" data-testid="remito-cerrar-confirmar">
+      <DialogContent hideCloseButton onCloseAutoFocus={(e) => e.preventDefault()} className="z-[60] w-[min(26rem,calc(100vw-24px))]" data-testid="remito-cerrar-confirmar">
         <DialogTitle className="text-lg">¿Querés cerrar el remito?</DialogTitle>
         <DialogDescription>Tenés información cargada o una foto en este ingreso. Elegí qué hacer: no se suma stock en ningún caso.</DialogDescription>
         {state?.error ? <p className="rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300" role="alert" data-testid="remito-cerrar-error">{state.error}</p> : null}
