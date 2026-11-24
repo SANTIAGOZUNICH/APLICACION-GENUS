@@ -5,6 +5,7 @@
 --  * cajas_genus_line_review       : entregas finales que no pudieron descontarse (sin cliente / sin detalle de cajas): pendientes de revisión.
 --  * cajas_genus_client_settings   : «UTILIZA CAJAS PROPIAS» por cliente (clave normalizada + vínculo opcional al maestro de clientes del portal).
 --  * cajas_genus_audit             : auditoría inmutable de acciones administrativas.
+-- Los seis clientes que usan cajas propias (clave = nombre en minúsculas, sin acentos, sin signos ni espacios, sin sufijo societario).
 CREATE TABLE IF NOT EXISTS "cajas_genus_config" (
   "id" text PRIMARY KEY NOT NULL DEFAULT 'main',
   "low_stock_threshold" integer NOT NULL DEFAULT 300,
@@ -14,8 +15,9 @@ CREATE TABLE IF NOT EXISTS "cajas_genus_config" (
   "alert_since" timestamp with time zone,
   "updated_at" timestamp with time zone NOT NULL DEFAULT now()
 );
-INSERT INTO "cajas_genus_config" ("id") VALUES ('main') ON CONFLICT ("id") DO NOTHING;
-
+--> statement-breakpoint
+INSERT INTO "cajas_genus_config" ("id") VALUES ('main') ON CONFLICT DO NOTHING;
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "cajas_genus_movements" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "seq" bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
@@ -40,12 +42,17 @@ CREATE TABLE IF NOT EXISTS "cajas_genus_movements" (
   "voided_by" text,
   "void_reason" text
 );
+--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "cajas_genus_movements_idem_uidx" ON "cajas_genus_movements" ("idempotency_key");
+--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "cajas_genus_movements_seq_uidx" ON "cajas_genus_movements" ("seq");
+--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "cajas_genus_movements_line_idx" ON "cajas_genus_movements" ("delivery_line_id");
+--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "cajas_genus_movements_kind_idx" ON "cajas_genus_movements" ("kind", "status");
+--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "cajas_genus_movements_day_idx" ON "cajas_genus_movements" ("occurred_on");
-
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "cajas_genus_line_review" (
   "delivery_line_id" uuid PRIMARY KEY NOT NULL,
   "work_item_id" uuid,
@@ -58,8 +65,9 @@ CREATE TABLE IF NOT EXISTS "cajas_genus_line_review" (
   "resolved_by" text,
   "resolution" text
 );
+--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "cajas_genus_line_review_open_idx" ON "cajas_genus_line_review" ("resolved_at");
-
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "cajas_genus_client_settings" (
   "client_key" text PRIMARY KEY NOT NULL,
   "display_name" text NOT NULL,
@@ -70,7 +78,7 @@ CREATE TABLE IF NOT EXISTS "cajas_genus_client_settings" (
   "created_at" timestamp with time zone NOT NULL DEFAULT now(),
   "updated_at" timestamp with time zone NOT NULL DEFAULT now()
 );
--- Los seis clientes que usan cajas propias (clave = nombre en minúsculas, sin acentos, sin signos ni espacios, sin sufijo societario).
+--> statement-breakpoint
 INSERT INTO "cajas_genus_client_settings" ("client_key", "display_name", "uses_own_boxes", "source", "updated_by") VALUES
   ('bioesencia', 'BIOESENCIA', true, 'INICIAL', 'migración 0087'),
   ('originalblack', 'ORIGINAL BLACK', true, 'INICIAL', 'migración 0087'),
@@ -78,8 +86,8 @@ INSERT INTO "cajas_genus_client_settings" ("client_key", "display_name", "uses_o
   ('jactans', 'JACTANS', true, 'INICIAL', 'migración 0087'),
   ('blcosmetics', 'BL COSMETICS', true, 'INICIAL', 'migración 0087'),
   ('bahiaevans', 'BAHIA EVANS', true, 'INICIAL', 'migración 0087')
-ON CONFLICT ("client_key") DO NOTHING;
-
+ON CONFLICT DO NOTHING;
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "cajas_genus_audit" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "action" text NOT NULL,
@@ -91,4 +99,5 @@ CREATE TABLE IF NOT EXISTS "cajas_genus_audit" (
   "actor_sector" text NOT NULL,
   "created_at" timestamp with time zone NOT NULL DEFAULT now()
 );
+--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "cajas_genus_audit_at_idx" ON "cajas_genus_audit" ("created_at");
