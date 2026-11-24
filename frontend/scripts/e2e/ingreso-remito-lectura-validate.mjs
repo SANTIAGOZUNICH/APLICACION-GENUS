@@ -482,11 +482,11 @@ try {
   state.mode = "keyinvalid";
   await resetBreaker();
   const hKey = await (await dir.page.request.get("/api/v1/inventory/receipts?module=MP&view=extraction_health")).json();
-  check("Diagnóstico: clave inválida se distingue del modelo inexistente", hKey.health.ok === false && hKey.health.text.kind === "key" && /clave de Gemini/.test(hKey.health.text.message));
+  check("Diagnóstico: clave inválida se distingue del modelo inexistente", hKey.health.providers?.find((p) => p.provider === "gemini")?.ok === false && hKey.health.text.kind === "key" && /clave de Gemini/.test(hKey.health.text.message));
   state.mode = "quota";
   await resetBreaker();
   const hQuota = await (await dir.page.request.get("/api/v1/inventory/receipts?module=MP&view=extraction_health")).json();
-  check("Diagnóstico: límite de uso se distingue", hQuota.health.ok === false && hQuota.health.text.kind === "limit");
+  check("Diagnóstico: límite de uso se distingue", hQuota.health.providers?.find((p) => p.provider === "gemini")?.ok === false && hQuota.health.text.kind === "limit");
   state.mode = "ok";
   await resetBreaker();
   check("Un operario no puede usar la prueba de configuración (403)", (await mp.request.get("/api/v1/inventory/receipts?module=MP&view=extraction_health")).status() === 403);

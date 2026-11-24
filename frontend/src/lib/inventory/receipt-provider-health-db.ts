@@ -6,7 +6,7 @@ import { getDb } from "@/lib/db/client";
 import { aiProviderHealth } from "@/lib/db/schema";
 import { AVAILABILITY_KINDS, emptyState, openDurationMs, type FailureSignal, type ProviderHealthStore, type ProviderId, type ProviderState } from "./receipt-provider-health";
 
-const CACHE_MS = 4_000;
+const CACHE_MS = Math.max(0, Number(process.env.INGRESO_REMITO_HEALTH_CACHE_MS ?? 4_000) || 0);
 const cache = new Map<ProviderId, { at: number; state: ProviderState }>();
 
 export function createDbHealthStore(): ProviderHealthStore {
