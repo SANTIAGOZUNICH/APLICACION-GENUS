@@ -600,6 +600,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
     const reveal = () => {
       clearTimeout(t);
       t = setTimeout(() => {
+        if (Date.now() - lastCancelAt.current < 900) return; // volver de la confirmación de cierre no debe mover el scroll
         const el = document.activeElement;
         if (isTextField(el) && contentNode.contains(el)) el.scrollIntoView({ block: "center", behavior: "smooth" });
       }, 250);
@@ -631,7 +632,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
         ref={setContentNode}
         hideCloseButton
         onFocusOutside={(e) => e.preventDefault()}
-        className="grid-cols-[minmax(0,1fr)] [&_fieldset]:min-w-0 [&_label]:min-w-0 max-sm:left-0 max-sm:top-[var(--vvt,0px)] max-sm:h-[var(--vvh,100dvh)] max-sm:max-h-none max-sm:w-screen max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 auto-rows-min content-start gap-3 overscroll-contain p-3 pb-0 w-[min(72rem,100vw)] max-w-none overflow-y-auto sm:max-h-[94dvh] sm:w-[min(72rem,calc(100vw-16px))] sm:p-6 sm:pb-0"
+        className="grid-cols-[minmax(0,1fr)] [&_*:not([data-testid=remito-encabezado]):not([data-testid=remito-barra-accion]):not([data-testid=remito-estado-ocupado]):not(svg):not(path)]:max-w-full [&_fieldset]:min-w-0 [&_label]:min-w-0 max-sm:left-0 max-sm:top-[var(--vvt,0px)] max-sm:h-[var(--vvh,100dvh)] max-sm:max-h-none max-sm:w-screen max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 auto-rows-min content-start gap-3 overscroll-contain p-3 pb-0 w-[min(72rem,100vw)] max-w-none overflow-y-auto sm:max-h-[94dvh] sm:w-[min(72rem,calc(100vw-16px))] sm:p-6 sm:pb-0"
         style={{ ...(vp.h ? { maxHeight: `${vp.h}px`, "--vvh": `${vp.h}px`, "--vvt": `${vp.top}px` } : {}) } as CSSProperties}
         data-testid="ingreso-remito-dialog"
       >

@@ -515,7 +515,7 @@ try {
         short: fields.filter((e) => e.getBoundingClientRect().height < 43.5).length,
         fields: fields.length,
         bodyLocked: getComputedStyle(document.body).overflow === "hidden" || document.body.hasAttribute("data-scroll-locked"),
-        wide: [...d.querySelectorAll("*")].filter((e) => e.scrollWidth > e.clientWidth + 1 && e.clientWidth > 0).slice(0, 6).map((e) => `${e.tagName}.${e.getAttribute("data-testid") || String(e.className).slice(0, 50)}[sw=${e.scrollWidth},cw=${e.clientWidth},ox=${getComputedStyle(e).overflowX}]`),
+        wide: [...d.querySelectorAll("*")].filter((e) => e.scrollWidth > e.clientWidth + 1 && e.clientWidth > 0 && ![...e.children].some((c) => c.scrollWidth > c.clientWidth + 1 && c.clientWidth > 0)).slice(0, 6).map((e) => `${e.tagName}.${e.getAttribute("data-testid") || String(e.className).slice(0, 40)}[sw=${e.scrollWidth},cw=${e.clientWidth},rw=${Math.round(e.getBoundingClientRect().width)}|${[...e.children].map((c) => `${c.tagName}:${Math.round(c.getBoundingClientRect().width)}`).join(",")}]`),
       };
     });
     check(`${w}×${h}: la ventana ocupa TODA la pantalla (sin márgenes ni ventana pequeña centrada)`, Math.abs(box.x) <= 1 && Math.abs(box.y) <= 1 && Math.abs(box.width - w) <= 2 && Math.abs(box.height - h) <= 2, JSON.stringify(box));
