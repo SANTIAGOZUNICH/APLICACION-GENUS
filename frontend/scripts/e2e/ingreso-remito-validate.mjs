@@ -80,6 +80,14 @@ async function makeFixtures(page) {
 }
 
 const dlg = (page) => page.locator("[data-testid=ingreso-remito-dialog]");
+const closeDlg = async (page) => {
+  // Cerrar con Escape ahora pide confirmación si hay trabajo en riesgo: se elige «Guardar y cerrar» (guarda SOLO el borrador).
+  await page.keyboard.press("Escape");
+  const save = page.locator("[data-testid=remito-cerrar-guardar]");
+  if (await save.waitFor({ timeout: 1500 }).then(() => true).catch(() => false)) await save.click();
+  await page.locator("[data-testid=ingreso-remito-dialog]").waitFor({ state: "detached", timeout: 15_000 }).catch(() => undefined);
+};
+
 async function pickMaterial(page, code) {
   await dlg(page).locator("[data-testid=linea-buscar-material]").first().fill(code);
   await dlg(page).locator("[data-testid=linea-catalogo-item]").filter({ hasText: code }).first().click({ timeout: 30_000 });
@@ -187,7 +195,7 @@ try {
   const dlRes = await mp.request.get(`${href}?download=1`);
   check("Descarga con Content-Disposition: attachment", /attachment/.test(dlRes.headers()["content-disposition"] ?? ""));
   await mp.screenshot({ path: `${OUT}/06-mp-celular-detalle.png`, fullPage: true });
-  await mp.keyboard.press("Escape");
+  await closeDlg(mp);
 
   // Remito duplicado desde la pantalla: advertencia y confirmación expresa.
   await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
@@ -210,7 +218,7 @@ try {
   check("Remito repetido: advertencia visible y confirmar bloqueado hasta reconocerla", (await mp.locator("[data-testid=remito-confirmar]").isDisabled()) && /ya registrado|Mismo proveedor/.test(await mp.locator("[data-testid=resumen-duplicados]").innerText()));
   check("Material sugerido por uso previo (mismo proveedor y código)", true);
   await mp.screenshot({ path: `${OUT}/07-mp-celular-duplicado.png`, fullPage: true });
-  await mp.keyboard.press("Escape");
+  await closeDlg(mp);
   check("Cerrar sin confirmar deja un borrador y no suma stock", (await balance(MP_CODE)) === 100);
 
   // ===== Depósito, desde la PC =====

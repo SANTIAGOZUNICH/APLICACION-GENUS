@@ -6,8 +6,8 @@
  * Nada de lo que se ve acá mueve stock hasta confirmar; la confirmación la hace el servidor por el mecanismo real de inventario.
  * La lectura automática (si está activada) solo COMPLETA el formulario como sugerencia.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Camera, CheckCircle2, FileText, ImagePlus, Loader2, ScanLine, Table2, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { AlertTriangle, Camera, CheckCircle2, FileText, ImagePlus, Loader2, ScanLine, Save, Table2, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { getCurrentAuthSession } from "@/features/os/auth/lib/auth-session-helpers";
@@ -46,7 +46,7 @@ const MODULE_TEXT: Record<ReceiptModule, { sector: string; material: string; sto
 };
 
 const uid = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
-const field = "w-full rounded-lg border border-[var(--os-border)] bg-[var(--os-surface,transparent)] px-2.5 py-2 text-sm";
+const field = "mt-1 block min-h-11 min-w-0 w-full rounded-lg border border-[var(--os-border)] bg-[var(--os-surface,transparent)] px-3 py-2 text-base";
 const reviewRing = "border-amber-500 bg-amber-500/10";
 const fmtQty = (n: number, unit: string) => `${n.toLocaleString("es-AR", { maximumFractionDigits: 3 })} ${unit}`;
 
@@ -81,6 +81,30 @@ export function IngresoConRemitoButtons({ module, canWrite, onChanged }: { modul
     </>
   );
 }
+/** Área visible REAL del navegador (VisualViewport): alto, desplazamiento superior y si el teclado virtual está abierto. */
+function useVisibleViewport() {
+  const [vp, setVp] = useState<{ h: number | null; top: number; kb: boolean }>({ h: null, top: 0, kb: false });
+  useEffect(() => {
+    const vv = typeof window !== "undefined" ? window.visualViewport : null;
+    if (!vv) return;
+    let raf = 0;
+    const read = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => setVp({ h: Math.round(vv.height), top: Math.round(vv.offsetTop), kb: vv.scale <= 1.05 && window.innerHeight - vv.height > 120 }));
+    };
+    read();
+    vv.addEventListener("resize", read);
+    vv.addEventListener("scroll", read);
+    return () => {
+      cancelAnimationFrame(raf);
+      vv.removeEventListener("resize", read);
+      vv.removeEventListener("scroll", read);
+    };
+  }, []);
+  return vp;
+}
+const isTextField = (el: Element | null): el is HTMLElement => Boolean(el && el.matches?.("input:not([type=checkbox]):not([type=radio]):not([type=file]),textarea,select"));
+
 /** Id del borrador a retomar (lo lee el asistente al abrirse). */
 const resumeRef: { id: string | null } = { id: null };
 
@@ -119,16 +143,15 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
   const [readFailed, setReadFailed] = useState<string | null>(null);
   const [showPhoto, setShowPhoto] = useState(false);
   const [sheetResult, setSheetResult] = useState<{ count: number } | null>(null);
-  /** Alto visible real (con el teclado abierto en Android el área útil se achica): el diálogo nunca la supera, así el botón principal no queda tapado. */
-  const [vvh, setVvh] = useState<number | null>(null);
-  useEffect(() => {
-    const vv = typeof window !== "undefined" ? window.visualViewport : null;
-    if (!vv) return;
-    const read = () => setVvh(Math.round(vv.height));
-    read();
-    vv.addEventListener("resize", read);
-    return () => vv.removeEventListener("resize", read);
-  }, []);
+  /** Área visible real: con el teclado abierto el diálogo se ajusta a ella y el campo enfocado se mantiene a la vista. */
+  const vp = useVisibleViewport();
+  const [contentNode, setContentNode] = useState<HTMLDivElement | null>(null);
+  /** Confirmación de cierre: null = cerrada. `saving` = guardando el borrador; `error` = no se pudo (la ventana NO se cierra). */
+  const [closeAsk, setCloseAsk] = useState<{ saving: boolean; error: string | null } | null>(null);
+  const scrollBeforeAsk = useRef(0);
+  /** El borrador se creó en ESTA sesión y todavía nadie lo guardó: «Cerrar sin guardar» lo descarta; si ya se guardó antes, se conserva lo guardado. */
+  const createdHere = useRef(false);
+  const everSaved = useRef(false);
   const confirmKey = useRef(uid());
   const cameraRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
@@ -178,6 +201,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
       void call<{ receipt: Receipt }>(`${API}?module=${module}&view=get&id=${resume}`)
         .then(async (r) => {
           if (!alive) return;
+          everSaved.current = true; // un borrador retomado ya estaba guardado: «Cerrar sin guardar» nunca lo borra
           applyReceipt(r.receipt);
           const rj = r.receipt.draft.job;
           if (rj?.status === "running" && Date.now() - Date.parse(rj.startedAt) < 85_000) {
@@ -214,6 +238,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
   async function ensureDraft(): Promise<Receipt> {
     if (receiptRef.current) return receiptRef.current;
     const r = (await post<{ receipt: Receipt }>({ action: "create", module })).receipt;
+    createdHere.current = true;
     applyReceipt(r);
     return r;
   }
@@ -275,6 +300,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
     try {
       const res = await post<{ receipt: Receipt }>({ action: "save", module, id: r.id, expectedVersion: r.version, header: next.header, lines: next.lines });
       receiptRef.current = res.receipt;
+      everSaved.current = true;
       setReceipt(res.receipt);
       return res.receipt;
     } catch (e) {
@@ -463,13 +489,132 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
     }
   }
 
-  async function discardAndClose() {
-    if (receipt && receipt.status === "BORRADOR" && (thumbs.length || draft.lines.length)) {
-      // Se conserva como borrador (queda en «Remitos recibidos» para retomar); no se pierde la foto.
-      await saveDraft().catch(() => undefined);
+  /** Lo guardado en el servidor vs lo que se ve: hay cambios pendientes si el formulario difiere del borrador guardado. */
+  const dirty = useMemo(() => {
+    const saved = receipt?.draft ?? null;
+    const pick = (d: ReceiptDraftPayload) => JSON.stringify({ header: d.header, lines: d.lines });
+    if (!saved) return draft.lines.length > 0 || Object.values(draft.header).some((v) => String(v ?? "").trim());
+    return pick(draft) !== pick(saved);
+  }, [draft, receipt]);
+  const finished = step === "listo" || step === "planilla";
+  /** ¿Hay algo que perder? Información cargada, una foto, cambios sin guardar o una lectura en curso. */
+  const atRisk = !finished && (thumbs.length > 0 || dirty || Boolean(busy) || Boolean(receipt && (receipt.draft.lines.length > 0 || receipt.draft.header.supplier)));
+  const atRiskRef = useRef(false);
+  useEffect(() => {
+    atRiskRef.current = atRisk;
+  }, [atRisk]);
+
+  /** Único punto de entrada para cerrar (X, fuera de la ventana, Escape, «atrás»): si hay algo en riesgo pide confirmación. */
+  const lastCancelAt = useRef(0);
+  const requestClose = useCallback(() => {
+    if (Date.now() - lastCancelAt.current < 400) return; // el foco que vuelve de la confirmación no cuenta como un nuevo pedido de cierre
+    if (!atRiskRef.current) {
+      onClose();
+      return;
+    }
+    scrollBeforeAsk.current = contentNode?.scrollTop ?? 0;
+    setCloseAsk((cur) => cur ?? { saving: false, error: null });
+  }, [contentNode, onClose]);
+  const requestCloseRef = useRef(requestClose);
+  useEffect(() => {
+    requestCloseRef.current = requestClose;
+  }, [requestClose]);
+
+  function cancelClose() {
+    lastCancelAt.current = Date.now();
+    setCloseAsk(null);
+    const top = scrollBeforeAsk.current;
+    // Vuelve exactamente a donde estaba (se repite porque el foco que regresa de la confirmación puede mover el scroll).
+    for (const ms of [0, 60, 120, 200, 300, 450, 600, 800]) setTimeout(() => { if (contentNode && Math.abs(contentNode.scrollTop - top) > 1) contentNode.scrollTop = top; }, ms);
+  }
+
+  /** «Guardar y cerrar»: guarda SOLO el borrador (foto, datos leídos y cambios manuales). No confirma ni mueve stock. Si falla, NO se cierra. */
+  async function saveAndClose() {
+    setCloseAsk({ saving: true, error: null });
+    try {
+      // Con una lectura en curso y sin cambios propios no se pisa nada: el servidor termina de leer y deja el resultado en el borrador.
+      if (dirty || !receiptRef.current) {
+        if (dirty || draft.lines.length || thumbs.length) {
+          const saved = await saveDraft();
+          if (!saved) throw new Error("save");
+        }
+      }
+      onClose();
+    } catch {
+      setCloseAsk({ saving: false, error: "No se pudo guardar el borrador (revisá la conexión). El formulario sigue abierto con todo lo que cargaste: podés reintentar, cancelar o cerrar sin guardar." });
+    }
+  }
+
+  /** «Cerrar sin guardar»: descarta los cambios pendientes. Un borrador creado en esta sesión y nunca guardado se descarta; uno ya guardado se conserva tal como estaba. */
+  async function closeWithoutSaving() {
+    setCloseAsk({ saving: true, error: null });
+    const r = receiptRef.current;
+    if (r && r.status === "BORRADOR" && createdHere.current && !everSaved.current) {
+      await post({ action: "discard", module, id: r.id }).catch(() => undefined);
     }
     onClose();
   }
+
+  /** «Guardar borrador» desde el pie: guarda y sigue en el formulario (no confirma ni mueve stock). */
+  async function saveDraftOnly() {
+    setError(null);
+    setNotice(null);
+    setBusy("Guardando borrador…");
+    try {
+      const saved = await saveDraft();
+      if (saved) setNotice("Borrador guardado. Todavía NO se sumó stock: podés retomarlo desde «Remitos recibidos».");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Botón «atrás» del dispositivo: se intercepta con una entrada de historial propia; si hay trabajo en riesgo se pide confirmación.
+  useEffect(() => {
+    const mark = { ...(window.history.state ?? {}), __remitoWizard: true };
+    window.history.pushState(mark, "");
+    const onPop = () => {
+      if (window.history.state?.__remitoWizard) return; // seguimos sobre nuestra entrada
+      window.history.pushState(mark, ""); // se vuelve a poner: la ventana sigue abierta hasta que la persona decida
+      requestCloseRef.current();
+    };
+    window.addEventListener("popstate", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      if (window.history.state?.__remitoWizard) window.history.back();
+    };
+  }, []);
+  // Recargar / cerrar la pestaña con trabajo en riesgo: aviso nativo del navegador.
+  useEffect(() => {
+    const onUnload = (e: BeforeUnloadEvent) => {
+      if (!atRiskRef.current) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  }, []);
+  // Teclado virtual: el campo enfocado se mantiene visible (al enfocar y cuando el teclado termina de abrirse).
+  useEffect(() => {
+    if (!contentNode) return;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const reveal = () => {
+      clearTimeout(t);
+      t = setTimeout(() => {
+        if (Date.now() - lastCancelAt.current < 1200) return; // volver de la confirmación de cierre no debe mover el scroll
+        const el = document.activeElement;
+        if (isTextField(el) && contentNode.contains(el)) el.scrollIntoView({ block: "center", behavior: "smooth" });
+      }, 250);
+    };
+    contentNode.addEventListener("focusin", reveal);
+    return () => {
+      clearTimeout(t);
+      contentNode.removeEventListener("focusin", reveal);
+    };
+  }, [contentNode]);
+  useEffect(() => {
+    const el = document.activeElement;
+    if (vp.kb && isTextField(el) && contentNode?.contains(el)) el.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [vp.h, vp.kb, contentNode]);
 
   const issueMap = useMemo(() => {
     const m = new Map<string, ReceiptIssue>();
@@ -481,13 +626,23 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
   const current = thumbs[viewIdx] ?? null;
 
   return (
-    <Dialog open onOpenChange={(o) => !o && void discardAndClose()}>
+    <>
+    <Dialog open onOpenChange={(o) => !o && requestClose()}>
       <DialogContent
-        className="max-h-[100dvh] w-[min(72rem,100vw)] max-w-none overflow-y-auto p-3 pb-0 sm:max-h-[94dvh] sm:w-[min(72rem,calc(100vw-16px))] sm:p-6 sm:pb-0"
-        style={{ maxHeight: vvh ? `${vvh}px` : undefined }}
+        ref={setContentNode}
+        hideCloseButton
+        onFocusOutside={(e) => e.preventDefault()}
+        className="grid-cols-[minmax(0,1fr)] [&_*:not([data-testid=remito-encabezado]):not([data-testid=remito-barra-accion]):not([data-testid=remito-estado-ocupado]):not(svg):not(path)]:max-w-full [&_fieldset]:min-w-0 [&_label]:min-w-0 max-sm:left-0 max-sm:top-[var(--vvt,0px)] max-sm:h-[var(--vvh,100dvh)] max-sm:max-h-none max-sm:w-screen max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 auto-rows-min content-start gap-3 overscroll-contain p-3 pb-0 w-[min(72rem,100vw)] max-w-none overflow-y-auto sm:max-h-[94dvh] sm:w-[min(72rem,calc(100vw-16px))] sm:p-6 sm:pb-0"
+        style={{ ...(vp.h ? { maxHeight: `${vp.h}px`, "--vvh": `${vp.h}px`, "--vvt": `${vp.top}px` } : {}) } as CSSProperties}
         data-testid="ingreso-remito-dialog"
       >
-        <DialogTitle className="text-base sm:text-lg">Nuevo ingreso con remito — {t.sector}</DialogTitle>
+        {/* Encabezado compacto y fijo: título + cierre (44 px) siempre al alcance. */}
+        <div className="sticky top-[-0.75rem] z-20 -mx-3 -mt-3 flex items-center gap-2 border-b border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-1.5 pt-[max(0.375rem,env(safe-area-inset-top))] sm:top-[-1.5rem] sm:-mx-6 sm:-mt-6 sm:px-6 sm:py-3" data-testid="remito-encabezado">
+          <DialogTitle className="min-w-0 flex-1 truncate text-base sm:text-lg">Nuevo ingreso con remito — {t.sector}</DialogTitle>
+          <button type="button" aria-label="Cerrar" onClick={requestClose} className="grid size-11 shrink-0 place-items-center rounded-lg text-[var(--os-text-muted)] hover:bg-[var(--os-border)]/40" data-testid="remito-cerrar-x">
+            <X className="size-5" />
+          </button>
+        </div>
         <DialogDescription className="hidden sm:block">
           {step === "listo" ? "Ingreso registrado." : step === "planilla" ? "Pasado al Excel." : `Registrá ${module === "MP" ? "materias primas" : "materiales de envase"} a partir de la foto del remito. No se suma stock hasta que confirmes.`}
         </DialogDescription>
@@ -506,7 +661,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
         ) : null}
         {notice ? <p className="rounded-lg bg-sky-500/10 px-3 py-2 text-sm" role="status">{notice}</p> : null}
         {busy ? (
-          <p className="flex items-center gap-2 text-sm text-[var(--os-text-muted)]" role="status">
+          <p className="sticky top-11 z-10 -mx-3 flex items-center gap-2 border-b border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-1.5 text-sm text-[var(--os-text-muted)] sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0" role="status" data-testid="remito-estado-ocupado">
             <Loader2 className="size-4 animate-spin" /> {busy}{busySecs >= 4 ? ` · ${busySecs} s` : ""}
           </p>
         ) : null}
@@ -571,9 +726,13 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
                   {extraction?.available ? <Button type="button" variant="secondary" onClick={retryRead} disabled={Boolean(busy)} data-testid="remito-reintentar">Reintentar lectura</Button> : null}
                 </div>
               ) : null}
-              <button type="button" className="text-sm underline lg:hidden" onClick={() => setShowPhoto((v) => !v)}>
-                {showPhoto ? "Ocultar foto" : "Ver foto del remito"}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" variant="secondary" className="min-h-11" onClick={() => setStep("foto")} data-testid="remito-volver">Volver</Button>
+                {extraction?.available && thumbs.length ? <Button type="button" variant="secondary" className="min-h-11" onClick={retryRead} disabled={Boolean(busy)} data-testid="remito-releer">Releer</Button> : null}
+                <Button type="button" variant="secondary" className="min-h-11 lg:hidden" onClick={() => setShowPhoto((v) => !v)} data-testid="remito-ver-foto">
+                  {showPhoto ? "Ocultar foto" : "Ver foto del remito"}
+                </Button>
+              </div>
               <HeaderForm draft={draft} onChange={setDraft} issueMap={issueMap} extractionNote={draft.extraction && !draft.extraction.ok ? draft.extraction.note : undefined} />
               <div className="space-y-3">
                 {draft.lines.map((l, i) => (
@@ -589,7 +748,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
                     onRemove={() => setDraft((d) => ({ ...d, lines: d.lines.filter((x) => x.id !== l.id) }))}
                   />
                 ))}
-                <Button type="button" variant="secondary" onClick={() => setDraft((d) => ({ ...d, lines: [...d.lines, emptyLine(uid().slice(0, 8))] }))} data-testid="remito-agregar-linea">
+                <Button type="button" variant="secondary" className="min-h-12 w-full sm:w-auto" onClick={() => setDraft((d) => ({ ...d, lines: [...d.lines, emptyLine(uid().slice(0, 8))] }))} data-testid="remito-agregar-linea">
                   + Agregar material
                 </Button>
               </div>
@@ -597,15 +756,19 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
           </section>
         ) : null}
 
-        {/* Barra fija abajo (hija directa del diálogo que scrollea): PASAR A EXCEL siempre visible; respeta el área segura de Android. */}
+        {/* Pie fijo (hijo directo del diálogo que scrollea): acciones principales siempre a mano, sin tapar los últimos campos y respetando el área segura.
+            Con el teclado abierto en un celular se oculta para devolverle el espacio al formulario. */}
         {step === "revision" ? (
-          <div className="sticky bottom-0 z-10 -mx-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--os-border)] bg-[var(--os-surface)] px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:-mx-6 sm:px-6" data-testid="remito-barra-accion">
-            <div className="flex items-center gap-2">
-              <Button type="button" variant="secondary" size="sm" onClick={() => setStep("foto")}>Volver</Button>
-              {extraction?.available && thumbs.length ? <Button type="button" variant="secondary" size="sm" onClick={retryRead} disabled={Boolean(busy)} data-testid="remito-releer">Releer</Button> : null}
-              <button type="button" className="text-xs underline disabled:opacity-50" onClick={() => void goSummary()} disabled={Boolean(busy)} data-testid="remito-revisar">Confirmar ingreso de stock (opcional)</button>
+          <div className={`sticky bottom-0 z-10 -mx-3 border-t border-[var(--os-border)] bg-[var(--os-surface)] px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:-mx-6 sm:px-6 ${vp.kb ? "max-sm:hidden" : ""}`} data-testid="remito-barra-accion">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" variant="secondary" className="min-h-11 flex-1 sm:flex-none" onClick={() => void saveDraftOnly()} disabled={Boolean(busy)} data-testid="remito-guardar-borrador">
+                <Save className="mr-1 size-4" /> Guardar borrador
+              </Button>
+              <Button type="button" variant="secondary" className="min-h-11 flex-1 border-amber-500/60 sm:flex-none" onClick={() => void goSummary()} disabled={Boolean(busy)} data-testid="remito-revisar">
+                <CheckCircle2 className="mr-1 size-4" /> <span className="sm:hidden">Confirmar ingreso</span><span className="hidden sm:inline">Confirmar ingreso de stock</span>
+              </Button>
+              <Button type="button" className="min-h-12 flex-none font-bold uppercase tracking-wide max-[480px]:w-full sm:ml-auto sm:min-w-44" onClick={() => void toSheet()} disabled={Boolean(busy)} data-testid="remito-pasar-excel"><Table2 className="mr-1 size-4" /> PASAR A EXCEL</Button>
             </div>
-            <Button type="button" className="min-h-12 min-w-44 flex-1 font-bold uppercase tracking-wide sm:flex-none" onClick={() => void toSheet()} disabled={Boolean(busy)} data-testid="remito-pasar-excel"><Table2 className="mr-1 size-4" /> PASAR A EXCEL</Button>
           </div>
         ) : null}
 
@@ -661,6 +824,37 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
             </div>
           </section>
         ) : null}
+      </DialogContent>
+    </Dialog>
+    <CloseConfirm
+      state={closeAsk}
+      onSaveClose={() => void saveAndClose()}
+      onDiscardClose={() => void closeWithoutSaving()}
+      onCancel={cancelClose}
+    />
+    </>
+  );
+}
+
+/** «¿Querés cerrar el remito?»: tres opciones grandes. Tocar fuera o Escape = Cancelar (nunca cierra ni descarta por accidente). */
+function CloseConfirm({ state, onSaveClose, onDiscardClose, onCancel }: { state: { saving: boolean; error: string | null } | null; onSaveClose: () => void; onDiscardClose: () => void; onCancel: () => void }) {
+  return (
+    <Dialog open={Boolean(state)} onOpenChange={(o) => !o && !state?.saving && onCancel()}>
+      <DialogContent hideCloseButton onCloseAutoFocus={(e) => e.preventDefault()} className="z-[60] w-[min(26rem,calc(100vw-24px))]" data-testid="remito-cerrar-confirmar">
+        <DialogTitle className="text-lg">¿Querés cerrar el remito?</DialogTitle>
+        <DialogDescription>Tenés información cargada o una foto en este ingreso. Elegí qué hacer: no se suma stock en ningún caso.</DialogDescription>
+        {state?.error ? <p className="rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300" role="alert" data-testid="remito-cerrar-error">{state.error}</p> : null}
+        <div className="grid gap-2">
+          <Button type="button" className="min-h-14 text-base font-semibold" onClick={onSaveClose} disabled={state?.saving} data-testid="remito-cerrar-guardar">
+            {state?.saving ? <Loader2 className="mr-2 size-5 animate-spin" /> : <Save className="mr-2 size-5" />} Guardar y cerrar
+          </Button>
+          <Button type="button" variant="secondary" className="min-h-14 text-base text-rose-700 dark:text-rose-300" onClick={onDiscardClose} disabled={state?.saving} data-testid="remito-cerrar-sin-guardar">
+            Cerrar sin guardar
+          </Button>
+          <Button type="button" variant="secondary" className="min-h-14 text-base" onClick={onCancel} disabled={state?.saving} data-testid="remito-cerrar-cancelar" autoFocus>
+            Cancelar
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -730,13 +924,13 @@ function HeaderForm({ draft, onChange, issueMap, extractionNote }: { draft: Rece
   const set = (patch: Partial<typeof h>) => onChange({ ...draft, header: { ...h, ...patch } });
   const bad = (f: string) => (issueMap.has(`h:${f}`) ? reviewRing : "");
   return (
-    <fieldset className="grid gap-3 sm:grid-cols-2" data-testid="remito-cabecera">
-      {extractionNote ? <p className="sm:col-span-2 text-xs text-amber-700">{extractionNote}</p> : null}
-      <label className="text-sm">Proveedor<input className={`${field} ${bad("supplier")}`} value={h.supplier} onChange={(e) => set({ supplier: e.target.value })} data-testid="remito-proveedor" />{issueMap.get("h:supplier") ? <Hint issue={issueMap.get("h:supplier")!} /> : null}</label>
-      <label className="text-sm">N.º de remito<input className={`${field} ${bad("remitoNumber")}`} value={h.remitoNumber} onChange={(e) => set({ remitoNumber: e.target.value })} data-testid="remito-numero" />{issueMap.get("h:remitoNumber") ? <Hint issue={issueMap.get("h:remitoNumber")!} /> : null}</label>
-      <label className="text-sm">Fecha del remito<input type="date" className={`${field} ${bad("remitoDate")}`} value={h.remitoDate} onChange={(e) => set({ remitoDate: e.target.value })} data-testid="remito-fecha" />{issueMap.get("h:remitoDate") ? <Hint issue={issueMap.get("h:remitoDate")!} /> : null}</label>
-      <label className="text-sm">Fecha de recepción (llegó la mercadería)<input type="date" className={`${field} ${bad("receivedDate")}`} value={h.receivedDate} onChange={(e) => set({ receivedDate: e.target.value })} data-testid="remito-recepcion" />{issueMap.get("h:receivedDate") ? <Hint issue={issueMap.get("h:receivedDate")!} /> : null}</label>
-      <label className="text-sm sm:col-span-2">Observaciones<input className={field} value={h.notes} onChange={(e) => set({ notes: e.target.value })} /></label>
+    <fieldset className="grid grid-cols-2 gap-3" data-testid="remito-cabecera">
+      {extractionNote ? <p className="col-span-2 text-xs text-amber-700">{extractionNote}</p> : null}
+      <label className="col-span-2 text-sm font-medium sm:col-span-1">Proveedor<input className={`${field} ${bad("supplier")}`} value={h.supplier} onChange={(e) => set({ supplier: e.target.value })} data-testid="remito-proveedor" />{issueMap.get("h:supplier") ? <Hint issue={issueMap.get("h:supplier")!} /> : null}</label>
+      <label className="col-span-2 text-sm font-medium sm:col-span-1">N.º de remito<input className={`${field} ${bad("remitoNumber")}`} value={h.remitoNumber} onChange={(e) => set({ remitoNumber: e.target.value })} data-testid="remito-numero" />{issueMap.get("h:remitoNumber") ? <Hint issue={issueMap.get("h:remitoNumber")!} /> : null}</label>
+      <label className="text-sm font-medium">Fecha del remito<input type="date" className={`${field} ${bad("remitoDate")}`} value={h.remitoDate} onChange={(e) => set({ remitoDate: e.target.value })} data-testid="remito-fecha" />{issueMap.get("h:remitoDate") ? <Hint issue={issueMap.get("h:remitoDate")!} /> : null}</label>
+      <label className="text-sm font-medium">Fecha de recepción (llegó la mercadería)<input type="date" className={`${field} ${bad("receivedDate")}`} value={h.receivedDate} onChange={(e) => set({ receivedDate: e.target.value })} data-testid="remito-recepcion" />{issueMap.get("h:receivedDate") ? <Hint issue={issueMap.get("h:receivedDate")!} /> : null}</label>
+      <label className="col-span-2 text-sm font-medium">Observaciones<input className={field} value={h.notes} onChange={(e) => set({ notes: e.target.value })} /></label>
     </fieldset>
   );
 }
@@ -774,7 +968,7 @@ function LineCard({
             Lectura: {line.confidence === "BAJA" ? "baja" : "media"} — revisá los campos marcados
           </span>
         ) : null}
-        <button type="button" aria-label="Quitar material" onClick={onRemove} className="text-rose-600"><X className="size-4" /></button>
+        <button type="button" aria-label="Quitar material" onClick={onRemove} className="grid size-11 place-items-center rounded-lg text-rose-600 hover:bg-rose-500/10" data-testid="linea-quitar"><X className="size-5" /></button>
       </header>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">Código del proveedor (impreso en el remito)<input className={field} value={line.supplierCode} onChange={(e) => set({ supplierCode: e.target.value })} data-testid="linea-codigo-proveedor" /></label>
@@ -784,10 +978,10 @@ function LineCard({
         <p className="text-xs text-sky-700 dark:text-sky-300" data-testid="linea-preseleccion">Material preseleccionado automáticamente: {line.matchReason || "coincidencia"}. Verificá que sea el correcto.</p>
       ) : null}
       <MaterialPicker module={module} supplier={supplier} line={line} suggestions={suggestions} bad={issueMap.has(`${index}:materialCode`) || line.review.includes("materialCode")} issue={issueMap.get(`${index}:materialCode`)} onPick={(code) => set({ materialCode: code, matchSource: "manual", matchReason: "", review: line.review.filter((x) => x !== "materialCode") })} />
-      <div className="grid gap-3 sm:grid-cols-4">
-        <label className="text-sm">Cantidad recibida<input inputMode="decimal" className={`${field} ${flag("quantity")}`} value={line.quantity} onChange={(e) => set({ quantity: e.target.value, ...dismiss("quantity") })} data-testid="linea-cantidad" />{hint("quantity")}</label>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <label className="text-sm font-medium">Cantidad recibida<input inputMode="decimal" enterKeyHint="next" className={`${field} ${flag("quantity")}`} value={line.quantity} onChange={(e) => set({ quantity: e.target.value, ...dismiss("quantity") })} data-testid="linea-cantidad" />{hint("quantity")}</label>
         <label className="text-sm">Unidad<input className={`${field} ${flag("unit")}`} placeholder={module === "MP" ? "kg" : "un"} value={line.unit} onChange={(e) => set({ unit: e.target.value, ...dismiss("unit") })} data-testid="linea-unidad" />{hint("unit")}</label>
-        <label className="text-sm">Bultos<input inputMode="numeric" className={field} value={line.packages} onChange={(e) => set({ packages: e.target.value })} data-testid="linea-bultos" /></label>
+        <label className="text-sm font-medium">Bultos<input inputMode="numeric" enterKeyHint="next" className={field} value={line.packages} onChange={(e) => set({ packages: e.target.value })} data-testid="linea-bultos" /></label>
         {module === "MP" ? (
           <label className="text-sm">Lote del proveedor<input className={`${field} ${flag("lote")}`} value={line.lote} onChange={(e) => set({ lote: e.target.value, ...dismiss("lote") })} data-testid="linea-lote" />{hint("lote")}</label>
         ) : null}
@@ -795,15 +989,15 @@ function LineCard({
       {module === "MP" ? (
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="text-sm">Vencimiento<input type="date" className={`${field} ${flag("vencimiento")}`} value={line.vencimiento} disabled={line.noExpiry} onChange={(e) => set({ vencimiento: e.target.value, ...dismiss("vencimiento") })} data-testid="linea-vencimiento" />{hint("vencimiento")}</label>
-          <label className="flex items-center gap-2 pt-6 text-sm"><input type="checkbox" checked={line.noExpiry} onChange={(e) => set({ noExpiry: e.target.checked, vencimiento: e.target.checked ? "" : line.vencimiento })} data-testid="linea-sin-vencimiento" /> Sin vencimiento (no figura en la mercadería)</label>
+          <label className="flex min-h-11 items-center gap-3 text-sm [&>input]:size-5"><input type="checkbox" checked={line.noExpiry} onChange={(e) => set({ noExpiry: e.target.checked, vencimiento: e.target.checked ? "" : line.vencimiento })} data-testid="linea-sin-vencimiento" /> Sin vencimiento (no figura en la mercadería)</label>
         </div>
       ) : null}
-      <div className="flex flex-wrap items-end gap-3">
-        <button type="button" className="text-xs underline" onClick={() => setPartial((v) => !v)}>{partial ? "Ocultar recepción parcial" : "¿Recepción parcial? Indicar la cantidad del remito"}</button>
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+        <button type="button" className="min-h-11 text-left text-sm underline sm:text-xs" onClick={() => setPartial((v) => !v)}>{partial ? "Ocultar recepción parcial" : "¿Recepción parcial? Indicar la cantidad del remito"}</button>
         {partial ? (
-          <label className="text-sm">Cantidad según remito<input inputMode="decimal" className={field} value={line.remitoQuantity} onChange={(e) => set({ remitoQuantity: e.target.value })} data-testid="linea-cantidad-remito" /></label>
+          <label className="text-sm font-medium">Cantidad según remito<input inputMode="decimal" className={field} value={line.remitoQuantity} onChange={(e) => set({ remitoQuantity: e.target.value })} data-testid="linea-cantidad-remito" /></label>
         ) : null}
-        <label className="min-w-40 flex-1 text-sm">Observaciones del material<input className={field} value={line.notes} onChange={(e) => set({ notes: e.target.value })} /></label>
+        <label className="w-full text-sm font-medium sm:min-w-40 sm:flex-1">Observaciones del material<input className={field} value={line.notes} onChange={(e) => set({ notes: e.target.value })} /></label>
       </div>
       {partial && line.remitoQuantity.trim() && line.quantity.trim() ? <PendingNote remito={line.remitoQuantity} received={line.quantity} unit={line.unit} /> : null}
     </article>
@@ -863,10 +1057,10 @@ function MaterialPicker({
             </div>
           ) : null}
           <input className={field} placeholder={`Buscar ${label} por código o nombre`} value={q} onChange={(e) => setQ(e.target.value)} data-testid="linea-buscar-material" aria-label="Buscar material" />
-          <ul className="max-h-48 overflow-auto text-sm" data-testid="linea-catalogo">
+          <ul className="text-sm sm:max-h-48 sm:overflow-auto" data-testid="linea-catalogo">
             {results.map((r) => (
               <li key={r.code}>
-                <button type="button" className="w-full rounded px-2 py-1 text-left hover:bg-[var(--os-teal,#0d9488)]/10" onClick={() => { setSelected(r); onPick(r.code); setOpen(false); }} data-testid="linea-catalogo-item">
+                <button type="button" className="min-h-11 w-full rounded px-2 py-2 text-left hover:bg-[var(--os-teal,#0d9488)]/10" onClick={() => { setSelected(r); onPick(r.code); setOpen(false); }} data-testid="linea-catalogo-item">
                   <strong>{r.code}</strong> — {r.description} <span className="text-xs text-[var(--os-text-muted)]">({r.unit})</span>
                 </button>
               </li>
@@ -985,7 +1179,7 @@ function RemitosHistorial({ module, canWrite, onClose, onResume }: { module: Rec
           <ul className="divide-y divide-[var(--os-border)]" data-testid="remitos-lista">
             {items.map((r) => (
               <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                <button type="button" className="text-left" onClick={() => void (r.status === "CONFIRMADO" ? open(r.id) : r.status === "EN_PLANILLA" ? undefined : canWrite ? onResume(r.id) : undefined)}>
+                <button type="button" className="min-h-11 text-left" data-testid="remito-historial-item" data-status={r.status} onClick={() => void (r.status === "CONFIRMADO" ? open(r.id) : r.status === "EN_PLANILLA" ? undefined : canWrite ? onResume(r.id) : undefined)}>
                   <strong>{r.supplier || "(sin proveedor)"}</strong> · remito {r.remitoNumber || "—"} · {r.receivedDate || "—"}
                   <span className="block text-xs text-[var(--os-text-muted)]">{r.lineCount} material{r.lineCount === 1 ? "" : "es"} · {r.fileCount} archivo{r.fileCount === 1 ? "" : "s"} · {r.confirmedBy ?? r.createdBy}</span>
                 </button>
