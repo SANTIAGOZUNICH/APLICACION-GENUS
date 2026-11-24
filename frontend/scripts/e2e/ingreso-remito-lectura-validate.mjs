@@ -263,7 +263,7 @@ try {
   const vioMejora = (await mp.getByText("Mejorando la imagen para recuperar los datos.").count()) > 0 || state.requests.some((r) => r.prompt.includes("SEGUNDA LECTURA"));
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 90_000 });
   const gen2 = state.requests.filter((r) => r.model === "gemini-3.5-flash" && !r.textOnly); // la llamada 404 del modelo retirado no cuenta
-  check("Mejora automática: se envió una SEGUNDA lectura con la imagen mejorada solo por la cantidad que faltaba, sin pedir otra foto", gen2.length === 2 && gen2[1].prompt.includes("SEGUNDA LECTURA") && /renglón 2: cantidad/.test(gen2[1].prompt) && vioMejora);
+  check("Mejora automática: se envió una SEGUNDA lectura con la imagen mejorada solo por la cantidad que faltaba, sin pedir otra foto", gen2.length === 2 && gen2[1].prompt.includes("SEGUNDA LECTURA") && /renglón 2: cantidad/.test(gen2[1].prompt) && vioMejora, JSON.stringify({ n: gen2.length, models: state.requests.filter((r) => r.model && !r.textOnly).map((r) => r.model), second: gen2[1]?.prompt?.includes("SEGUNDA LECTURA"), renglon: /renglón 2: cantidad/.test(gen2[1]?.prompt ?? ""), vioMejora, tail: (gen2[1]?.prompt ?? "").slice(-300) }));
   check("La cantidad faltante se recuperó y el resto quedó igual (100 kg y 40,5 kg), sin marcar pendiente", (await mp.locator("[data-testid=remito-linea]").nth(1).locator("[data-testid=linea-cantidad]").inputValue()) === "40.5" && (await mp.locator("[data-testid=remito-linea]").nth(0).locator("[data-testid=linea-cantidad]").inputValue()) === "100" && (await mp.getByText(/Mejoramos la imagen y recuperamos los datos/).count()) >= 1);
   check("La mejora no movió stock", (await balance(MP_CODE2)) === stockAntesMejora);
   await mp.keyboard.press("Escape");
