@@ -150,33 +150,34 @@ describe("lectura de etiquetas y adaptación por sector", () => {
 });
 
 describe("elección de modelo", () => {
-  it("ranking: estable más nuevo primero; luego alias; lite; preview; pro", () => {
-    const r = rankVisionModels(["gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-3.5-flash-preview-09-2026", "gemini-flash-latest", "gemini-2.5-flash", "gemini-3.5-flash", "gemini-2.5-flash-001"]);
-    expect(r.slice(0, 3)).toEqual(["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-001"]);
-    expect(r.indexOf("gemini-flash-latest")).toBeGreaterThan(2);
-    expect(r.indexOf("gemini-2.5-flash-lite")).toBeLessThan(r.indexOf("gemini-3.5-flash-preview-09-2026"));
+  it("ranking: estables y económicos conocidos primero (NO por número de versión); luego el resto por grupo", () => {
+    const r = rankVisionModels(["gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-3.5-flash-preview-09-2026", "gemini-flash-latest", "gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-2.5-flash-001"]);
+    expect(r.slice(0, 3)).toEqual(["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest"]);
+    // los 3.x recién aparecidos (los que daban 503 por alta demanda en producción) NO pasan adelante por tener versión más alta
+    expect(r.indexOf("gemini-2.5-flash-lite")).toBeLessThan(r.indexOf("gemini-3.8-flash"));
+    expect(r.indexOf("gemini-3.8-flash")).toBeLessThan(r.indexOf("gemini-3.5-flash")); // entre los no listados, el más nuevo primero
     expect(r.at(-1)).toBe("gemini-2.5-pro");
   });
   it("sin modelo definido: pregunta a Google qué hay (ignora embeddings/tts/imagen) y usa el mejor", async () => {
     const f = gemini({ models: ["embedding-gecko", "gemini-2.5-flash-preview-tts", "gemini-2.5-flash-image", "gemini-2.5-flash", "gemini-3.5-flash"], onModel: () => ok(remito) });
     const out = await extractRemito([jpg], { fetchImpl: f as never, env: env() });
-    expect(out).toMatchObject({ ok: true, model: "gemini-3.5-flash", provider: "gemini:gemini-3.5-flash" });
-    expect(f.generate().map((c) => c.model)).toEqual(["gemini-3.5-flash"]);
+    expect(out).toMatchObject({ ok: true, model: "gemini-2.5-flash", provider: "gemini:gemini-2.5-flash" });
+    expect(f.generate().map((c) => c.model)).toEqual(["gemini-2.5-flash"]);
   });
   it("modelo definido que YA NO EXISTE (404): descubre otro, reintenta y lo recuerda (no vuelve a listar)", async () => {
     const f = gemini({ models: ["gemini-3.5-flash", "gemini-2.5-flash-lite"], onModel: (m) => (m === "gemini-2.0-flash" ? err(404, "NOT_FOUND", "models/gemini-2.0-flash is not found for API version v1beta, or is not supported for generateContent.") : ok(remito)) });
     const e = env({ INGRESO_REMITO_GEMINI_MODEL: "gemini-2.0-flash" });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const a = await extractRemito([jpg], { fetchImpl: f as never, env: e });
-    expect(a).toMatchObject({ ok: true, model: "gemini-3.5-flash" });
-    expect(f.generate().map((c) => c.model)).toEqual(["gemini-2.0-flash", "gemini-3.5-flash"]);
+    expect(a).toMatchObject({ ok: true, model: "gemini-2.5-flash-lite" });
+    expect(f.generate().map((c) => c.model)).toEqual(["gemini-2.0-flash", "gemini-2.5-flash-lite"]);
     expect(String(warn.mock.calls[0]?.[0])).toMatch(/modelo gemini-2\.0-flash/);
     const listsBefore = f.calls.filter((c) => c.method === "GET").length;
     const b = await extractRemito([jpg], { fetchImpl: f as never, env: e });
     expect(b.ok).toBe(true);
     expect(f.calls.filter((c) => c.method === "GET").length).toBe(listsBefore); // sin nuevas consultas de modelos
     // El modelo que funciona se prueba primero en la segunda lectura (tras el definido, que sigue dando 404 → solo 1 intento extra).
-    expect(f.generate().slice(-1)[0]!.model).toBe("gemini-3.5-flash");
+    expect(f.generate().slice(-1)[0]!.model).toBe("gemini-2.5-flash-lite");
   });
   it("ningún modelo existe: mensaje claro con los modelos probados y sin la clave", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -316,9 +317,10 @@ describe("prueba de configuración (view=extraction_health)", () => {
     const f = gemini({ models: ["gemini-3.5-flash", "gemini-2.5-flash"], onModel: (m) => (m === "gemini-2.0-flash" ? err(404, "NOT_FOUND", "gone") : ok("OK")) });
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const p = await probeExtraction({ fetchImpl: f as never, env: env({ INGRESO_REMITO_GEMINI_MODEL: "gemini-2.0-flash", CREAMY_GEMINI_MODEL: "gemini-2.5-flash" }) });
-    expect(p).toMatchObject({ ok: true, configuredModel: "gemini-2.0-flash", modelSource: "INGRESO_REMITO_GEMINI_MODEL", creamyModel: "gemini-2.5-flash", effectiveModel: "gemini-3.5-flash" });
-    expect(p.listing).toMatchObject({ ok: true, count: 2, candidates: ["gemini-3.5-flash", "gemini-2.5-flash"] });
-    expect(p.attempts).toEqual([{ model: "gemini-2.0-flash", status: 404, kind: "model" }, { model: "gemini-3.5-flash", status: 200, kind: "ok" }]);
+    expect(p).toMatchObject({ ok: true, configuredModel: "gemini-2.0-flash", modelSource: "INGRESO_REMITO_GEMINI_MODEL", creamyModel: "gemini-2.5-flash", effectiveModel: "gemini-2.5-flash" });
+    expect(p.listing).toMatchObject({ ok: true, count: 2, candidates: ["gemini-2.5-flash", "gemini-3.5-flash"] });
+    expect(p.attempts).toEqual([{ model: "gemini-2.0-flash", status: 404, kind: "model" }, { model: "gemini-2.5-flash", status: 200, kind: "ok" }]);
+    expect(p.providers.find((x) => x.provider === "openai")).toMatchObject({ configured: false });
     expect(p.image).toBeNull();
     expect(JSON.stringify(p)).not.toContain(KEY);
     expect(f.generate().every((c) => (c.body!.contents as Array<{ parts: Array<Record<string, unknown>> }>)[0]!.parts.every((x) => "text" in x))).toBe(true); // ningún documento

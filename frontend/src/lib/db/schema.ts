@@ -2217,6 +2217,20 @@ export const workItemComments = pgTable(
 );
 
 /** Correcciones de entregas internas (0079): una fila inmutable por edición o cancelación, con valores anteriores y nuevos. */
+/** Salud de los proveedores de lectura de remitos (0086): circuit breaker compartido entre instancias. */
+export const aiProviderHealth = pgTable("ai_provider_health", {
+  provider: text("provider").primaryKey(),
+  consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  openUntil: timestamp("open_until", { withTimezone: true }),
+  lastKind: text("last_kind"),
+  lastHttp: integer("last_http"),
+  lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
+  lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+  totalSuccess: integer("total_success").notNull().default(0),
+  totalFailure: integer("total_failure").notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /** «Quitar del listado» de Entregados (0085): soft-hide operativo por sector; nunca modifica la entrega. */
 export const internalDeliveryHides = pgTable(
   "internal_delivery_hides",
