@@ -2278,3 +2278,14 @@ export const internalDeliveryChanges = pgTable(
     index("internal_delivery_changes_item_idx").on(table.workItemId, table.createdAt),
   ]
 );
+
+/** Observaciones de Producción «vistas por usuario» (0089): solo cuándo vio cada ámbito (FEED o id de trabajo); nunca guarda el texto. */
+export const productionObservationSeen = pgTable(
+  "production_observation_seen",
+  {
+    userKey: text("user_key").notNull(),
+    scope: text("scope").notNull(),
+    seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userKey, table.scope] })]
+);

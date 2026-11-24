@@ -6,6 +6,7 @@ import { featureAuditEvents, workItems } from "@/lib/db/schema";
 import { classifyPendingDefinition, type PendingDefinitionAction } from "@/lib/planning/circuit/pending-definition";
 import { recordDeliveryInTx, type RecordDeliveryResult } from "@/lib/planning/circuit/delivery-core";
 import { emitBillingForDelivery } from "@/lib/notifications/billing-notifications";
+import { emitObservationForDelivery } from "@/lib/notifications/observation-notifications";
 import { resolveDeliveryTarget } from "@/lib/planning/circuit/delivery-math";
 import { emitCircuitNotification } from "@/lib/planning/circuit/circuit-notifications";
 import type { CircuitMovement } from "@/lib/planning/circuit/movements";
@@ -278,6 +279,7 @@ export async function runBulkPendingAction(input: BulkPendingActionInput): Promi
       } catch (e) {
         console.error("[bulk] aviso de facturación falló", e);
       }
+      await emitObservationForDelivery(r, input.actor.displayName || input.actor.email);
     }
     for (const m of movements) {
       try {

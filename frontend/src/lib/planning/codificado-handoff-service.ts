@@ -15,6 +15,8 @@ import { canReopenCodificadoDelivery } from "@/features/os/operational/lib/codif
 import { parseQuantity } from "@/lib/planning/circuit/delivery-math";
 import { closeForCodificadoTransfer } from "@/lib/planning/circuit/packaging-close";
 import { emitBillingForDelivery } from "@/lib/notifications/billing-notifications";
+import { emitObservationForDelivery } from "@/lib/notifications/observation-notifications";
+import { emitObservationNotification } from "@/lib/notifications/observation-notifications";
 import { recordDeliveryInTx, sumActiveDeliveredUnits } from "@/lib/planning/circuit/delivery-core";
 import { sumActiveCodificadoTransfers } from "@/lib/planning/circuit/codificado-transfers-sum";
 import { emitCircuitNotification } from "@/lib/planning/circuit/circuit-notifications";
@@ -506,6 +508,24 @@ export async function handoffToCodificadoDurable(
     actorEmail: actor.email,
   };
   await emitCircuitNotification(movement);
+  // Observación del envío completo a Codificado (best-effort, id determinístico por clave del envío).
+  await emitObservationNotification({
+    source: "ENVIO_CODIFICADO",
+    eventKey: `${id}:${key}`,
+    workItemId: id,
+    sector: movement.fromSector,
+    actorName: actor.displayName || actor.email,
+    observation: input.observation ?? "",
+    at: movement.at,
+    client: result.item.client,
+    product: result.item.product,
+    orderRef: result.item.orderNumber ?? null,
+    lote: result.item.packagingLote ?? null,
+    quantity: input.totalUnits,
+    unit: result.item.unit,
+    tipo: "TOTAL",
+    destination: "Codificado",
+  });
   return result;
 }
 
@@ -829,6 +849,7 @@ export async function deliverFromCodificadoDurable(
   // Aviso a Producción fuera de la transacción: un fallo del aviso nunca bloquea la entrega.
   if (outcome.movement) await emitCircuitNotification(outcome.movement);
   await emitBillingForDelivery(outcome, actor.displayName || actor.email);
+  await emitObservationForDelivery(outcome, actor.displayName || actor.email);
 
   return {
     item: mapItem(outcome.item),
