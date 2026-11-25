@@ -126,6 +126,7 @@ describe("DEPOSITO acceso y navegación", () => {
       "dashboard",
       "procedimientos",
       "expedicion",
+      "ingreso_cajas_genus",
     ]);
     expect(home.sidebarItems).not.toContain("avisos_me");
   });
