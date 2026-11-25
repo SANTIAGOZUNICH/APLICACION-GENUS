@@ -2,6 +2,7 @@
 
 import { readOnlyReason } from "@/features/os/operational/lib/readonly-reasons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SyncStatus, listSignature, useAutoSync } from "../lib/use-auto-sync";
 import { ClipboardPaste, History, Pencil, Plus, Trash2 } from "lucide-react";
 import { MeHistoryDialog } from "@/features/os/operational/components/me-history-dialog";
 import { useMeSheetEditing } from "@/features/os/operational/hooks/use-me-sheet-cells";
@@ -122,13 +123,36 @@ export function MeIngresosView() {
   const [showAnulados, setShowAnulados] = useState(true);
   const savingRef = useRef(false);
 
+  const lastSig = useRef("");
+  const markSyncedRef = useRef<() => void>(() => undefined);
   const reload = useCallback(async () => {
     const res = await fetchInventory<MeIngresoRow>("me_ingresos", { includeAnulado: true });
+    lastSig.current = listSignature(res.data);
     setRows(res.data);
     setPersistence(res.persistence);
     setBanner(res.message ?? null);
     void dif.reload();
+    markSyncedRef.current();
   }, []);
+  /** Sincronización automática (SOLO LECTURA): trae el listado y las fotos; actualiza el estado solo si algo cambió. Nunca pisa datos con una respuesta vacía por falla. */
+  const syncRows = useCallback(async () => {
+    const res = await fetchInventory<MeIngresoRow>("me_ingresos", { includeAnulado: true });
+    if (!res.persistence) throw new Error(res.message ?? "Sin conexión con la base de datos: se reintenta solo.");
+    const sig = listSignature(res.data);
+    if (sig !== lastSig.current) {
+      lastSig.current = sig;
+      setRows(res.data);
+      setBanner(res.message ?? null);
+      void difRef.current.reload();
+    }
+    fotos.reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fotos.reload es estable
+  }, []);
+  const autoSync = useAutoSync({ run: syncRows });
+  useEffect(() => {
+    markSyncedRef.current = autoSync.markSynced;
+  }, [autoSync.markSynced]);
+
   const [historyFor, setHistoryFor] = useState<{ id: string; label: string } | null>(null);
   const sheet = useMeSheetEditing<MeIngresoRow>("me_ingresos", sectorId, canWrite, ME_INGRESO_SHEET_FIELD_OF, reload);
   // Filas en blanco al final de la planilla: se escribe directo y el ingreso se registra al completarse (suma al stock del código).
@@ -184,6 +208,7 @@ export function MeIngresosView() {
         try {
           const res = await fetchInventory<MeIngresoRow>("me_ingresos", { includeAnulado: true });
           if (cancelled) return;
+          lastSig.current = listSignature(res.data);
           setRows(res.data);
           setPersistence(res.persistence);
           setBanner(res.message ?? null);
@@ -379,6 +404,7 @@ export function MeIngresosView() {
       )}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <IngresoConRemitoButtons module="ME" canWrite={canWrite} onChanged={() => { void reload(); fotos.reload(); }} />
+        <SyncStatus lastSyncAt={autoSync.lastSyncAt} error={autoSync.error} deferred={autoSync.deferred} />
         {canWrite && (
           <>
             <Button type="button" variant="secondary" onClick={() => setForm(emptyForm())}>
