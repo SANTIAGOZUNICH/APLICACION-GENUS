@@ -38,6 +38,8 @@ describe.skipIf(Boolean(PROBLEM))(`Insumos en Postgres real${PROBLEM ? ` — sal
 
   afterAll(async () => {
     const ids = "select id from insumo_retiros where registrado_por_name like $1";
+    await q(`delete from insumo_stock_movements where retiro_id in (${ids}) or insumo_id in (select id from insumo_items where created_by like $2)`, [`${MARK}%`, `it-ins-%-${RUN}@%`]).catch(() => undefined);
+    await q("delete from insumo_stock_audit where actor_email like $1", [`it-ins-%-${RUN}@%`]).catch(() => undefined);
     await q(`delete from insumo_retiro_events where retiro_id in (${ids})`, [`${MARK}%`]).catch(() => undefined);
     await q(`delete from insumo_retiro_items where retiro_id in (${ids})`, [`${MARK}%`]).catch(() => undefined);
     await q("delete from insumo_retiros where registrado_por_name like $1", [`${MARK}%`]).catch(() => undefined);
