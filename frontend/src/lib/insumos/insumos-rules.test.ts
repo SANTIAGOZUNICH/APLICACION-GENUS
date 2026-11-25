@@ -27,8 +27,8 @@ const SEED = [
 ];
 
 describe("permisos por sector", () => {
-  it("solo los 5 sectores operativos registran; Administración/Dirección no registran pero administran", () => {
-    for (const s of ["ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO", "ELABORACION", "MATERIA_PRIMA"] as const) {
+  it("solo los 6 sectores (5 operativos + Depósito) registran; Administración/Dirección no registran pero administran", () => {
+    for (const s of ["ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO", "ELABORACION", "MATERIA_PRIMA", "DEPOSITO"] as const) {
       expect(canRegisterInsumos(s)).toBe(true);
       expect(canAdminInsumos(s)).toBe(false);
     }
@@ -36,7 +36,7 @@ describe("permisos por sector", () => {
       expect(canRegisterInsumos(s)).toBe(false);
       expect(canAdminInsumos(s)).toBe(true);
     }
-    for (const s of ["DEPOSITO", "PRODUCCION", "CALIDAD", "COMERCIAL"] as const) {
+    for (const s of ["PRODUCCION", "CALIDAD", "COMERCIAL"] as const) {
       expect(canRegisterInsumos(s)).toBe(false);
       expect(canAdminInsumos(s)).toBe(false);
     }

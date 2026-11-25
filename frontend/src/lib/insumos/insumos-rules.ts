@@ -6,7 +6,7 @@ import { OPERATIONAL_SECTOR_IDS, type SectorId } from "@/types/operational/secto
 import type { InsumoResponsable } from "./types";
 
 /** Sectores operativos que registran retiros (solo de SU propio sector). */
-export const INSUMO_REGISTER_SECTORS = ["ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO", "ELABORACION", "MATERIA_PRIMA"] as const satisfies readonly SectorId[];
+export const INSUMO_REGISTER_SECTORS = ["ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO", "ELABORACION", "MATERIA_PRIMA", "DEPOSITO"] as const satisfies readonly SectorId[];
 /** Sectores que consultan reportes, corrigen/anulan y administran catálogo y responsables. */
 export const INSUMO_ADMIN_SECTORS = ["ADMINISTRACION", "DIRECCION"] as const satisfies readonly SectorId[];
 /** Sectores a los que pertenecen los responsables (los mismos que registran). */

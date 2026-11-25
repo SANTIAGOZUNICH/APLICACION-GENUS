@@ -167,15 +167,41 @@ describe.skipIf(Boolean(PROBLEM))(`Insumos en Postgres real${PROBLEM ? ` — sal
     expect((await q("select count(*)::int n from insumo_retiros where client_request_id = $1", [k]))[0]!.n).toBe(0);
   });
 
-  it("RBAC por sector: Depósito, Producción, Administración y Dirección NO registran; los operativos no consultan reportes ni administran", async () => {
+  it("DEPÓSITO registra sus propios retiros con BETO o LEO, ve solo sus responsables y aparece en Administración; no puede usar responsables de otro sector", async () => {
+    const s = await svc();
+    const cat = await s.getCatalog(deposito);
+    expect(cat.responsables.map((r) => r.name).sort()).toEqual(["BETO", "LEO"]);
+    expect(cat.responsables.every((r) => r.sector === "DEPOSITO")).toBe(true);
+    expect(cat.items.map((i) => i.name)).toEqual(expect.arrayContaining(["PAPEL HIGIENICO", "BOBINA DE PAPEL", "GUANTES", "CINTA", "FILM", "STRETCH FILM"]));
+    const beto = await respId("DEPOSITO", "BETO");
+    const k = key();
+    const r = await s.createRetiro(deposito, { clientRequestId: k, responsableId: beto, lines: [{ insumoId: "guantes", cantidad: 3 }, { insumoId: "film", cantidad: 1 }] });
+    expect(r.created).toBe(true);
+    const again = await s.createRetiro(deposito, { clientRequestId: k, responsableId: beto, lines: [{ insumoId: "guantes", cantidad: 3 }, { insumoId: "film", cantidad: 1 }] });
+    expect(again.created).toBe(false); // reintento sin duplicar
+    const hist = (await s.listRetiros(admin, { sector: "DEPOSITO" })).retiros.find((x) => x.id === r.retiro.id)!;
+    expect(hist).toMatchObject({ sector: "DEPOSITO", responsableName: "BETO" });
+    expect(hist.registradoPorEmail).toBe(deposito.email);
+    // responsables de otro sector: rechazados (también en el backend)
+    await expect(s.createRetiro(deposito, { clientRequestId: key(), responsableId: await respId("ENVASADO_MASIVO", "GABO"), lines: [{ insumoId: "guantes", cantidad: 1 }] })).rejects.toThrow();
+    await expect(s.createRetiro(masivo, { clientRequestId: key(), responsableId: beto, lines: [{ insumoId: "guantes", cantidad: 1 }] })).rejects.toThrow();
+    // Depósito no consulta reportes ni administra el catálogo
+    await expect(s.listRetiros(deposito)).rejects.toThrow(/Solo Administración y Dirección/);
+    await expect(s.createResponsable(deposito, { sector: "DEPOSITO", name: "X" })).rejects.toThrow(/Solo Administración/);
+    // Administración puede dar de alta responsables de Depósito
+    const nuevo = await s.createResponsable(admin, { sector: "DEPOSITO", name: `TEST ${RUN}` });
+    expect(nuevo.sector).toBe("DEPOSITO");
+  });
+
+  it("RBAC por sector: Producción, Administración y Dirección NO registran (Depósito SÍ); los operativos no consultan reportes ni administran", async () => {
     const s = await svc();
     const input = { clientRequestId: key(), responsableId: await respId("ENVASADO_MASIVO", "GABO"), lines: [{ insumoId: "guantes", cantidad: 1 }] };
-    for (const a of [deposito, produccion, admin, direccion]) await expect(s.createRetiro(a, { ...input, clientRequestId: key() })).rejects.toThrow(/no registra/);
+    for (const a of [produccion, admin, direccion]) await expect(s.createRetiro(a, { ...input, clientRequestId: key() })).rejects.toThrow(/no registra/);
     await expect(s.listRetiros(masivo)).rejects.toThrow(/Solo Administración y Dirección/);
     await expect(s.listRetiros(deposito)).rejects.toThrow(/Solo Administración y Dirección/);
     await expect(s.createInsumoItem(masivo, { name: "X" })).rejects.toThrow(/Solo Administración/);
     await expect(s.createResponsable(codificado, { sector: "CODIFICADO", name: "X" })).rejects.toThrow(/Solo Administración/);
-    await expect(s.getCatalog(deposito)).rejects.toThrow(/acceso/);
+    await expect(s.getCatalog(produccion)).rejects.toThrow(/acceso/);
     await expect(s.anularRetiro(masivo, randomUUID(), "motivo")).rejects.toThrow(/Solo Administración/);
     await expect(s.listRetiros(admin)).resolves.toBeTruthy();
     await expect(s.listRetiros(direccion)).resolves.toBeTruthy();
@@ -256,7 +282,7 @@ describe.skipIf(Boolean(PROBLEM))(`Insumos en Postgres real${PROBLEM ? ` — sal
     const resp = await s.createResponsable(direccion, { sector: "ELABORACION", name: `tester ${RUN}` });
     expect(resp).toMatchObject({ sector: "ELABORACION", name: `TESTER ${RUN}`, active: true });
     await expect(s.createResponsable(admin, { sector: "ELABORACION", name: `TESTER ${RUN}` })).rejects.toThrow(/Ya existe/);
-    await expect(s.createResponsable(admin, { sector: "DEPOSITO", name: "X" })).rejects.toThrow(/sector operativo/);
+    await expect(s.createResponsable(admin, { sector: "PRODUCCION", name: "X" })).rejects.toThrow(/sector operativo/);
     // Aparecen para el sector correcto.
     const elab = actor("ELABORACION");
     expect((await s.getCatalog(elab)).responsables.map((r) => r.name)).toContain(`TESTER ${RUN}`);

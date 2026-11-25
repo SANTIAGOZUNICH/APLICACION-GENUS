@@ -172,7 +172,7 @@ export function InsumosAdminPanel() {
               <label className="text-xs">Sector
                 <select className={field} value={filters.sector ?? ""} onChange={(e) => setF({ sector: e.target.value || undefined, responsableId: undefined })} data-testid="insumos-filtro-sector">
                   <option value="">Todos</option>
-                  {["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO", "MATERIA_PRIMA"].map((s) => <option key={s} value={s}>{sectorLabel(s)}</option>)}
+                  {["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO", "MATERIA_PRIMA", "DEPOSITO"].map((s) => <option key={s} value={s}>{sectorLabel(s)}</option>)}
                 </select>
               </label>
               <label className="text-xs">Responsable
