@@ -61,6 +61,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0081_email_order_sync_runs": "ae728e00f57a384285ccfb7f818741defaea7ff86da230ca936cf64a6b25ffb8",
   "0082_despachos_planilla": "5923cf1486ce83d47e6bb72cebb7b6b7986ad4316467ff8f7a10775eca8875ee",
   "0090_insumos_stock": "9c169dbad43cb5d20af518762509a354d4e4868d522708f06180e713f5a9435b",
+  "0091_insumos_deposito": "b529c00ef7756a3778be93b3447efcceebfdce7fd3a91240d306b1dd38b97b63",
   "0088_insumos": "da0ac29be241a4982af061b05c63b201384c9913643462c062577a4b189ca27f",
   "0086_ai_provider_health": "56670f811247894b932dbd34ad9af19feb7001856fc72bc12739de97719e1188",
   "0087_cajas_genus": "036d6191eba83300f212926967a934e7e6e8135c4ed0cbd8324b18d6b97f402e",

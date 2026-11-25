@@ -617,6 +617,13 @@
       "when": 1793900019000,
       "tag": "0090_insumos_stock",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1793900020000,
+      "tag": "0091_insumos_deposito",
+      "breakpoints": true
     }
   ]
 }

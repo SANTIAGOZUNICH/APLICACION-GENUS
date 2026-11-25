@@ -202,6 +202,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "procedimientos",
       "expedicion",
       "ingreso_cajas_genus",
+      "insumos",
     ],
     creamyContext: {
       role: "Copiloto de depósito",

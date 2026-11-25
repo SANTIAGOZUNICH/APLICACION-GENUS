@@ -52,7 +52,7 @@ describe.skipIf(Boolean(PROBLEM))(`Stock de insumos en Postgres real${PROBLEM ? 
     pool = new Pool({ connectionString: process.env.GENUS_E2E_DATABASE_URL });
     await assertMarkedDatabase(q);
     vi.resetModules();
-    for (const [s, n] of [["ENVASADO_MASIVO", "GABO"], ["ENVASADO_PREMIUM", "BELEN"], ["CODIFICADO", "JULIAN"], ["MATERIA_PRIMA", "VALENTIN"], ["ELABORACION", "SANTINO"]] as const) RESP[`${s}:${n}`] = await respId(s, n);
+    for (const [s, n] of [["ENVASADO_MASIVO", "GABO"], ["ENVASADO_PREMIUM", "BELEN"], ["CODIFICADO", "JULIAN"], ["MATERIA_PRIMA", "VALENTIN"], ["ELABORACION", "SANTINO"], ["DEPOSITO", "BETO"], ["DEPOSITO", "LEO"]] as const) RESP[`${s}:${n}`] = await respId(s, n);
   }, 90_000);
 
   afterAll(async () => {
@@ -93,6 +93,17 @@ describe.skipIf(Boolean(PROBLEM))(`Stock de insumos en Postgres real${PROBLEM ? 
     expect(ev[0]).toMatchObject({ actorEmail: direccion.email, before: { stock: 0, configurado: true }, after: { stock: 50 } });
     await expect(s.setInitialStock(admin, { insumoId: it.id, quantity: -1, key: key() })).rejects.toThrow(/negativo/);
     await expect(s.setInitialStock(admin, { insumoId: it.id, quantity: 1.5, key: key() })).rejects.toThrow(/entero/);
+  });
+
+  it("un retiro de DEPÓSITO descuenta el stock y activa la alerta de mínimo; Depósito no puede operar el stock", async () => {
+    const it1 = await newItem("DEP", { min: 10, initial: 12, unit: "rollos" });
+    await retiro(deposito, "DEPOSITO", "BETO", [{ insumoId: it1.id, cantidad: 1 }]);
+    expect(await row(it1.id)).toMatchObject({ stock: 11, retiros: 1 });
+    await retiro(deposito, "DEPOSITO", "LEO", [{ insumoId: it1.id, cantidad: 2 }]); // 9 ≤ mínimo 10
+    expect(await row(it1.id)).toMatchObject({ stock: 9, status: "STOCK_BAJO" });
+    expect((await notifs(it1.id)).length).toBe(1);
+    await expect((await stk()).setInitialStock(deposito, { insumoId: it1.id, quantity: 99, key: key() })).rejects.toThrow();
+    await expect((await stk()).updateStockConfig(deposito, it1.id, { minStock: 1 })).rejects.toThrow();
   });
 
   it("el stock inicial NO descuenta retiros anteriores y el historial de retiros se conserva intacto; GUANTES 50 − 3 = 47", async () => {
