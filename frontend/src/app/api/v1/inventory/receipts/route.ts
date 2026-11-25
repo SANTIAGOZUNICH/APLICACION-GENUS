@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { inventoryErrorResponse, resolveInventoryActor } from "@/lib/inventory/http";
 import { InventoryForbiddenError, InventoryValidationError } from "@/lib/inventory/inventory-service";
 import { probeExtraction } from "@/lib/inventory/receipt-extraction";
+import { ingresoConsistency } from "@/lib/inventory/ingreso-consistency";
 import { createDbHealthStore, checkHealthTable } from "@/lib/inventory/receipt-provider-health-db";
 import { parseReceiptModule } from "@/lib/inventory/receipt-rules";
 import { getReceiptService, ReceiptError } from "@/lib/inventory/receipt-service";
@@ -46,6 +47,11 @@ export async function GET(request: Request) {
       // Solo supervisión (Dirección / Producción / superadmin): prueba clave y modelo SIN enviar ningún remito real (con &image=1 lee un remito ficticio incorporado).
       if (!actor.isSuperadmin && actor.sector !== "DIRECCION" && actor.sector !== "PRODUCCION") throw new InventoryForbiddenError("Solo Dirección o Producción pueden probar la lectura automática.");
       return NextResponse.json({ health: await probeExtraction({ image: url.searchParams.get("image") === "1", health: createDbHealthStore(), storeCheck: checkHealthTable }) });
+    }
+    if (view === "consistency") {
+      // Verificación SOLO LECTURA de recepciones ↔ ingresos ↔ fotos (cantidades e ids; nunca contenido).
+      if (!actor.isSuperadmin && !["DIRECCION", "PRODUCCION", "ADMINISTRACION", "DEPOSITO", "MATERIA_PRIMA"].includes(actor.sector)) throw new InventoryForbiddenError("No tenés permiso para ver la verificación de ingresos.");
+      return NextResponse.json({ consistency: await ingresoConsistency(mod) });
     }
     if (view === "catalog") return NextResponse.json({ items: await svc.catalog(actor, mod, url.searchParams.get("q") ?? "") });
     if (view === "get") return NextResponse.json({ receipt: await svc.get(actor, id, mod) });
