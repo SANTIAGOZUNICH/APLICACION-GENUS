@@ -24,6 +24,10 @@ const q = async (text, params = []) => (await pool.query(text, params)).rows;
 await assertMarkedDatabase(q);
 const EMAILS = [E2E_USERS.envasado.email, E2E_USERS.codificado.email];
 const cleanup = async () => {
+  await q("delete from insumo_stock_movements where created_by = any($1) or retiro_id in (select id from insumo_retiros where registrado_por_email = any($1)) or insumo_id = 'bolsas-e2e'", [[...EMAILS, E2E_USERS.administracion.email]]).catch(() => undefined);
+  await q("delete from insumo_stock_audit where actor_email = any($1)", [[...EMAILS, E2E_USERS.administracion.email]]).catch(() => undefined);
+  await q("delete from os_notifications where kind = 'insumos_stock_bajo'").catch(() => undefined);
+  await q("update insumo_items set min_stock = 0, unit = 'unidades', alert_state = 'NORMAL', alert_episode = 0, alert_since = null").catch(() => undefined);
   const ids = "select id from insumo_retiros where registrado_por_email = any($1)";
   await q(`delete from insumo_retiro_events where retiro_id in (${ids})`, [EMAILS]).catch(() => undefined);
   await q(`delete from insumo_retiro_items where retiro_id in (${ids})`, [EMAILS]).catch(() => undefined);
@@ -54,6 +58,16 @@ const nav = async (page, label) => {
   await direct.click({ timeout: 120_000 });
 };
 const T = (page, id) => page.locator(`[data-testid="${id}"]`);
+async function registrarRetiro(page, qtys, respTestId) {
+  await nav(page, "Insumos");
+  await T(page, "insumos-paso-1").waitFor({ timeout: 60_000 });
+  for (const [id, n] of Object.entries(qtys)) for (let i = 0; i < n; i++) await T(page, `insumo-mas-${id}`).tap();
+  await T(page, "insumos-siguiente").tap();
+  await T(page, respTestId).tap();
+  await T(page, "insumos-siguiente").tap();
+  await T(page, "insumos-registrar").tap();
+  await T(page, "insumos-exito").waitFor({ timeout: 30_000 });
+}
 const PHONE = { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 };
 const tap = (page, id, times = 1) => (async () => { for (let i = 0; i < times; i++) await T(page, id).tap(); })();
 
@@ -134,6 +148,9 @@ try {
   await T(a, "billing-view").waitFor({ timeout: 120_000 });
   await T(a, "billing-tab-insumos").click();
   await T(a, "insumos-admin").waitFor();
+  await T(a, "insumos-stock").waitFor({ timeout: 30_000 });
+  check("Administración › INSUMOS abre en STOCK ACTUAL con las 5 sub-secciones", (await T(a, "insumos-stock").isVisible()) && (await a.locator("[data-testid^=insumos-tab-]:not([data-testid$=alertas])").count()) === 5);
+  await T(a, "insumos-tab-consumos").click();
   await a.locator("[data-testid^=retiro-]").first().waitFor({ timeout: 30_000 });
   check("Administración ve los retiros recién registrados (sin recargar la app)", (await a.locator("[data-testid^=retiro-][data-status]").count()) >= 2);
   check("KPI: 2 retiros y 9 unidades (2+1+2 de Envasado, 4 de Codificado)", (await T(a, "kpi-retiros").innerText()) === "2" && (await T(a, "kpi-unidades").innerText()) === "9", `${await T(a, "kpi-retiros").innerText()} / ${await T(a, "kpi-unidades").innerText()}`);
@@ -180,6 +197,64 @@ try {
   await a.waitForFunction(() => /de baja/.test(document.querySelector("[data-testid=catalogo-insumo-bolsas-e2e]")?.textContent ?? ""), null, { timeout: 30_000 });
   check("catálogo: baja lógica", true);
   await a.screenshot({ path: `${OUT}/admin-catalogo.png`, fullPage: true });
+  await T(a, "billing-tab-insumos").click();
+
+  // ───── Stock: stock inicial, mínimo, descuento visto desde otra sesión, alerta roja, ingreso ─────
+  await T(a, "insumos-tab-stock").click();
+  const card = (id) => T(a, `stock-${id}`);
+  await card("guantes").waitFor({ timeout: 30_000 });
+  check("sin stock inicial: se distingue de stock 0 y no hay alerta", (await card("guantes").locator("[data-testid=stock-sin-inicial]").count()) === 1 && (await T(a, "billing-tab-insumos").getAttribute("data-alert")) === null);
+  await card("guantes").locator("[data-testid=stock-btn-inicial]").click();
+  await T(a, "inicial-cantidad").fill("20");
+  await T(a, "inicial-guardar").click();
+  await a.waitForFunction(() => document.querySelector("[data-testid=stock-guantes] [data-testid=stock-actual]")?.textContent?.startsWith("20"), null, { timeout: 30_000 });
+  check("stock inicial 20: los retiros anteriores no descuentan", (await card("guantes").getAttribute("data-status")) === "DISPONIBLE");
+  await card("guantes").locator("[data-testid=stock-btn-config]").click();
+  await T(a, "config-minimo").fill("18");
+  await T(a, "config-unidad").fill("cajas");
+  await T(a, "config-guardar").click();
+  await a.waitForFunction(() => document.querySelector("[data-testid=stock-guantes] [data-testid=stock-minimo]")?.textContent === "18", null, { timeout: 30_000 });
+  check("mínimo 18 y unidad «cajas» configurados (stock 20: sin alerta)", (await card("guantes").getAttribute("data-status")) === "DISPONIBLE" && (await T(a, "billing-tab-insumos").getAttribute("data-alert")) === null);
+
+  // Otra sesión (celular de Envasado) retira 4 GUANTES: Administración lo ve SIN recargar.
+  const env2 = await openAs(E2E_USERS.envasado, PHONE);
+  await registrarRetiro(env2.page, { guantes: 4 }, "responsable-envasado-masivo-agus");
+  await env2.ctx.close();
+  await a.waitForFunction(() => document.querySelector("[data-testid=stock-guantes]")?.getAttribute("data-status") === "STOCK_BAJO", null, { timeout: 60_000 });
+  check("el descuento (20 − 4 = 16) se ve desde otra sesión sin recargar y pasa a STOCK BAJO", (await card("guantes").locator("[data-testid=stock-actual]").innerText()).startsWith("16"));
+  const tabAlert = T(a, "billing-tab-insumos");
+  check("la pestaña INSUMOS se pone roja con la cantidad de insumos a reponer", (await tabAlert.getAttribute("data-alert")) === "true" && /\bcajas-tab-alert\b/.test((await tabAlert.getAttribute("class")) ?? "") && /1 a reponer/.test(await tabAlert.innerText()));
+  const anim = (await tabAlert.evaluate((el) => getComputedStyle(el).animationName));
+  await a.emulateMedia({ reducedMotion: "reduce" });
+  const animReduced = (await tabAlert.evaluate((el) => getComputedStyle(el).animationName));
+  check("titila suave solo sin «reducir movimiento»", anim !== "none" && animReduced === "none", `${anim} / ${animReduced}`);
+  await a.screenshot({ path: `${OUT}/admin-stock-alerta.png`, fullPage: true });
+  await T(a, "billing-tab-resumen").click();
+  check("la alerta sigue visible aunque Administración esté en Facturación", (await tabAlert.getAttribute("data-alert")) === "true");
+  const noti = await q("select message, sectors, href from os_notifications where kind = 'insumos_stock_bajo'");
+  check("una notificación a ADMINISTRACION con insumo, stock y mínimo", noti.length === 1 && /STOCK BAJO DE INSUMOS: GUANTES — stock 16 cajas, mínimo 18/.test(noti[0].message) && JSON.stringify(noti[0].sectors) === '["ADMINISTRACION"]', JSON.stringify(noti));
+  await T(a, "billing-tab-insumos").click();
+  await T(a, "insumos-tab-ingresos").click();
+  await T(a, "ingresos-nuevo").click();
+  await T(a, "ingreso-insumo").selectOption("guantes");
+  await T(a, "ingreso-cantidad").fill("10");
+  check("el ingreso muestra stock actual y NUEVO stock antes de confirmar", /26/.test(await T(a, "ingreso-nuevo-stock").innerText()));
+  await T(a, "ingreso-confirmar").dblclick();
+  await a.locator("[data-testid^=ingreso-][data-status=ACTIVO]").first().waitFor({ timeout: 30_000 });
+  check("el ingreso se registra UNA vez (doble toque) y aparece en el historial", (await a.locator("[data-testid^=ingreso-][data-status=ACTIVO]").count()) === 1);
+  await a.waitForFunction(() => !document.querySelector("[data-testid=billing-tab-insumos]")?.getAttribute("data-alert"), null, { timeout: 30_000 });
+  check("al reponer por encima del mínimo la alerta se apaga", true);
+  await T(a, "insumos-tab-movimientos").click();
+  await a.locator("[data-testid=movimiento-fila]").first().waitFor({ timeout: 30_000 });
+  const kinds = await a.locator("[data-testid=movimiento-fila]").evaluateAll((els) => els.map((e) => e.getAttribute("data-kind")));
+  check("historial de movimientos: stock inicial, retiro e ingreso", ["STOCK_INICIAL", "EGRESO_RETIRO", "INGRESO"].every((k) => kinds.includes(k)), kinds.join(","));
+  check("sin scroll horizontal de la página en escritorio", await a.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+  const mob = await openAs(E2E_USERS.administracion, PHONE);
+  await T(mob.page, "billing-tab-insumos").click();
+  await T(mob.page, "insumos-stock").waitFor({ timeout: 60_000 });
+  check("Administración en celular: sin scroll horizontal y botones ≥ 44 px", (await mob.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)) && (await mob.page.evaluate(() => [...document.querySelectorAll("[data-testid^=stock-btn-]")].every((b) => b.getBoundingClientRect().height >= 43.5))));
+  await mob.page.screenshot({ path: `${OUT}/admin-stock-movil.png`, fullPage: true });
+  await mob.ctx.close();
   await adm.ctx.close();
 } catch (e) {
   check("ejecución sin errores", false, String(e?.stack ?? e).slice(0, 900));

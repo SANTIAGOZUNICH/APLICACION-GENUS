@@ -8,6 +8,7 @@ import { DELIVERY_STATE_LABEL, INVOICING_STATE_LABEL, INVOICING_STATES, type Inv
 import { InsumosAdminPanel } from "@/features/os/operational/components/insumos/insumos-admin-panel";
 import { CajasGenusAdminPanel } from "@/features/os/operational/components/cajas-genus/cajas-admin-panel";
 import { useCajasSummary } from "@/features/os/operational/components/cajas-genus/cajas-client";
+import { useInsumosStock } from "@/features/os/operational/components/insumos/insumos-stock-client";
 import { AlertTriangle } from "lucide-react";
 import type { BillableDelivery, BillingDashboard, BillingRowView, InvoiceView } from "@/lib/billing/billing-service";
 
@@ -58,6 +59,9 @@ export function ControlFacturacionView({ initialTab }: { initialTab?: Tab } = {}
   // Alerta de stock crítico de cajas: visible en la barra de pestañas aunque se esté trabajando en Facturación o Insumos.
   const cajas = useCajasSummary({ pollMs: 20_000 });
   const cajasCritical = Boolean(cajas.summary?.critical);
+  // Alerta de stock bajo de insumos: calculada en el servidor; no depende de leer la notificación y se ve aunque se esté en Facturación o Cajas.
+  const insumos = useInsumosStock({ pollMs: 20_000 });
+  const insumosAlerts = insumos.summary?.alertCount ?? 0;
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [rows, setRows] = useState<BillingRowView[]>([]);
   const [canWrite, setCanWrite] = useState(false);
@@ -154,12 +158,13 @@ export function ControlFacturacionView({ initialTab }: { initialTab?: Tab } = {}
 
         <div role="tablist" className="flex flex-wrap gap-2" aria-label="Secciones de facturación">
           {([["resumen", "Resumen"], ["control", "Control de facturación"], ["facturas", "Facturas registradas"], ["insumos", "INSUMOS"], ["cajas", "CAJAS GENUS"]] as const).map(([id, label]) => {
-            const alert = id === "cajas" && cajasCritical;
+            const alert = (id === "cajas" && cajasCritical) || (id === "insumos" && insumosAlerts > 0);
             return (
               <button key={id} role="tab" aria-selected={tab === id} type="button" data-testid={`billing-tab-${id}`} data-alert={alert ? "true" : undefined} onClick={() => setTab(id)} className={`min-h-11 rounded-lg border px-4 text-sm font-medium ${alert ? "cajas-tab-alert" : tab === id ? "border-[var(--os-teal)] bg-[var(--os-teal)]/15" : "border-[var(--os-border)]"}`}>
                 {alert ? <AlertTriangle className="mr-1.5 inline size-4 align-[-2px]" aria-hidden /> : null}
                 {label}
-                {alert ? <span className="ml-1.5 rounded bg-white/25 px-1.5 text-xs" data-testid="cajas-tab-stock">{cajas.summary?.stock ?? 0} disp.</span> : null}
+                {alert && id === "cajas" ? <span className="ml-1.5 rounded bg-white/25 px-1.5 text-xs" data-testid="cajas-tab-stock">{cajas.summary?.stock ?? 0} disp.</span> : null}
+                {alert && id === "insumos" ? <span className="ml-1.5 rounded bg-white/25 px-1.5 text-xs" data-testid="insumos-tab-alertas" title="Insumos que requieren reposición">{insumosAlerts} a reponer</span> : null}
               </button>
             );
           })}

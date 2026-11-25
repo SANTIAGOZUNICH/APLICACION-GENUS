@@ -2387,6 +2387,12 @@ export const insumoItems = pgTable(
     name: text("name").notNull(),
     active: boolean("active").notNull().default(true),
     sortOrder: integer("sort_order").notNull().default(0),
+    /** Migración 0090 — unidad de medida, stock mínimo y estado/episodio de la alerta de stock bajo. */
+    unit: text("unit").notNull().default("unidades"),
+    minStock: integer("min_stock").notNull().default(0),
+    alertState: text("alert_state").notNull().default("NORMAL"),
+    alertEpisode: integer("alert_episode").notNull().default(0),
+    alertSince: timestamp("alert_since", { withTimezone: true }),
     createdBy: text("created_by"),
     updatedBy: text("updated_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -2482,4 +2488,66 @@ export const productionObservationSeen = pgTable(
     seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.userKey, table.scope] })]
+);
+
+// ───────────────────────── INSUMOS: control de stock (migración 0090) ─────────────────────────
+
+export const insumoStockConfig = pgTable("insumo_stock_config", {
+  id: text("id").primaryKey().default("main"),
+  /** Los retiros anteriores a este instante no descuentan solos: su historial se conserva intacto. */
+  trackingStartedAt: timestamp("tracking_started_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Libro de movimientos por insumo. Nunca se borra: se anula. STOCK_INICIAL = base absoluta; el resto con signo. */
+export const insumoStockMovements = pgTable(
+  "insumo_stock_movements",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    seq: bigint("seq", { mode: "number" }).generatedAlwaysAsIdentity().notNull(),
+    insumoId: text("insumo_id").notNull().references(() => insumoItems.id),
+    /** STOCK_INICIAL | INGRESO | EGRESO_RETIRO | AJUSTE_RETIRO | AJUSTE_MANUAL */
+    kind: text("kind").notNull(),
+    delta: integer("delta").notNull(),
+    occurredOn: date("occurred_on").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    status: text("status").notNull().default("ACTIVO"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    retiroId: uuid("retiro_id"),
+    note: text("note"),
+    detail: jsonb("detail").notNull().default(sql`'{}'::jsonb`),
+    createdBy: text("created_by").notNull(),
+    createdByName: text("created_by_name"),
+    createdBySector: text("created_by_sector").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidedBy: text("voided_by"),
+    voidReason: text("void_reason"),
+  },
+  (table) => [
+    uniqueIndex("insumo_stock_movements_idem_uidx").on(table.idempotencyKey),
+    uniqueIndex("insumo_stock_movements_seq_uidx").on(table.seq),
+    index("insumo_stock_movements_insumo_idx").on(table.insumoId, table.seq),
+    index("insumo_stock_movements_retiro_idx").on(table.retiroId),
+    index("insumo_stock_movements_day_idx").on(table.occurredOn),
+  ]
+);
+
+export const insumoStockAudit = pgTable(
+  "insumo_stock_audit",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    action: text("action").notNull(),
+    insumoId: text("insumo_id"),
+    targetId: text("target_id"),
+    beforeData: jsonb("before_data"),
+    afterData: jsonb("after_data"),
+    reason: text("reason"),
+    actorEmail: text("actor_email").notNull(),
+    actorName: text("actor_name"),
+    actorSector: text("actor_sector").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("insumo_stock_audit_insumo_idx").on(table.insumoId, table.createdAt), index("insumo_stock_audit_at_idx").on(table.createdAt)]
 );

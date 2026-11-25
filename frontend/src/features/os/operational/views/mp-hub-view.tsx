@@ -6,7 +6,8 @@
 
 import { readOnlyReason } from "@/features/os/operational/lib/readonly-reasons";
 import { MP_TRACE_FIELDS, ingresoTraceNote, originalIngresoByLot, stockTraceNote, type MpTraceField } from "@/features/os/operational/lib/mp-trazabilidad";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SyncStatus, listSignature, useAutoSync } from "../lib/use-auto-sync";
 import { ClipboardPaste, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
@@ -291,6 +292,8 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
     [email, sectorId]
   );
 
+  const ingresosSig = useRef("");
+  const markSyncedRef = useRef<() => void>(() => undefined);
   const reload = useCallback(async () => {
     const [s, i, c, p] = await Promise.all([
       fetchInventory<MpStockRow>("mp_stock"),
@@ -299,11 +302,13 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       fetchInventory<MpCompraRow>("mp_compras"),
     ]);
     setStock(s.data);
+    ingresosSig.current = listSignature(i.data);
     setIngresos(i.data);
     setControl(c.data);
     setCompras(p.data);
     setPersistence(s.persistence);
     setBanner(s.message ?? null);
+    markSyncedRef.current();
 
     // Probe schema 0005 via ledger (vacío / schemaPending)
     try {
@@ -320,6 +325,22 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       /* ignore */
     }
   }, [email, sectorId]);
+  /** Sincronización automática (SOLO LECTURA) de la planilla de Ingresos MP: actualiza el estado solo si cambió y nunca pisa datos con una respuesta vacía por falla. */
+  const syncIngresos = useCallback(async () => {
+    const res = await fetchInventory<MpIngresoRow>("mp_ingresos");
+    if (!res.persistence) throw new Error(res.message ?? "Sin conexión con la base de datos: se reintenta solo.");
+    const sig = listSignature(res.data);
+    if (sig !== ingresosSig.current) {
+      ingresosSig.current = sig;
+      setIngresos(res.data);
+    }
+    fotos.reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fotos.reload es estable
+  }, []);
+  const autoSync = useAutoSync({ enabled: tab === "Ingresos MP", run: syncIngresos });
+  useEffect(() => {
+    markSyncedRef.current = autoSync.markSynced;
+  }, [autoSync.markSynced]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1173,6 +1194,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
 
       <div className="mb-3 flex flex-wrap gap-2">
         {tab === "Ingresos MP" ? <IngresoConRemitoButtons module="MP" canWrite={canWrite} onChanged={() => { void reload(); fotos.reload(); }} /> : null}
+        {tab === "Ingresos MP" ? <SyncStatus lastSyncAt={autoSync.lastSyncAt} error={autoSync.error} deferred={autoSync.deferred} /> : null}
         {canWrite && tab !== "Control semanal" && tab !== "Control semanal total" && tab !== "COA'S" && tab !== "Semana de Elaboración" && (
           <>
             <Button type="button" variant={tab === "Ingresos MP" ? "secondary" : undefined} onClick={openNew}>

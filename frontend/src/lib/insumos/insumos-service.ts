@@ -14,6 +14,7 @@ import { getDb, isDatabaseConfigured, type GenusDb } from "@/lib/db/client";
 import { insumoItems, insumoResponsables, insumoRetiroEvents, insumoRetiroItems, insumoRetiros } from "@/lib/db/schema";
 import { OrdersForbiddenError, OrdersNotFoundError, OrdersUnavailableError, OrdersValidationError } from "@/lib/orders/types";
 import type { SectorId } from "@/types/operational/sector";
+import { refreshAlertAfterCatalogChange, syncRetiroStock } from "./stock-service";
 import { dayEndInstant, dayStartInstant, isDayKey } from "./insumos-reports";
 import {
   INSUMO_RESPONSABLE_SECTORS,
@@ -189,6 +190,7 @@ export async function updateInsumoItem(actor: InsumoActor, id: string, patch: { 
   try {
     const [row] = await db().update(insumoItems).set(set).where(eq(insumoItems.id, id)).returning();
     if (!row) throw new OrdersNotFoundError("No existe ese insumo.");
+    if (patch.active !== undefined) await refreshAlertAfterCatalogChange(id); // un insumo de baja no alerta; al reactivarlo vuelve a evaluarse
     return toItem(row);
   } catch (e) {
     if (isUniqueViolation(e)) throw new OrdersValidationError("Ya existe un insumo con ese nombre.");
@@ -311,6 +313,8 @@ export async function createRetiro(actor: InsumoActor, input: CreateRetiroInput)
     await tx.insert(insumoRetiroItems).values(lines.value.map((l) => ({ retiroId, insumoId: l.insumoId, insumoName: byId.get(l.insumoId)!.name, cantidad: l.cantidad })));
     const full = await loadRetiro(tx, retiroId);
     await addEvent(tx, actor, { retiroId, action: "CREADO", before: null, after: snapshot(full!) });
+    // Descuento de stock en la MISMA transacción (varios insumos = una sola transacción). Nunca bloquea el retiro por falta de stock.
+    await syncRetiroStock(tx, retiroId, actor);
     return retiroId;
   });
 
@@ -421,6 +425,7 @@ export async function correctRetiro(actor: InsumoActor, retiroId: string, input:
     if (!changed) throw new OrdersValidationError("No hay cambios para guardar.");
     await tx.update(insumoRetiros).set({ updatedAt: new Date() }).where(eq(insumoRetiros.id, retiroId));
     await addEvent(tx, actor, { retiroId, action: "CORREGIDO", motivo: motivo.value, before: snapshot(before), after: snapshot(after) });
+    await syncRetiroStock(tx, retiroId, actor); // ajusta solo la diferencia
     return (await loadRetiro(tx, retiroId))!;
   });
 }
@@ -438,6 +443,7 @@ export async function anularRetiro(actor: InsumoActor, retiroId: string, rawMoti
     await tx.update(insumoRetiros).set({ status: "ANULADO", anuladoAt: now, anuladoBy: actor.email, anuladoMotivo: motivo.value, updatedAt: now }).where(eq(insumoRetiros.id, retiroId));
     const after = (await loadRetiro(tx, retiroId))!;
     await addEvent(tx, actor, { retiroId, action: "ANULADO", motivo: motivo.value, before: snapshot(before), after: snapshot(after) });
+    await syncRetiroStock(tx, retiroId, actor); // revierte lo descontado
     return after;
   });
 }
