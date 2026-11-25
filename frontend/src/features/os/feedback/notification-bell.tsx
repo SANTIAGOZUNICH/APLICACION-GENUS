@@ -185,6 +185,9 @@ export function NotificationBell() {
     if (n.href?.startsWith("/cajas-genus")) {
       setOpen(false);
       navigateTo({ view: "control-facturacion", adminTab: "cajas" });
+    } else if (n.href?.startsWith("/insumos-stock")) {
+      setOpen(false);
+      navigateTo({ view: "control-facturacion", adminTab: "insumos" });
     } else if (n.href?.startsWith("/facturacion")) {
       setOpen(false);
       navigateTo({ view: "control-facturacion", workItemId: workItemId ?? undefined });
@@ -354,14 +357,14 @@ export function NotificationBell() {
                           {n.source === "server" ? " · servidor" : " · demo"}
                         </p>
                       </button>
-                      {workItemIdFromNotificationHref(n.href) || n.href?.startsWith("/facturacion") || n.href?.startsWith("/cajas-genus") ? (
+                      {workItemIdFromNotificationHref(n.href) || n.href?.startsWith("/facturacion") || n.href?.startsWith("/cajas-genus") || n.href?.startsWith("/insumos-stock") ? (
                         <button
                           type="button"
                           className="mt-1 mr-3 text-[11px] font-medium text-[var(--os-teal)] hover:underline"
                           onClick={() => void handleOpenWork(n)}
                           data-testid="bell-open-work"
                         >
-                          {n.href?.startsWith("/cajas-genus") ? "Abrir CAJAS GENUS" : n.href?.startsWith("/facturacion") ? "Abrir en facturación" : "Abrir trabajo"}
+                          {n.href?.startsWith("/cajas-genus") ? "Abrir CAJAS GENUS" : n.href?.startsWith("/insumos-stock") ? "Abrir INSUMOS" : n.href?.startsWith("/facturacion") ? "Abrir en facturación" : "Abrir trabajo"}
                         </button>
                       ) : null}
                       {tab === "activas" ? (

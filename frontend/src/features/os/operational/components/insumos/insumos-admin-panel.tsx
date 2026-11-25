@@ -17,8 +17,11 @@ import type { CatalogResponse, InsumoFilters, Retiro, RetiroEvent } from "@/lib/
 import { SECTOR_LABELS, type SectorId } from "@/types/operational/sector";
 import { HBarChart, SeriesChart } from "./insumos-charts";
 import { InsumosCatalogAdmin } from "./insumos-catalog-admin";
+import { InsumosStockPanel } from "./insumos-stock-panel";
+import { InsumosIngresosPanel, InsumosMovimientosPanel } from "./insumos-movimientos";
+import { notifyInsumosChanged, useInsumosStock } from "./insumos-stock-client";
 
-const POLL_MS = 30_000;
+const POLL_MS = 20_000;
 const field = "min-h-10 w-full rounded-lg border border-[var(--os-border)] bg-[var(--os-surface,transparent)] px-3 text-sm";
 const th = "px-2 py-2 text-left text-xs font-semibold uppercase text-[var(--os-text-muted)]";
 const td = "px-2 py-2 align-top text-sm";
@@ -29,11 +32,17 @@ const fmtWhen = (iso: string) => {
 };
 const sectorLabel = (s: string) => SECTOR_LABELS[s as SectorId] ?? s;
 
-type Tab = "reportes" | "catalogo";
+type Tab = "stock" | "ingresos" | "consumos" | "movimientos" | "catalogo";
 type Modal = { kind: "anular" | "corregir" | "auditoria"; retiro: Retiro } | null;
 
 export function InsumosAdminPanel() {
-  const [tab, setTab] = useState<Tab>("reportes");
+  const [tab, setTabRaw] = useState<Tab>("stock");
+  const [ingresoFor, setIngresoFor] = useState<string | null>(null);
+  const stock = useInsumosStock({ pollMs: POLL_MS });
+  const setTab = (t: Tab) => {
+    setIngresoFor(null);
+    setTabRaw(t);
+  };
   const [filters, setFilters] = useState<InsumoFilters>(() => presetRange("mes"));
   const [preset, setPreset] = useState<PeriodPreset | "todo" | null>("mes");
   const [gran, setGran] = useState<Granularity>("day");
@@ -119,6 +128,7 @@ export function InsumosAdminPanel() {
   const afterChange = async (msg: string) => {
     setModal(null);
     setNotice(msg);
+    notifyInsumosChanged(); // el stock cambió (descuento / reversa): se refresca sin recargar
     await load(true);
   };
 
@@ -129,17 +139,24 @@ export function InsumosAdminPanel() {
   return (
     <div className="space-y-4" data-testid="insumos-admin">
       <div role="tablist" className="flex flex-wrap gap-2" aria-label="Insumos">
-        {([["reportes", "Reportes e historial"], ["catalogo", "Catálogo y responsables"]] as const).map(([id, label]) => (
-          <button key={id} role="tab" type="button" aria-selected={tab === id} onClick={() => setTab(id)} data-testid={`insumos-tab-${id}`} className={`min-h-10 rounded-lg border px-4 text-sm font-medium ${tab === id ? "border-[var(--os-teal)] bg-[var(--os-teal)]/15" : "border-[var(--os-border)]"}`}>{label}</button>
+        {([["stock", "STOCK ACTUAL"], ["ingresos", "INGRESOS"], ["consumos", "CONSUMOS"], ["movimientos", "HISTORIAL DE MOVIMIENTOS"], ["catalogo", "CATÁLOGO Y RESPONSABLES"]] as const).map(([id, label]) => (
+          <button key={id} role="tab" type="button" aria-selected={tab === id} onClick={() => setTab(id)} data-testid={`insumos-tab-${id}`} className={`min-h-11 rounded-lg border px-4 text-sm font-medium ${tab === id ? "border-[var(--os-teal)] bg-[var(--os-teal)]/15" : "border-[var(--os-border)]"}`}>
+            {label}
+            {id === "stock" && (stock.summary?.alertCount ?? 0) > 0 ? <span className="ml-1.5 rounded bg-rose-600 px-1.5 text-xs font-bold text-white" data-testid="insumos-tab-stock-alertas">{stock.summary?.alertCount}</span> : null}
+          </button>
         ))}
       </div>
 
       {error ? <p role="alert" className="rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300" data-testid="insumos-admin-error">{error}</p> : null}
       {notice ? <p role="status" className="rounded-lg bg-emerald-500/10 px-3 py-2 text-sm" data-testid="insumos-admin-aviso">{notice}</p> : null}
 
+      {tab === "stock" ? <InsumosStockPanel summary={stock.summary} error={stock.error} onChanged={() => void stock.reload()} onIngresar={(id) => { setIngresoFor(id); setTabRaw("ingresos"); }} /> : null}
+      {tab === "ingresos" ? <InsumosIngresosPanel key={ingresoFor ?? "ingresos"} summary={stock.summary} preselect={ingresoFor} onChanged={() => { void stock.reload(); notifyInsumosChanged(); }} /> : null}
+      {tab === "movimientos" ? <InsumosMovimientosPanel summary={stock.summary} /> : null}
       {tab === "catalogo" ? (
-        catalog ? <InsumosCatalogAdmin items={items} responsables={allResponsables} onChanged={loadCatalog} /> : <p className="text-sm text-[var(--os-text-muted)]">Cargando…</p>
-      ) : (
+        catalog ? <InsumosCatalogAdmin items={items} responsables={allResponsables} onChanged={async () => { await loadCatalog(); notifyInsumosChanged(); }} /> : <p className="text-sm text-[var(--os-text-muted)]">Cargando…</p>
+      ) : null}
+      {tab === "consumos" ? (
         <>
           {/* Filtros */}
           <section className="space-y-3 rounded-xl border border-[var(--os-border)] p-3" aria-label="Filtros">
@@ -253,7 +270,7 @@ export function InsumosAdminPanel() {
             </div>
           </section>
         </>
-      )}
+      ) : null}
 
       {modal?.kind === "anular" ? <AnularDialog retiro={modal.retiro} onClose={() => setModal(null)} onDone={() => void afterChange("Retiro anulado. Ya no suma en los totales; queda en el historial.")} /> : null}
       {modal?.kind === "corregir" ? <CorregirDialog retiro={modal.retiro} catalog={catalog} onClose={() => setModal(null)} onDone={() => void afterChange("Retiro corregido. El cambio quedó auditado.")} /> : null}
