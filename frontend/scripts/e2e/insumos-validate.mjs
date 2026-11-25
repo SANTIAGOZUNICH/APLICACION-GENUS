@@ -22,7 +22,7 @@ const check = (name, ok, extra = "") => {
 const pool = new Pool({ connectionString: process.env.GENUS_E2E_DATABASE_URL });
 const q = async (text, params = []) => (await pool.query(text, params)).rows;
 await assertMarkedDatabase(q);
-const EMAILS = [E2E_USERS.envasado.email, E2E_USERS.codificado.email];
+const EMAILS = [E2E_USERS.envasado.email, E2E_USERS.codificado.email, E2E_USERS.deposito.email];
 const cleanup = async () => {
   await q("delete from insumo_stock_movements where created_by = any($1) or retiro_id in (select id from insumo_retiros where registrado_por_email = any($1)) or insumo_id = 'bolsas-e2e'", [[...EMAILS, E2E_USERS.administracion.email]]).catch(() => undefined);
   await q("delete from insumo_stock_audit where actor_email = any($1)", [[...EMAILS, E2E_USERS.administracion.email]]).catch(() => undefined);
@@ -123,6 +123,30 @@ try {
   check("el doble toque registró UN solo retiro", (await count(E2E_USERS.envasado.email)) === 1);
   const row = (await q("select r.sector, r.responsable_id, r.responsable_name, r.registrado_por_email, r.status, (select count(*)::int from insumo_retiro_items i where i.retiro_id = r.id) lineas from insumo_retiros r where registrado_por_email = $1", [E2E_USERS.envasado.email]))[0];
   check("persistido: sector, responsable (id estable), usuario que registra y 3 renglones", row?.sector === "ENVASADO_MASIVO" && row.responsable_id === "envasado-masivo-gabo" && row.responsable_name === "GABO" && row.status === "ACTIVO" && row.lineas === 3, JSON.stringify(row));
+
+  // ===== DEPÓSITO: misma pestaña INSUMOS, responsables BETO y LEO =====
+  const dep = await openAs(E2E_USERS.deposito, PHONE);
+  const d = dep.page;
+  await nav(d, "Insumos");
+  await T(d, "insumos-paso-1").waitFor({ timeout: 60_000 });
+  const dnames = await d.locator("[data-testid^=insumo-fila-] span").allTextContents();
+  check("Depósito: los mismos seis insumos del catálogo general", JSON.stringify(dnames) === JSON.stringify(["PAPEL HIGIENICO", "BOBINA DE PAPEL", "GUANTES", "CINTA", "FILM", "STRETCH FILM"]), dnames.join("|"));
+  await tap(d, "insumo-mas-guantes", 3);
+  await T(d, "insumos-siguiente").tap();
+  await T(d, "insumos-paso-2").waitFor();
+  const dresp = await d.locator("[data-testid^=responsable-]").allTextContents();
+  check("Depósito paso 2: solo BETO y LEO", JSON.stringify(dresp) === JSON.stringify(["BETO", "LEO"]), dresp.join("|"));
+  await T(d, "responsable-deposito-leo").tap();
+  await T(d, "insumos-siguiente").tap();
+  await T(d, "insumos-paso-3").waitFor();
+  check("Depósito paso 3: sector Depósito y responsable LEO", (await T(d, "confirm-sector").innerText()) === "Depósito" && (await T(d, "confirm-responsable").innerText()) === "LEO");
+  await T(d, "insumos-registrar").tap();
+  await T(d, "insumos-exito").waitFor({ timeout: 30_000 });
+  const drow = (await q("select sector, responsable_name, registrado_por_email, status from insumo_retiros where registrado_por_email = $1", [E2E_USERS.deposito.email]))[0];
+  check("Depósito: retiro persistido con sector DEPOSITO, responsable LEO y el usuario autenticado", drow?.sector === "DEPOSITO" && drow.responsable_name === "LEO" && drow.status === "ACTIVO", JSON.stringify(drow));
+  const dapi = await dep.page.request.get("/api/v1/insumos/retiros");
+  check("Depósito no consulta reportes ni administra (403)", dapi.status() === 403);
+  await dep.ctx.close();
   await p.screenshot({ path: `${OUT}/m-exito.png` });
   await env.ctx.close();
 
