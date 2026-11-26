@@ -2625,6 +2625,8 @@ export const depositoUbicacionItems = pgTable(
     unit: text("unit").notNull().default("u"),
     quantity: numeric("quantity", { precision: 16, scale: 3 }),
     ingresoId: text("ingreso_id"),
+    /** Identidad de un renglón LIBRE (sin vínculo ME); null en renglones anteriores (usan su id). Verificado ⇔ meMaterialId no nulo. */
+    lotKey: text("lot_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     updatedBy: text("updated_by"),
@@ -2661,4 +2663,30 @@ export const depositoUbicacionMovements = pgTable(
     index("deposito_ubicacion_movements_from_idx").on(table.fromLocationId, table.seq),
     index("deposito_ubicacion_movements_to_idx").on(table.toLocationId, table.seq),
   ]
+);
+
+/** Registro persistente por ingreso ME ubicado (0093): fuente de verdad de «este ingreso ya fue ubicado X en Y» (idempotencia por ingresoId). */
+export const depositoIngresoUbicacion = pgTable(
+  "deposito_ingreso_ubicacion",
+  {
+    ingresoId: text("ingreso_id").primaryKey(),
+    locationId: text("location_id").notNull().references(() => depositoUbicaciones.id),
+    locationCode: text("location_code").notNull(),
+    /** UBICADO | RETIRADO */
+    status: text("status").notNull().default("UBICADO"),
+    appliedQuantity: numeric("applied_quantity", { precision: 16, scale: 3 }).notNull().default("0"),
+    rev: integer("rev").notNull().default(1),
+    clientKey: text("client_key").notNull(),
+    clientName: text("client_name").notNull(),
+    materialName: text("material_name").notNull(),
+    codigo: text("codigo"),
+    meMaterialId: text("me_material_id"),
+    lotKey: text("lot_key"),
+    unit: text("unit").notNull().default("u"),
+    movementId: uuid("movement_id"),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("deposito_ingreso_ubicacion_loc_idx").on(table.locationId)]
 );

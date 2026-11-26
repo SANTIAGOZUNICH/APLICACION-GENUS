@@ -160,3 +160,45 @@ describe("superposición de posiciones", () => {
     expect(findOverlap({ id: "a", x: 10, y: 10, w: 50, h: 36 }, others)).toBeNull();
   });
 });
+
+describe("verificadas, identidad e ingresos", () => {
+  it("subtotales separados por condición y por unidad; nunca se suman juntas", async () => {
+    const { subtotals, fmtSubtotal } = await import("./rules");
+    const st = subtotals([
+      { quantity: 600, unit: "u", verified: true }, { quantity: 400, unit: "u", verified: true },
+      { quantity: 5000, unit: "u", verified: false }, { quantity: 2.5, unit: "kg", verified: false }, { quantity: null, unit: "u", verified: false },
+    ]);
+    expect(st.verified).toEqual({ rows: 2, byUnit: { u: 1000 } });
+    expect(st.unverified).toEqual({ rows: 3, byUnit: { u: 5000, kg: 2.5 } });
+    expect(fmtSubtotal({ rows: 1, byUnit: {} })).toBe("sin cantidad");
+    expect(fmtSubtotal({ rows: 0, byUnit: {} })).toBe("0");
+  });
+  it("verificado ⇔ vinculado a un material ME; un código sin vínculo queda libre", async () => {
+    const { isVerified } = await import("./rules");
+    expect(isVerified({ meMaterialId: "x" })).toBe(true);
+    expect(isVerified({ meMaterialId: null })).toBe(false);
+    expect(parseLineInput({ clientName: "TRC", material: "x", codigo: "FR-1", quantity: 5 })).toMatchObject({ ok: true, value: { codigo: null, meMaterialId: null } });
+    expect(parseLineInput({ clientName: "TRC", material: "x", quantity: 5, meMaterialId: "id", codigo: "A", mergeIntoItemId: "z" })).toMatchObject({ ok: false });
+    expect(parseLineInput({ clientName: "TRC", material: "x", quantity: 5, mergeIntoItemId: "z" })).toMatchObject({ ok: true, value: { mergeIntoItemId: "z" } });
+  });
+  it("identidad: ME = id + cliente; libre = su lote, no el texto", async () => {
+    const { identityOf, similarFreeItems } = await import("./rules");
+    const a = { id: "1", meMaterialId: "m1", clientKey: "trc", lotKey: null };
+    expect(identityOf(a)).toBe(identityOf({ ...a, id: "2" }));
+    expect(identityOf(a)).not.toBe(identityOf({ ...a, meMaterialId: "m2" }));
+    expect(identityOf({ id: "1", meMaterialId: null, clientKey: "trc", lotKey: null })).not.toBe(identityOf({ id: "2", meMaterialId: null, clientKey: "trc", lotKey: null }));
+    expect(identityOf({ id: "9", meMaterialId: null, clientKey: "trc", lotKey: "L" })).toBe(identityOf({ id: "7", meMaterialId: null, clientKey: "trc", lotKey: "L" }));
+    const items = [{ id: "1", clientKey: "trc", material: "Pomos 200 ml", meMaterialId: null }, { id: "2", clientKey: "trc", material: "Pomos 200 ml", meMaterialId: "m" }, { id: "3", clientKey: "otro", material: "Pomos 200 ml", meMaterialId: null }];
+    expect(similarFreeItems(items, { clientName: "TRC", material: "pomos" }).map((i) => i.id)).toEqual(["1"]);
+    expect(similarFreeItems(items, { clientName: "TRC", material: "xx" })).toEqual([]);
+  });
+  it("itemMatches e ingresoDelta", async () => {
+    const { itemMatches, ingresoDelta } = await import("./rules");
+    expect(itemMatches({ clientName: "TRC", material: "Tapas", codigo: "TP-1" }, "tp-1")).toBe(true);
+    expect(itemMatches({ clientName: "TRC", material: "Tapas", codigo: null }, "zzz")).toBe(false);
+    expect(ingresoDelta(1000, 800)).toEqual({ diffMilli: 200_000, kind: "AUMENTO" });
+    expect(ingresoDelta(0.3, 0.1)).toEqual({ diffMilli: 200, kind: "AUMENTO" });
+    expect(ingresoDelta(700, 900).kind).toBe("BAJA");
+    expect(ingresoDelta(900, 900).kind).toBe("IGUAL");
+  });
+});

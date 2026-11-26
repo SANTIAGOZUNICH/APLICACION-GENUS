@@ -202,7 +202,7 @@ export function UbicacionesMap({
                 key={l.id}
                 role="button"
                 tabIndex={0}
-                aria-label={`Ubicación ${l.code}, ${l.active ? (occupied ? `ocupada por ${client}` : "libre") : "inactiva"}${matchIds.has(l.id) ? ", coincide con la búsqueda" : ""}`}
+                aria-label={`Ubicación ${l.code}, ${l.active ? (occupied ? `ocupada por ${client}` : "libre") : "inactiva"}${l.items.some((i) => !i.verified) ? ", con cantidades sin verificar" : ""}${matchIds.has(l.id) ? ", coincide con la búsqueda" : ""}`}
                 aria-pressed={l.id === selectedId}
                 data-testid={`ubi-cell-${l.code}`}
                 data-state={state}
@@ -218,9 +218,15 @@ export function UbicacionesMap({
                   }
                 }}
               >
-                <title>{`${l.code}${occupied ? ` · ${l.items.map((i) => `${i.clientName}: ${i.material}`).join(" · ")}` : l.active ? " · Libre" : " · Inactiva"}`}</title>
+                <title>{`${l.code}${occupied ? ` · ${l.items.map((i) => `${i.clientName}: ${i.material}${i.verified ? "" : " (sin verificar)"}`).join(" · ")}` : l.active ? " · Libre" : " · Inactiva"}`}</title>
                 <rect x={l.x} y={l.y} width={l.w} height={l.h} rx={4} fill={st.fill} stroke={st.stroke} strokeWidth={state === "SELECCIONADA" ? 2.4 : state === "RESULTADO" ? 2 : 1.2} strokeDasharray={state === "INACTIVA" ? "3 2" : undefined} />
                 <text x={l.x + l.w / 2} y={l.y + (occupied ? l.h * 0.43 : l.h / 2)} textAnchor="middle" dominantBaseline="middle" fontSize={codeSize} fontWeight={800} fill={st.text}>{l.code}</text>
+                {l.active && l.items.some((i) => !i.verified) ? (
+                  <g data-testid={`ubi-sv-${l.code}`}>
+                    <circle cx={l.x + l.w - 4.5} cy={l.y + 4.5} r={3.8} fill="#f59e0b" stroke="#78350f" strokeWidth={0.7} />
+                    <text x={l.x + l.w - 4.5} y={l.y + 4.7} textAnchor="middle" dominantBaseline="middle" fontSize={5.6} fontWeight={900} fill="#451a03">!</text>
+                  </g>
+                ) : null}
                 {occupied ? <text x={l.x + l.w / 2} y={l.y + l.h * 0.76} textAnchor="middle" dominantBaseline="middle" fontSize={clientSize} fontWeight={600} fill={st.text}>{clip(client, maxChars)}</text> : null}
               </g>
             );

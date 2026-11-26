@@ -4,9 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { fetchHistory, fetchMaterials, newKey, opAgregar, opRetirar, opTrasladar } from "@/lib/ubicaciones/client";
-import { MOVEMENT_KIND_LABEL, fmtQty, parseQuantity } from "@/lib/ubicaciones/rules";
-import type { MaterialOption, MovementView, OpResultView, UbicacionView } from "@/lib/ubicaciones/types";
+import { fetchHistory, fetchIngresos, fetchMaterials, newKey, opAgregar, opIngresoAjustar, opIngresoRetirar, opIngresoMe, opRetirar, opTrasladar, opVincular } from "@/lib/ubicaciones/client";
+import { MOVEMENT_KIND_LABEL, fmtQty, parseQuantity, similarFreeItems } from "@/lib/ubicaciones/rules";
+import type { IngresoPendiente, IngresoReview, MaterialOption, MovementView, OpResultView, UbicacionItemView, UbicacionView } from "@/lib/ubicaciones/types";
 
 export const fieldCls = "mt-1 block min-h-11 w-full rounded-lg border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-base";
 const labelCls = "block text-sm font-medium";
@@ -18,8 +18,8 @@ type Props = { onClose: () => void; onDone: (r: OpResultView, message: string) =
 
 // ───────────────────────── Asignar / agregar ─────────────────────────
 
-type Row = { id: string; clientName: string; material: string; quantity: string; unit: string; codigo: string | null; meMaterialId: string | null; hint: string };
-const newRow = (clientName = ""): Row => ({ id: newKey(), clientName, material: "", quantity: "", unit: "u", codigo: null, meMaterialId: null, hint: "" });
+type Row = { id: string; clientName: string; material: string; quantity: string; unit: string; codigo: string | null; meMaterialId: string | null; hint: string; mergeIntoItemId: string | null };
+const newRow = (clientName = ""): Row => ({ id: newKey(), clientName, material: "", quantity: "", unit: "u", codigo: null, meMaterialId: null, hint: "", mergeIntoItemId: null });
 
 function MaterialField({ row, onChange }: { row: Row; onChange: (patch: Partial<Row>) => void }) {
   const [options, setOptions] = useState<MaterialOption[]>([]);
@@ -51,7 +51,7 @@ function MaterialField({ row, onChange }: { row: Row; onChange: (patch: Partial<
           placeholder="Ej.: frascos de shampoo 250 ml"
           onChange={(e) => {
             // Si se edita el texto, se desvincula del inventario ME (queda como material libre).
-            onChange({ material: e.target.value, codigo: null, meMaterialId: null, hint: "" });
+            onChange({ material: e.target.value, codigo: null, meMaterialId: null, hint: "", mergeIntoItemId: null });
             search(e.target.value);
           }}
           onFocus={() => options.length && setOpen(true)}
@@ -108,7 +108,7 @@ export function AddDialog({ location, clients, onClose, onDone }: Props & { loca
         key: key.current,
         locationId: location.id,
         expectedVersion: location.version,
-        lines: rows.map((r) => ({ clientName: r.clientName, material: r.material, quantity: r.quantity.trim() || null, unit: r.unit, codigo: r.codigo, meMaterialId: r.meMaterialId })),
+        lines: rows.map((r) => ({ clientName: r.clientName, material: r.material, quantity: r.quantity.trim() || null, unit: r.unit, codigo: r.codigo, meMaterialId: r.meMaterialId, mergeIntoItemId: r.meMaterialId ? null : r.mergeIntoItemId })),
         ...(empty && observations.trim() ? { observations } : {}),
       });
       onDone(res, empty ? `Ubicación ${location.code} asignada.` : `Material agregado a ${location.code}.`);
@@ -138,6 +138,20 @@ export function AddDialog({ location, clients, onClose, onDone }: Props & { loca
                 <input className={fieldCls} list="ubi-clients" value={r.clientName} onChange={(e) => upd(r.id, { clientName: e.target.value })} placeholder="Ej.: TRC" data-testid="ubi-add-cliente" autoComplete="off" />
               </label>
               <MaterialField row={r} onChange={(p) => upd(r.id, p)} />
+              {!r.meMaterialId && r.material.trim() ? (
+                <div className="rounded-lg bg-amber-500/10 p-2 text-xs" data-testid="ubi-add-sinverificar">
+                  <p><strong>Sin vincular al inventario ME:</strong> la cantidad queda como «Sin verificar» y no se controla contra el stock.</p>
+                  {similarFreeItems(location.items, r).length ? (
+                    <fieldset className="mt-2 space-y-1" data-testid="ubi-add-similar">
+                      <legend className="font-semibold">Ya hay un material parecido en esta ubicación:</legend>
+                      <label className="flex min-h-11 items-center gap-2 text-sm"><input type="radio" className="size-5" name={`m-${r.id}`} checked={!r.mergeIntoItemId} onChange={() => upd(r.id, { mergeIntoItemId: null })} data-testid="ubi-add-aparte" /> Crear aparte (recomendado)</label>
+                      {similarFreeItems(location.items, r).slice(0, 3).map((s) => (
+                        <label key={s.id} className="flex min-h-11 items-center gap-2 text-sm"><input type="radio" className="size-5" name={`m-${r.id}`} checked={r.mergeIntoItemId === s.id} onChange={() => upd(r.id, { mergeIntoItemId: s.id })} data-testid="ubi-add-sumar" /> Sumar a «{s.material}» ({fmtQty(s.quantity, s.unit)})</label>
+                      ))}
+                    </fieldset>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="grid grid-cols-[1fr_6rem] gap-2">
                 <label className={labelCls}>
                   Cantidad <span className="font-normal text-[var(--os-text-muted)]">(opcional)</span>
@@ -300,6 +314,9 @@ export function RemoveDialog({ location, itemId, onClose, onDone }: Props & { lo
 
 // ───────────────────────── Historial ─────────────────────────
 
+const ACTION_LABEL: Record<string, string> = { vincular: "Vinculado a material ME", ajuste_ingreso: "Ajuste por ingreso de ME modificado", ingreso_anulado: "Retiro por ingreso de ME anulado", ubicar: "Ingreso de ME ubicado" };
+const movementLabel = (m: MovementView) => ACTION_LABEL[String(m.detail.action ?? "")] ?? MOVEMENT_KIND_LABEL[m.kind] ?? m.kind;
+
 export function HistoryDialog({ location, onClose }: { location: UbicacionView | null; onClose: () => void }) {
   const [rows, setRows] = useState<MovementView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -326,13 +343,13 @@ export function HistoryDialog({ location, onClose }: { location: UbicacionView |
           {rows?.map((m) => (
             <li key={m.id} className="rounded-xl border border-[var(--os-border)] p-3 text-sm" data-testid="ubi-history-item" data-kind={m.kind}>
               <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                <strong>{MOVEMENT_KIND_LABEL[m.kind] ?? m.kind}{m.fromCode || m.toCode ? ` · ${m.fromCode ?? "—"} → ${m.toCode ?? "—"}` : ""}</strong>
+                <strong>{movementLabel(m)}{m.fromCode || m.toCode ? ` · ${m.fromCode ?? "—"} → ${m.toCode ?? "—"}` : ""}</strong>
                 <span className="text-xs text-[var(--os-text-muted)]">{fmtDate(m.createdAt)} · {m.actorName ?? m.actorEmail}</span>
               </div>
               {m.lines.length ? (
                 <ul className="mt-1 list-disc pl-5">
                   {m.lines.map((l, k) => (
-                    <li key={k}>{l.clientName} · {l.material}: <strong>{fmtQty(l.quantity, l.unit)}</strong>{l.remaining != null ? <span className="text-[var(--os-text-muted)]"> (queda {fmtQty(l.remaining, l.unit)})</span> : null}</li>
+                    <li key={k}>{l.clientName} · {l.material}: <strong>{fmtQty(l.quantity, l.unit)}</strong>{l.verified === false ? <span className="ml-1 rounded bg-amber-200 px-1 text-xs font-bold text-amber-950">Sin verificar</span> : null}{l.remaining != null ? <span className="text-[var(--os-text-muted)]"> (queda {fmtQty(l.remaining, l.unit)})</span> : null}</li>
                   ))}
                 </ul>
               ) : null}
@@ -341,6 +358,162 @@ export function HistoryDialog({ location, onClose }: { location: UbicacionView |
             </li>
           ))}
         </ol>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ───────────────────────── Vincular un renglón a un material ME ─────────────────────────
+
+export function LinkDialog({ location, item, onClose, onDone }: Props & { location: UbicacionView; item: UbicacionItemView }) {
+  const [q, setQ] = useState(item.material);
+  const [options, setOptions] = useState<MaterialOption[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const key = useRef(newKey());
+  useEffect(() => {
+    const t = setTimeout(() => {
+      fetchMaterials(q).then(setOptions).catch(() => setOptions([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q]);
+  async function link(m: MaterialOption) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      onDone(await opVincular({ key: key.current, locationId: location.id, itemId: item.id, meMaterialId: m.id, expectedVersion: location.version }), `«${item.material}» vinculado a ${m.codigo}: ahora está verificado.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo vincular.");
+      setBusy(false);
+    }
+  }
+  return (
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
+      <DialogContent className="max-h-[92vh] w-[min(36rem,calc(100vw-16px))] max-w-[min(36rem,calc(100vw-16px))] overflow-y-auto p-4 sm:p-6" data-testid="ubi-link-dialog">
+        <DialogHeader>
+          <DialogTitle>Vincular a material ME</DialogTitle>
+          <DialogDescription>{item.clientName} · {item.material}: {fmtQty(item.quantity, item.unit)}. Al vincularlo, la cantidad se controla contra el stock disponible del material elegido.</DialogDescription>
+        </DialogHeader>
+        <label className={labelCls}>
+          Buscar material del inventario
+          <input className={fieldCls} value={q} onChange={(e) => setQ(e.target.value)} data-testid="ubi-link-buscar" autoComplete="off" />
+        </label>
+        <ul className="max-h-64 space-y-1 overflow-auto" data-testid="ubi-link-opciones">
+          {options.map((m) => (
+            <li key={m.id}>
+              <button type="button" className="block min-h-11 w-full rounded-lg border border-[var(--os-border)] px-3 py-2 text-left text-sm hover:bg-[var(--os-bg)]" disabled={busy} onClick={() => void link(m)} data-testid="ubi-link-opcion">
+                <strong>{m.codigo}</strong> · {m.descripcion} <span className="text-[var(--os-text-muted)]">({m.cliente || "sin cliente"}) · stock {fmtQty(m.stock)} · ya ubicado verificado {fmtQty(m.distributed)}</span>
+              </button>
+            </li>
+          ))}
+          {!options.length ? <li className="text-sm text-[var(--os-text-muted)]">Sin resultados.</li> : null}
+        </ul>
+        {error ? <p role="alert" className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-sm" data-testid="ubi-link-error">{error}</p> : null}
+        <DialogFooter><Button type="button" variant="secondary" className={bigBtn} onClick={onClose} disabled={busy}>Cancelar</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ───────────────────────── Ingresos ME sin ubicar / a revisar ─────────────────────────
+
+export function IngresosPanel({ locations, refreshToken, onDone }: { locations: UbicacionView[]; refreshToken: number; onDone: (r: OpResultView, message: string) => void }) {
+  const [data, setData] = useState<{ unplaced: IngresoPendiente[]; review: IngresoReview[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [placing, setPlacing] = useState<IngresoPendiente | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const run = () => fetchIngresos().then((d) => alive && (setData(d), setError(null))).catch((e) => alive && setError(e instanceof Error ? e.message : "No se pudo cargar."));
+    run();
+    const t = setInterval(() => document.visibilityState === "visible" && run(), 15_000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [refreshToken]);
+  async function act(id: string, fn: () => Promise<OpResultView>, msg: string) {
+    if (busyId) return;
+    setBusyId(id);
+    try {
+      onDone(await fn(), msg);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo completar.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+  const n = (data?.unplaced.length ?? 0) + (data?.review.length ?? 0);
+  return (
+    <details className="rounded-xl border border-[var(--os-border)] p-3" open={n > 0} data-testid="ubi-ingresos">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 text-sm font-semibold">
+        <span>Ingresos ME sin ubicar</span>
+        <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-bold text-amber-950" data-testid="ubi-ingresos-count">{n}</span>
+      </summary>
+      {error ? <p role="alert" className="mt-2 text-xs text-rose-600" data-testid="ubi-ingresos-error">{error}</p> : null}
+      <div className="mt-2 space-y-2">
+        {data?.review.map((r) => (
+          <div key={r.ingresoId} className="rounded-lg border border-amber-500/60 bg-amber-500/10 p-2 text-sm" data-testid="ubi-ingreso-revisar" data-reason={r.reason}>
+            <p className="font-semibold">{r.reason === "ANULADO" ? "Ingreso anulado: revisar ubicación" : `Ingreso modificado: ${r.diff > 0 ? "+" : ""}${fmtQty(r.diff, r.unit)}`}</p>
+            <p className="text-xs text-[var(--os-text-muted)]">{r.ingresoNro ? `#${r.ingresoNro} · ` : ""}{r.cliente} · {r.material} · ubicado {fmtQty(r.applied, r.unit)} en {r.locationCode}</p>
+            <Button type="button" variant="secondary" className="mt-1 min-h-11 w-full" disabled={busyId === r.ingresoId} onClick={() => void act(r.ingresoId, () => (r.reason === "ANULADO" ? opIngresoRetirar({ ingresoId: r.ingresoId }) : opIngresoAjustar({ ingresoId: r.ingresoId })), r.reason === "ANULADO" ? `Cantidad retirada de ${r.locationCode}.` : `Diferencia ajustada en ${r.locationCode}.`)} data-testid={r.reason === "ANULADO" ? "ubi-ingreso-retirar" : "ubi-ingreso-ajustar"}>
+              {r.reason === "ANULADO" ? `Retirar ${fmtQty(r.applied, r.unit)} de ${r.locationCode}` : "Ajustar solo la diferencia"}
+            </Button>
+          </div>
+        ))}
+        {data?.unplaced.map((i) => (
+          <div key={i.ingresoId} className="flex items-center gap-2 rounded-lg border border-[var(--os-border)] p-2 text-sm" data-testid="ubi-ingreso-fila">
+            <div className="min-w-0 flex-1">
+              <p className="break-words font-medium">{i.material || i.codigo}</p>
+              <p className="text-xs text-[var(--os-text-muted)]">{i.fecha.split("-").reverse().join("/")} · {i.cliente || "sin cliente"} · <strong>{fmtQty(i.total, i.unit)}</strong></p>
+            </div>
+            <Button type="button" className="min-h-11" onClick={() => setPlacing(i)} data-testid="ubi-ingreso-ubicar">Ubicar</Button>
+          </div>
+        ))}
+        {data && !n ? <p className="text-xs text-[var(--os-text-muted)]" data-testid="ubi-ingresos-vacio">No hay ingresos pendientes de ubicar.</p> : null}
+        {data && data.unplaced.length >= 100 ? <p className="text-xs text-[var(--os-text-muted)]">Se muestran los 100 más recientes.</p> : null}
+      </div>
+      {placing ? <PlaceIngresoDialog ingreso={placing} locations={locations} onClose={() => setPlacing(null)} onDone={(r, m) => { setPlacing(null); onDone(r, m); }} /> : null}
+    </details>
+  );
+}
+
+function PlaceIngresoDialog({ ingreso, locations, onClose, onDone }: Props & { ingreso: IngresoPendiente; locations: UbicacionView[] }) {
+  const [toId, setToId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function submit() {
+    if (busy) return;
+    if (!toId) return setError("Elegí la ubicación.");
+    setBusy(true);
+    try {
+      const r = await opIngresoMe({ ingresoId: ingreso.ingresoId, locationId: toId });
+      onDone(r, r.replayed ? `Este ingreso ya estaba ubicado en ${r.placedIn ?? "el mapa"}: no se sumó de nuevo.` : `Ingreso ubicado en ${r.placedIn ?? "el mapa"}.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo ubicar.");
+      setBusy(false);
+    }
+  }
+  return (
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
+      <DialogContent className="w-[min(30rem,calc(100vw-16px))] max-w-[min(30rem,calc(100vw-16px))] p-4 sm:p-6" data-testid="ubi-place-dialog">
+        <DialogHeader>
+          <DialogTitle>Ubicar ingreso</DialogTitle>
+          <DialogDescription>{ingreso.cliente} · {ingreso.material}: {fmtQty(ingreso.total, ingreso.unit)}. Se suma una sola vez, aunque toques dos veces o reintentes.</DialogDescription>
+        </DialogHeader>
+        <label className={labelCls}>
+          Ubicación
+          <select className={fieldCls} value={toId} onChange={(e) => setToId(e.target.value)} data-testid="ubi-place-destino">
+            <option value="">Elegí…</option>
+            {locations.filter((l) => l.active).map((l) => <option key={l.id} value={l.id}>{l.code} · {l.items.length ? "Ocupada" : "Libre"}</option>)}
+          </select>
+        </label>
+        {error ? <p role="alert" className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-sm" data-testid="ubi-place-error">{error}</p> : null}
+        <DialogFooter>
+          <Button type="button" variant="secondary" className={bigBtn} onClick={onClose} disabled={busy}>Cancelar</Button>
+          <Button type="button" className={bigBtn} onClick={() => void submit()} disabled={busy} data-testid="ubi-place-confirmar">{busy ? "Ubicando…" : "Ubicar"}</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

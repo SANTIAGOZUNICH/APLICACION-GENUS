@@ -13,7 +13,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
-import { depositoMapaConfig, depositoMapaShapes, depositoUbicacionItems, depositoUbicacionMovements, depositoUbicaciones, invMeMaterials } from "@/lib/db/schema";
+import { depositoIngresoUbicacion, depositoMapaConfig, depositoMapaShapes, depositoUbicacionItems, depositoUbicacionMovements, depositoUbicaciones, invMeMaterials } from "@/lib/db/schema";
 import { loadLedgerInputs, stockOf } from "@/lib/inventory/me-planilla-db";
 import { OrdersForbiddenError, OrdersNotFoundError, OrdersUnavailableError, OrdersValidationError } from "@/lib/orders/types";
 import type { MeMaterial } from "@/lib/inventory/types";
@@ -30,6 +30,8 @@ import {
   cleanLabel,
   computeIndicators,
   findOverlap,
+  identityOf,
+  ingresoDelta,
   fromMilli,
   mergeQuantity,
   normalizeMaterialCode,
@@ -105,7 +107,7 @@ function toView(l: LocRow, items: ItemRow[]): UbicacionView {
     items: items
       .filter((i) => i.locationId === l.id)
       .sort((a, b) => a.clientName.localeCompare(b.clientName) || a.materialName.localeCompare(b.materialName))
-      .map((i) => ({ id: i.id, clientKey: i.clientKey, clientName: i.clientName, materialKey: i.materialKey, material: i.materialName, codigo: i.codigo, meMaterialId: i.meMaterialId, unit: i.unit, quantity: num(i.quantity) })),
+      .map((i) => ({ id: i.id, clientKey: i.clientKey, clientName: i.clientName, materialKey: i.materialKey, material: i.materialName, codigo: i.codigo, meMaterialId: i.meMaterialId, unit: i.unit, quantity: num(i.quantity), verified: Boolean(i.meMaterialId) })),
   };
 }
 
@@ -193,7 +195,7 @@ export async function listMaterials(actor: UbActor, q?: string): Promise<Materia
   const d = db();
   const ledger = await loadLedgerInputs(d);
   const needle = normalizeText(q ?? "");
-  const rows = await d.select({ codigo: depositoUbicacionItems.codigo, quantity: depositoUbicacionItems.quantity }).from(depositoUbicacionItems).where(sql`${depositoUbicacionItems.codigo} is not null`);
+  const rows = await d.select({ codigo: depositoUbicacionItems.codigo, quantity: depositoUbicacionItems.quantity }).from(depositoUbicacionItems).where(sql`${depositoUbicacionItems.codigo} is not null and ${depositoUbicacionItems.meMaterialId} is not null`);
   const dist = new Map<string, number>();
   for (const r of rows) dist.set(r.codigo as string, (dist.get(r.codigo as string) ?? 0) + toMilli(Number(r.quantity ?? 0)));
   const seen = new Set<string>();
@@ -215,9 +217,10 @@ async function lockKeys(tx: AnyTx, keys: Iterable<string>): Promise<void> {
   for (const k of [...new Set(keys)].sort()) await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${k}))`);
 }
 /** Primero las posiciones (orden estable), después los códigos de material, después la configuración: orden global fijo ⇒ sin interbloqueos. */
-async function lockAll(tx: AnyTx, o: { locations?: string[]; codes?: string[]; config?: boolean }): Promise<void> {
+async function lockAll(tx: AnyTx, o: { locations?: string[]; codes?: string[]; ingresos?: string[]; config?: boolean }): Promise<void> {
   await lockKeys(tx, (o.locations ?? []).map((id) => `ubicaciones:loc:${id}`));
   await lockKeys(tx, (o.codes ?? []).map((c) => `ubicaciones:cap:${c}`));
+  await lockKeys(tx, (o.ingresos ?? []).map((id) => `ubicaciones:ingreso:${id}`));
   if (o.config) await lockKeys(tx, ["ubicaciones:config"]);
 }
 
@@ -285,15 +288,17 @@ const lineOf = (i: Pick<ItemRow, "clientName" | "clientKey" | "materialName" | "
   meMaterialId: i.meMaterialId,
   unit: i.unit,
   quantity,
+  verified: Boolean(i.meMaterialId),
   ...(remaining !== undefined ? { remaining } : {}),
 });
 
-export type OpResult = { replayed: boolean; movementId: string; locations: UbicacionView[] };
+export type OpResult = { replayed: boolean; movementId: string; locations: UbicacionView[]; /** Posición donde quedó (o ya estaba) el ingreso ubicado. */ placedIn?: string };
 const done = async (tx: AnyTx, replayed: boolean, movementId: string, ids: string[]): Promise<OpResult> => ({ replayed, movementId, locations: await viewsOf(tx, ids) });
 
 /** Tope por stock: cada material vinculado a ME no puede tener más cantidad distribuida que su stock disponible. Requiere el candado del código. */
 async function assertStockCap(tx: AnyTx, adds: Array<{ codigo: string | null; meMaterialId: string | null; quantity: number | null; material: string }>): Promise<void> {
-  const linked = adds.filter((a) => a.codigo && a.quantity != null);
+  // El tope solo cuenta cantidades VERIFICADAS (vinculadas a un material ME por id): el texto libre no respalda ni consume stock.
+  const linked = adds.filter((a) => a.codigo && a.meMaterialId && a.quantity != null);
   if (!linked.length) return;
   const mats = (await tx.select({ payload: invMeMaterials.payload }).from(invMeMaterials)) as Array<{ payload: MeMaterial }>;
   const ledger = await loadLedgerInputs(tx);
@@ -304,7 +309,7 @@ async function assertStockCap(tx: AnyTx, adds: Array<{ codigo: string | null; me
     if (a.meMaterialId && (!m || normalizeMaterialCode(m.codigo) !== a.codigo)) fail(`El material «${a.material}» no coincide con el inventario ME. Elegilo de nuevo de la lista.`);
   }
   for (const [codigo, addMilli] of byCode) {
-    const rows = (await tx.select({ quantity: depositoUbicacionItems.quantity }).from(depositoUbicacionItems).where(eq(depositoUbicacionItems.codigo, codigo))) as Array<{ quantity: string | null }>;
+    const rows = (await tx.select({ quantity: depositoUbicacionItems.quantity }).from(depositoUbicacionItems).where(sql`${depositoUbicacionItems.codigo} = ${codigo} and ${depositoUbicacionItems.meMaterialId} is not null`)) as Array<{ quantity: string | null }>;
     const elsewhere = rows.reduce((acc, r) => acc + toMilli(Number(r.quantity ?? 0)), 0);
     const label = linked.find((l) => l.codigo === codigo)!.material;
     const res = checkStockCap({ available: stockOf(codigo, ledger).stock, elsewhere: fromMilli(elsewhere), adding: fromMilli(addMilli), label });
@@ -325,32 +330,45 @@ function parseLines(raw: unknown): PreparedLine[] {
   return out;
 }
 
-/** Suma las líneas a la posición (mismo cliente + material = un solo renglón con la cantidad sumada). */
-async function upsertLines(tx: AnyTx, loc: LocRow, lines: PreparedLine[], actor: UbActor, ingresoId?: string): Promise<void> {
+/**
+ * Suma las líneas a la posición. IDENTIDAD, no texto: un material ME (id) se suma a SU renglón (mismo id + mismo cliente); un material libre crea SU
+ * renglón con lote propio y solo se incrementa eligiendo explícitamente ese renglón (`mergeIntoItemId`). Devuelve el renglón resultante de cada línea.
+ */
+async function upsertLines(tx: AnyTx, loc: LocRow, lines: PreparedLine[], actor: UbActor, ingresoId?: string): Promise<ItemRow[]> {
   const current = await itemsOf(tx, loc.id);
-  const slots = new Map(current.map((i) => [`${i.clientKey}|${i.materialKey}`, i]));
+  const out: ItemRow[] = [];
   for (const ln of lines) {
-    const slot = `${ln.clientKey}|${ln.materialKey}`;
-    const ex = slots.get(slot);
+    let ex: ItemRow | undefined;
+    if (ln.meMaterialId) ex = current.find((i) => i.meMaterialId === ln.meMaterialId && i.clientKey === ln.clientKey);
+    else if (ln.mergeIntoItemId) {
+      ex = current.find((i) => i.id === ln.mergeIntoItemId);
+      if (!ex || ex.meMaterialId) fail("El renglón al que querés sumar ya no está en la ubicación. Actualizá la pantalla.");
+      if (ex.clientKey !== ln.clientKey) fail("El renglón elegido es de otro cliente.");
+    }
     if (ex) {
       const q = mergeQuantity(num(ex.quantity), ln.quantity == null ? null : toMilli(ln.quantity));
-      await tx
+      const [upd] = await tx
         .update(depositoUbicacionItems)
-        .set({ quantity: q == null ? null : String(q), codigo: ex.codigo ?? ln.codigo, meMaterialId: ex.meMaterialId ?? ln.meMaterialId, updatedAt: new Date(), updatedBy: actor.email })
-        .where(eq(depositoUbicacionItems.id, ex.id));
-      slots.set(slot, { ...ex, quantity: q == null ? null : String(q) });
+        .set({ quantity: q == null ? null : String(q), updatedAt: new Date(), updatedBy: actor.email })
+        .where(eq(depositoUbicacionItems.id, ex.id))
+        .returning();
+      current.splice(current.indexOf(ex), 1, upd);
+      out.push(upd);
     } else {
+      const lotKey = ln.meMaterialId ? null : randomUUID();
       const [ins] = await tx
         .insert(depositoUbicacionItems)
-        .values({ locationId: loc.id, clientKey: ln.clientKey, clientName: ln.clientName, materialKey: ln.materialKey, materialName: ln.material, codigo: ln.codigo, meMaterialId: ln.meMaterialId, unit: ln.unit, quantity: ln.quantity == null ? null : String(ln.quantity), ingresoId: ingresoId ?? null, updatedBy: actor.email })
+        .values({ locationId: loc.id, clientKey: ln.clientKey, clientName: ln.clientName, materialKey: ln.meMaterialId ? `me:${ln.meMaterialId}` : `t:${lotKey}`, materialName: ln.material, codigo: ln.codigo, meMaterialId: ln.meMaterialId, lotKey, unit: ln.unit, quantity: ln.quantity == null ? null : String(ln.quantity), ingresoId: ingresoId ?? null, updatedBy: actor.email })
         .returning();
-      slots.set(slot, ins);
+      current.push(ins);
+      out.push(ins);
     }
   }
+  return out;
 }
 
 const linesOfPrepared = (lines: PreparedLine[]): MovementLine[] =>
-  lines.map((l) => ({ clientName: l.clientName, clientKey: l.clientKey, material: l.material, codigo: l.codigo, meMaterialId: l.meMaterialId, unit: l.unit, quantity: l.quantity }));
+  lines.map((l) => ({ clientName: l.clientName, clientKey: l.clientKey, material: l.material, codigo: l.codigo, meMaterialId: l.meMaterialId, unit: l.unit, quantity: l.quantity, verified: Boolean(l.meMaterialId) }));
 
 // ───────────────────────── Operaciones de contenido (solo Depósito) ─────────────────────────
 
@@ -455,7 +473,7 @@ export async function transferContent(actor: UbActor, input: { key: unknown; fro
     const plan = planMove(srcItems.map((i) => ({ id: i.id, quantity: num(i.quantity), material: i.materialName })), req);
     if (!plan.ok) fail(plan.message);
     const dst = await itemsOf(tx, to.id);
-    const slots = new Map(dst.map((i) => [`${i.clientKey}|${i.materialKey}`, i]));
+    const slots = new Map(dst.map((i) => [identityOf(i), i]));
     const lines: MovementLine[] = [];
     for (const p of plan.value) {
       const src = srcItems.find((i) => i.id === p.itemId)!;
@@ -463,16 +481,18 @@ export async function transferContent(actor: UbActor, input: { key: unknown; fro
       // Origen: primero se descuenta; después se suma al destino (todo en la misma transacción).
       if (p.whole) await tx.delete(depositoUbicacionItems).where(eq(depositoUbicacionItems.id, src.id));
       else await tx.update(depositoUbicacionItems).set({ quantity: String(fromMilli(p.remainMilli!)), updatedAt: new Date(), updatedBy: actor.email }).where(eq(depositoUbicacionItems.id, src.id));
-      const slot = `${src.clientKey}|${src.materialKey}`;
+      // El destino fusiona SOLO por identidad (mismo material ME + cliente, o el mismo lote libre): nunca por texto. La condición (verificado / sin verificar) viaja con el renglón.
+      const slot = identityOf(src);
       const ex = slots.get(slot);
       if (ex) {
         const q = mergeQuantity(num(ex.quantity), p.moveMilli);
         await tx.update(depositoUbicacionItems).set({ quantity: q == null ? null : String(q), updatedAt: new Date(), updatedBy: actor.email }).where(eq(depositoUbicacionItems.id, ex.id));
         slots.set(slot, { ...ex, quantity: q == null ? null : String(q) });
       } else {
+        const lotKey = src.meMaterialId ? null : (src.lotKey ?? src.id);
         const [ins] = await tx
           .insert(depositoUbicacionItems)
-          .values({ locationId: to.id, clientKey: src.clientKey, clientName: src.clientName, materialKey: src.materialKey, materialName: src.materialName, codigo: src.codigo, meMaterialId: src.meMaterialId, unit: src.unit, quantity: p.moveMilli == null ? null : String(fromMilli(p.moveMilli)), ingresoId: src.ingresoId, updatedBy: actor.email })
+          .values({ locationId: to.id, clientKey: src.clientKey, clientName: src.clientName, materialKey: src.meMaterialId ? `me:${src.meMaterialId}` : `t:${lotKey}`, materialName: src.materialName, codigo: src.codigo, meMaterialId: src.meMaterialId, lotKey, unit: src.unit, quantity: p.moveMilli == null ? null : String(fromMilli(p.moveMilli)), ingresoId: src.ingresoId, updatedBy: actor.email })
           .returning();
         slots.set(slot, ins);
       }
@@ -504,41 +524,264 @@ export async function releaseLocation(actor: UbActor, input: { key: unknown; loc
   });
 }
 
+// ───────────────────────── Vincular un renglón a un material ME ─────────────────────────
+
 /**
- * Ubicación física de un INGRESO de ME ya creado. Lee el ingreso de Postgres (la verdad), toma de ahí cliente / material / cantidad (el cliente
- * no manda cantidades) y suma a la posición. Idempotente por id de ingreso: repetirlo no suma dos veces. NO es atómico con el ingreso (el
- * inventario ME usa su propio mecanismo): si falla, el ingreso queda registrado igual y se puede ubicar después con «Agregar».
+ * Convierte un renglón SIN VERIFICAR (texto libre) en VERIFICADO vinculándolo a un material del inventario ME. Valida en backend el tope por stock
+ * (lo ya verificado + este renglón ≤ stock disponible), es transaccional e idempotente por clave, y queda en el historial.
+ */
+export async function linkContent(actor: UbActor, input: { key: unknown; locationId: unknown; itemId: unknown; meMaterialId: unknown; expectedVersion?: unknown }): Promise<OpResult> {
+  assertWrite(actor);
+  const key = checkKey(input.key);
+  const locationId = String(input.locationId ?? "");
+  const itemId = String(input.itemId ?? "");
+  const meMaterialId = typeof input.meMaterialId === "string" ? input.meMaterialId.trim() : "";
+  if (!meMaterialId) fail("Elegí el material del inventario ME.");
+  const mats = (await db().select({ payload: invMeMaterials.payload }).from(invMeMaterials)) as Array<{ payload: MeMaterial }>;
+  const mat = mats.map((r) => r.payload).find((m) => m.id === meMaterialId && !m.archived);
+  if (!mat) throw new OrdersNotFoundError("El material del inventario ME no existe o está archivado.");
+  const codigo = normalizeMaterialCode(mat.codigo);
+  if (!codigo) fail("El material ME no tiene código.");
+  return db().transaction(async (tx: AnyTx) => {
+    await lockAll(tx, { locations: [locationId], codes: [codigo] });
+    const prev = await replayOf(tx, key);
+    if (prev) return done(tx, true, prev.id, [locationId]);
+    const loc = await getLocation(tx, locationId);
+    checkVersion(loc, input.expectedVersion);
+    const items = await itemsOf(tx, loc.id);
+    const row = items.find((i) => i.id === itemId);
+    if (!row) fail("El renglón ya no está en la ubicación. Actualizá la pantalla.");
+    if (row.meMaterialId) fail("Este renglón ya está vinculado al inventario ME.");
+    const qty = num(row.quantity);
+    if (qty == null) fail("Para vincular a un material ME el renglón necesita cantidad.");
+    await assertStockCap(tx, [{ codigo, meMaterialId, quantity: qty, material: row.materialName }]);
+    const twin = items.find((i) => i.meMaterialId === meMaterialId && i.clientKey === row.clientKey);
+    if (twin) {
+      await tx.update(depositoUbicacionItems).set({ quantity: String(mergeQuantity(num(twin.quantity), toMilli(qty))), updatedAt: new Date(), updatedBy: actor.email }).where(eq(depositoUbicacionItems.id, twin.id));
+      await tx.delete(depositoUbicacionItems).where(eq(depositoUbicacionItems.id, row.id));
+    } else {
+      await tx.update(depositoUbicacionItems).set({ meMaterialId, codigo, materialKey: `me:${meMaterialId}`, lotKey: null, updatedAt: new Date(), updatedBy: actor.email }).where(eq(depositoUbicacionItems.id, row.id));
+    }
+    await touch(tx, loc, actor);
+    const id = await insertMovement(tx, actor, {
+      kind: "AGREGADO",
+      key,
+      to: loc,
+      lines: [{ ...lineOf({ ...row, meMaterialId, codigo }, qty), verifiedBefore: false }],
+      detail: { action: "vincular", itemId, meMaterialId, codigo, merged: Boolean(twin) },
+    });
+    return done(tx, false, id, [loc.id]);
+  });
+}
+
+// ───────────────────────── Ingresos de ME: ubicar después, anulados y modificados ─────────────────────────
+
+type RegRow = typeof depositoIngresoUbicacion.$inferSelect;
+export type IngresoPendiente = { ingresoId: string; fecha: string; ingresoNro: string; codigo: string; material: string; cliente: string; total: number; unit: string };
+export type IngresoReview = { ingresoId: string; locationId: string; locationCode: string; reason: "ANULADO" | "MODIFICADO"; applied: number; current: number; diff: number; ingresoNro: string; material: string; cliente: string; unit: string };
+
+async function readIngreso(tx: AnyTx, id: string): Promise<Record<string, unknown> | null> {
+  const r = await tx.execute(sql`select payload from inv_me_ingresos where id = ${id}::uuid`);
+  return ((r.rows[0] as { payload?: Record<string, unknown> } | undefined)?.payload as Record<string, unknown> | undefined) ?? null;
+}
+const checkIngresoId = (raw: unknown): string => {
+  const id = String(raw ?? "");
+  if (!/^[0-9a-f-]{36}$/i.test(id)) fail("El ingreso no es válido.");
+  return id.toLowerCase();
+};
+
+/** Registro por ingreso (fuente de verdad). Una ubicación hecha antes de 0093 (solo movimiento INGRESO_ME) se registra acá, con la misma cantidad y lugar. */
+async function loadPlacement(tx: AnyTx, ingresoId: string): Promise<RegRow | null> {
+  const [reg] = await tx.select().from(depositoIngresoUbicacion).where(eq(depositoIngresoUbicacion.ingresoId, ingresoId)).limit(1);
+  if (reg) return reg as RegRow;
+  const [mv] = await tx.select().from(depositoUbicacionMovements).where(eq(depositoUbicacionMovements.idempotencyKey, `ingreso-me:${ingresoId}`)).limit(1);
+  const line = ((mv?.lines as MovementLine[] | undefined) ?? [])[0];
+  if (!mv || !mv.toLocationId || !line) return null;
+  const items = await itemsOf(tx, mv.toLocationId);
+  const item = items.find((i) => i.ingresoId === ingresoId) ?? items.find((i) => (line.meMaterialId ? i.meMaterialId === line.meMaterialId && i.clientKey === line.clientKey : i.clientKey === line.clientKey && i.materialName === line.material));
+  const [row] = await tx
+    .insert(depositoIngresoUbicacion)
+    .values({ ingresoId, locationId: mv.toLocationId, locationCode: mv.toCode ?? "", status: "UBICADO", appliedQuantity: String(line.quantity ?? 0), clientKey: line.clientKey, clientName: line.clientName, materialName: line.material, codigo: line.codigo, meMaterialId: line.meMaterialId, lotKey: line.meMaterialId ? null : (item ? (item.lotKey ?? item.id) : null), unit: line.unit, movementId: mv.id, createdBy: mv.actorEmail })
+    .onConflictDoNothing()
+    .returning();
+  if (row) return row as RegRow;
+  const [again] = await tx.select().from(depositoIngresoUbicacion).where(eq(depositoIngresoUbicacion.ingresoId, ingresoId)).limit(1);
+  return (again as RegRow | undefined) ?? null;
+}
+
+/** Dónde está hoy el renglón de este ingreso en su ubicación de registro (por identidad, nunca por texto; los registros anteriores caen al texto). */
+function rowOfRegistry(items: ItemRow[], reg: RegRow): ItemRow | undefined {
+  if (reg.meMaterialId) return items.find((i) => i.meMaterialId === reg.meMaterialId && i.clientKey === reg.clientKey);
+  if (reg.lotKey) return items.find((i) => !i.meMaterialId && (i.lotKey ?? i.id) === reg.lotKey);
+  return items.find((i) => !i.meMaterialId && i.clientKey === reg.clientKey && i.materialName === reg.materialName);
+}
+
+async function peekPlacement(ingresoId: string): Promise<{ locationId: string; codigo: string | null } | null> {
+  const d = db();
+  const [reg] = await d.select().from(depositoIngresoUbicacion).where(eq(depositoIngresoUbicacion.ingresoId, ingresoId)).limit(1);
+  let locationId: string | null = reg?.locationId ?? null;
+  let codigo: string | null = reg?.codigo ?? null;
+  if (!locationId) {
+    const [mv] = await d.select().from(depositoUbicacionMovements).where(eq(depositoUbicacionMovements.idempotencyKey, `ingreso-me:${ingresoId}`)).limit(1);
+    locationId = mv?.toLocationId ?? null;
+    codigo = ((mv?.lines as MovementLine[] | undefined) ?? [])[0]?.codigo ?? null;
+  }
+  return locationId ? { locationId, codigo } : null;
+}
+
+const withPlaced = (r: OpResult, code: string): OpResult => ({ ...r, placedIn: code });
+
+/**
+ * Ubica un INGRESO de ME ya creado. Lee el ingreso de Postgres (cliente / material / cantidad: el cliente no manda cantidades) y suma el total a la
+ * posición UNA sola vez: el registro `deposito_ingreso_ubicacion` por ingresoId es la fuente de verdad. Reintentos, doble clic y pedidos concurrentes
+ * devuelven lo ya registrado (`replayed`) aunque se pida otra posición: mover después es un traslado normal, nunca una re-suma.
+ * NO es atómico con el ingreso (el inventario ME persiste por su propio mecanismo): si falla, el ingreso queda y se ubica después desde la lista
+ * «Ingresos ME sin ubicar» (o de nuevo desde el formulario).
  */
 export async function placeIngresoMe(actor: UbActor, input: { ingresoId: unknown; locationId: unknown; clientName?: unknown }): Promise<OpResult> {
   assertWrite(actor);
-  const ingresoId = String(input.ingresoId ?? "");
-  if (!/^[0-9a-f-]{36}$/i.test(ingresoId)) fail("El ingreso no es válido.");
-  const key = `ingreso-me:${ingresoId}`;
+  const ingresoId = checkIngresoId(input.ingresoId);
   const locationId = String(input.locationId ?? "");
-  const res = await db().execute(sql`select payload from inv_me_ingresos where id = ${ingresoId}::uuid`);
-  const ing = (res.rows[0] as { payload?: Record<string, unknown> } | undefined)?.payload;
-  if (!ing) throw new OrdersNotFoundError("El ingreso todavía no está registrado: guardalo primero.");
-  if (ing.anulado) fail("El ingreso está anulado: no se puede ubicar.");
-  const total = Number(ing.total ?? 0);
-  if (!(total > 0)) fail("El ingreso no tiene cantidad total: cargá BULTOS y CANTIDAD para ubicarlo.");
-  const codigo = normalizeMaterialCode(ing.codigo) || null;
-  const clientName = cleanLabel(ing.cliente) || cleanLabel(input.clientName);
-  const mats = codigo ? ((await db().select({ payload: invMeMaterials.payload }).from(invMeMaterials)) as Array<{ payload: MeMaterial }>).map((r) => r.payload).filter((m) => normalizeMaterialCode(m.codigo) === codigo) : [];
-  const mat = mats.find((m) => m.id === ing.materialId) ?? mats.find((m) => !m.archived) ?? mats[0];
-  const parsed = parseLineInput({ clientName, material: cleanLabel(ing.descripcionInsumo) || codigo || "Material de envase", quantity: total, unit: mat?.unidad || "u", codigo: mat ? codigo : null, meMaterialId: mat?.id ?? null });
-  if (!parsed.ok) fail(parsed.message);
-  const line = parsed.value;
+  const pre = await readIngreso(db(), ingresoId);
+  if (!pre) throw new OrdersNotFoundError("El ingreso todavía no está registrado: guardalo primero.");
+  const codigo0 = normalizeMaterialCode(pre.codigo) || null;
+  const mats = codigo0 ? ((await db().select({ payload: invMeMaterials.payload }).from(invMeMaterials)) as Array<{ payload: MeMaterial }>).map((r) => r.payload).filter((m) => normalizeMaterialCode(m.codigo) === codigo0) : [];
   return db().transaction(async (tx: AnyTx) => {
-    await lockAll(tx, { locations: [locationId], codes: line.codigo ? [line.codigo] : [] });
-    const prev = await replayOf(tx, key);
-    if (prev) return done(tx, true, prev.id, [prev.toLocationId ?? locationId]);
+    await lockAll(tx, { locations: [locationId], codes: codigo0 ? [codigo0] : [], ingresos: [ingresoId] });
+    const reg = await loadPlacement(tx, ingresoId);
+    if (reg) return withPlaced(await done(tx, true, reg.movementId ?? "", [reg.locationId]), reg.locationCode);
+    const ing = await readIngreso(tx, ingresoId);
+    if (!ing) throw new OrdersNotFoundError("El ingreso todavía no está registrado: guardalo primero.");
+    if (ing.anulado) fail("El ingreso está anulado: no se puede ubicar.");
+    const total = Number(ing.total ?? 0);
+    if (!(total > 0)) fail("El ingreso no tiene cantidad total: cargá BULTOS y CANTIDAD para ubicarlo.");
+    const clientName = cleanLabel(ing.cliente) || cleanLabel(input.clientName);
+    const mat = mats.find((m) => m.id === ing.materialId) ?? mats.find((m) => !m.archived) ?? mats[0];
+    const parsed = parseLineInput({ clientName, material: cleanLabel(ing.descripcionInsumo) || codigo0 || "Material de envase", quantity: total, unit: mat?.unidad || "u", codigo: mat ? codigo0 : null, meMaterialId: mat?.id ?? null });
+    if (!parsed.ok) fail(parsed.message);
+    const line = parsed.value;
     const loc = await getLocation(tx, locationId, { activeOnly: true });
     await assertStockCap(tx, [{ codigo: line.codigo, meMaterialId: line.meMaterialId, quantity: line.quantity, material: line.material }]);
-    await upsertLines(tx, loc, [line], actor, ingresoId);
+    const [row] = await upsertLines(tx, loc, [line], actor, ingresoId);
     await touch(tx, loc, actor);
-    const id = await insertMovement(tx, actor, { kind: "INGRESO_ME", key, to: loc, lines: linesOfPrepared([line]), detail: { ingresoId, ingresoNro: ing.ingresoNro ?? null } });
-    return done(tx, false, id, [loc.id]);
+    const id = await insertMovement(tx, actor, { kind: "INGRESO_ME", key: `ingreso-me:${ingresoId}`, to: loc, lines: linesOfPrepared([line]), detail: { ingresoId, ingresoNro: ing.ingresoNro ?? null, action: "ubicar" } });
+    await tx.insert(depositoIngresoUbicacion).values({ ingresoId, locationId: loc.id, locationCode: loc.code, status: "UBICADO", appliedQuantity: String(total), clientKey: line.clientKey, clientName: line.clientName, materialName: line.material, codigo: line.codigo, meMaterialId: line.meMaterialId, lotKey: line.meMaterialId ? null : (row!.lotKey ?? row!.id), unit: line.unit, movementId: id, createdBy: actor.email });
+    return withPlaced(await done(tx, false, id, [loc.id]), loc.code);
   });
+}
+
+/** Ingreso modificado después de ubicarlo: ajusta SOLO la diferencia contra lo aplicado (idempotente: sin diferencia no hace nada; nunca re-suma el total). */
+export async function adjustIngresoMe(actor: UbActor, input: { ingresoId: unknown }): Promise<OpResult> {
+  assertWrite(actor);
+  const ingresoId = checkIngresoId(input.ingresoId);
+  const peek = await peekPlacement(ingresoId);
+  if (!peek) throw new OrdersNotFoundError("Este ingreso todavía no fue ubicado: usá «Ubicar».");
+  const pre = await readIngreso(db(), ingresoId);
+  const codigo = normalizeMaterialCode(pre?.codigo) || peek.codigo;
+  return db().transaction(async (tx: AnyTx) => {
+    await lockAll(tx, { locations: [peek.locationId], codes: codigo ? [codigo] : [], ingresos: [ingresoId] });
+    const reg = await loadPlacement(tx, ingresoId);
+    if (!reg) throw new OrdersNotFoundError("Este ingreso todavía no fue ubicado: usá «Ubicar».");
+    if (reg.status === "RETIRADO") fail("La cantidad de este ingreso ya fue retirada del mapa.");
+    const ing = await readIngreso(tx, ingresoId);
+    if (!ing) throw new OrdersNotFoundError("El ingreso no existe.");
+    if (ing.anulado) fail("El ingreso está anulado: usá «Retirar cantidad» para sacarlo del mapa.");
+    const applied = Number(reg.appliedQuantity);
+    const total = Number(ing.total ?? 0);
+    const d = ingresoDelta(total, applied);
+    if (d.kind === "IGUAL") return withPlaced(await done(tx, true, reg.movementId ?? "", [reg.locationId]), reg.locationCode);
+    const loc = await getLocation(tx, reg.locationId, { activeOnly: d.kind === "AUMENTO" });
+    const items = await itemsOf(tx, loc.id);
+    const row = rowOfRegistry(items, reg);
+    const absMilli = Math.abs(d.diffMilli);
+    if (d.kind === "AUMENTO") {
+      await assertStockCap(tx, [{ codigo: reg.codigo, meMaterialId: reg.meMaterialId, quantity: fromMilli(absMilli), material: reg.materialName }]);
+      if (row) await tx.update(depositoUbicacionItems).set({ quantity: String(mergeQuantity(num(row.quantity), absMilli)), updatedAt: new Date(), updatedBy: actor.email }).where(eq(depositoUbicacionItems.id, row.id));
+      else {
+        const lotKey = reg.meMaterialId ? null : (reg.lotKey ?? randomUUID());
+        await tx.insert(depositoUbicacionItems).values({ locationId: loc.id, clientKey: reg.clientKey, clientName: reg.clientName, materialKey: reg.meMaterialId ? `me:${reg.meMaterialId}` : `t:${lotKey}`, materialName: reg.materialName, codigo: reg.codigo, meMaterialId: reg.meMaterialId, lotKey, unit: reg.unit, quantity: String(fromMilli(absMilli)), ingresoId, updatedBy: actor.email });
+      }
+    } else {
+      const have = row?.quantity == null ? 0 : toMilli(Number(row.quantity));
+      if (!row || have < absMilli) fail(`El ingreso bajó ${fmtQtyServer(fromMilli(absMilli))} pero en ${loc.code} no queda tanto de este material (hay ${fmtQtyServer(fromMilli(have))}). Traelo de vuelta o retiralo a mano y volvé a ajustar.`);
+      if (have === absMilli) await tx.delete(depositoUbicacionItems).where(eq(depositoUbicacionItems.id, row.id));
+      else await tx.update(depositoUbicacionItems).set({ quantity: String(fromMilli(have - absMilli)), updatedAt: new Date(), updatedBy: actor.email }).where(eq(depositoUbicacionItems.id, row.id));
+    }
+    await touch(tx, loc, actor);
+    const line: MovementLine = { clientName: reg.clientName, clientKey: reg.clientKey, material: reg.materialName, codigo: reg.codigo, meMaterialId: reg.meMaterialId, unit: reg.unit, quantity: fromMilli(absMilli), verified: Boolean(reg.meMaterialId) };
+    const id = await insertMovement(tx, actor, { kind: "INGRESO_ME", key: `ingreso-ajuste:${ingresoId}:${reg.rev}`, to: loc, lines: [line], detail: { action: "ajuste_ingreso", ingresoId, before: applied, after: total, direction: d.kind } });
+    await tx.update(depositoIngresoUbicacion).set({ appliedQuantity: String(total), rev: reg.rev + 1, updatedAt: new Date() }).where(eq(depositoIngresoUbicacion.ingresoId, ingresoId));
+    return withPlaced(await done(tx, false, id, [loc.id]), loc.code);
+  });
+}
+
+const fmtQtyServer = (n: number) => n.toLocaleString("es-AR", { maximumFractionDigits: 3 });
+
+/** Ingreso anulado después de ubicarlo: retira del mapa la cantidad registrada (queda en el historial; no se borra ningún registro). Idempotente. */
+export async function retireAnuladoIngreso(actor: UbActor, input: { ingresoId: unknown }): Promise<OpResult> {
+  assertWrite(actor);
+  const ingresoId = checkIngresoId(input.ingresoId);
+  const peek = await peekPlacement(ingresoId);
+  if (!peek) throw new OrdersNotFoundError("Este ingreso no fue ubicado en el mapa.");
+  return db().transaction(async (tx: AnyTx) => {
+    await lockAll(tx, { locations: [peek.locationId], ingresos: [ingresoId] });
+    const reg = await loadPlacement(tx, ingresoId);
+    if (!reg) throw new OrdersNotFoundError("Este ingreso no fue ubicado en el mapa.");
+    if (reg.status === "RETIRADO") return withPlaced(await done(tx, true, reg.movementId ?? "", [reg.locationId]), reg.locationCode);
+    const ing = await readIngreso(tx, ingresoId);
+    if (!ing?.anulado) fail("El ingreso no está anulado: no hay nada que retirar por esta vía.");
+    const loc = await getLocation(tx, reg.locationId);
+    const items = await itemsOf(tx, loc.id);
+    const row = rowOfRegistry(items, reg);
+    const applied = toMilli(Number(reg.appliedQuantity));
+    const have = row?.quantity == null ? 0 : toMilli(Number(row.quantity));
+    if (applied > 0 && (!row || have < applied)) fail(`En ${loc.code} no queda toda la cantidad de este ingreso (hay ${fmtQtyServer(fromMilli(have))} y hay que retirar ${fmtQtyServer(fromMilli(applied))}). Traela de vuelta o retirala a mano.`);
+    if (row && applied > 0) {
+      if (have === applied) await tx.delete(depositoUbicacionItems).where(eq(depositoUbicacionItems.id, row.id));
+      else await tx.update(depositoUbicacionItems).set({ quantity: String(fromMilli(have - applied)), updatedAt: new Date(), updatedBy: actor.email }).where(eq(depositoUbicacionItems.id, row.id));
+    }
+    await touch(tx, loc, actor);
+    const line: MovementLine = { clientName: reg.clientName, clientKey: reg.clientKey, material: reg.materialName, codigo: reg.codigo, meMaterialId: reg.meMaterialId, unit: reg.unit, quantity: fromMilli(applied), verified: Boolean(reg.meMaterialId) };
+    const id = await insertMovement(tx, actor, { kind: "RETIRO", key: `ingreso-retiro:${ingresoId}`, from: loc, lines: [line], detail: { action: "ingreso_anulado", ingresoId } });
+    await tx.update(depositoIngresoUbicacion).set({ status: "RETIRADO", appliedQuantity: "0", rev: reg.rev + 1, updatedAt: new Date() }).where(eq(depositoIngresoUbicacion.ingresoId, ingresoId));
+    return withPlaced(await done(tx, false, id, [loc.id]), loc.code);
+  });
+}
+
+/** Ingresos ME sin ubicar (no anulados, sin registro) y ubicados que hay que revisar (anulados o con cantidad modificada). */
+export async function listIngresos(actor: UbActor, q?: string): Promise<{ unplaced: IngresoPendiente[]; review: IngresoReview[] }> {
+  assertRead(actor);
+  const d = db();
+  const needle = (q ?? "").trim();
+  const un = await d.execute(sql`
+    select i.id::text as id, i.payload from inv_me_ingresos i
+    where coalesce(i.payload->>'anulado', 'false') <> 'true'
+      and jsonb_typeof(i.payload->'total') = 'number' and (i.payload->>'total')::numeric > 0
+      and not exists (select 1 from deposito_ingreso_ubicacion r where r.ingreso_id = i.id::text)
+      and not exists (select 1 from deposito_ubicacion_movements m where m.idempotency_key = 'ingreso-me:' || i.id::text)
+      and (${needle} = '' or i.payload::text ilike '%' || ${needle} || '%')
+    order by i.payload->>'fecha' desc nulls last, i.updated_at desc limit 100`);
+  const unplaced = (un.rows as Array<{ id: string; payload: Record<string, unknown> }>).map((r) => ({
+    ingresoId: r.id,
+    fecha: String(r.payload.fecha ?? ""),
+    ingresoNro: String(r.payload.ingresoNro ?? ""),
+    codigo: String(r.payload.codigo ?? ""),
+    material: String(r.payload.descripcionInsumo ?? r.payload.codigo ?? ""),
+    cliente: String(r.payload.cliente ?? ""),
+    total: Number(r.payload.total ?? 0),
+    unit: String(r.payload.unidad ?? "u"),
+  }));
+  const rv = await d.execute(sql`
+    select r.ingreso_id, r.location_id, r.location_code, r.applied_quantity, r.unit, r.material_name, r.client_name, i.payload
+    from deposito_ingreso_ubicacion r join inv_me_ingresos i on i.id::text = r.ingreso_id where r.status = 'UBICADO'`);
+  const review: IngresoReview[] = [];
+  for (const r of rv.rows as Array<{ ingreso_id: string; location_id: string; location_code: string; applied_quantity: string; unit: string; material_name: string; client_name: string; payload: Record<string, unknown> }>) {
+    const applied = Number(r.applied_quantity);
+    const current = Number(r.payload.total ?? 0);
+    const reason = r.payload.anulado ? "ANULADO" : toMilli(current) !== toMilli(applied) ? "MODIFICADO" : null;
+    if (reason) review.push({ ingresoId: r.ingreso_id, locationId: r.location_id, locationCode: r.location_code, reason, applied, current, diff: fromMilli(toMilli(current) - toMilli(applied)), ingresoNro: String(r.payload.ingresoNro ?? ""), material: r.material_name, cliente: r.client_name, unit: r.unit });
+  }
+  return { unplaced, review };
 }
 
 // ───────────────────────── Configuración del mapa (Depósito y Dirección) ─────────────────────────

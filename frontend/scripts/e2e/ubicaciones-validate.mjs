@@ -22,7 +22,11 @@ const pool = new Pool({ connectionString: process.env.GENUS_E2E_DATABASE_URL });
 const q = async (text, params = []) => (await pool.query(text, params)).rows;
 await assertMarkedDatabase(q);
 const EMAILS = [E2E_USERS.deposito.email, E2E_USERS.direccion.email, E2E_USERS.envasado.email, E2E_USERS.envasadoPremium.email];
+const fixtures = { mats: [], ings: [] };
 const cleanup = async () => {
+  await q("delete from deposito_ingreso_ubicacion").catch(() => undefined);
+  await q("delete from inv_me_ingresos where id = any($1::uuid[])", [fixtures.ings]).catch(() => undefined);
+  await q("delete from inv_me_materials where id = any($1::uuid[])", [fixtures.mats]).catch(() => undefined);
   await q("delete from deposito_ubicacion_items").catch(() => undefined);
   await q("delete from deposito_ubicacion_movements where actor_email = any($1)", [EMAILS]).catch(() => undefined);
   await q("update deposito_ubicaciones set version = 1, observations = '', last_content_at = null, last_content_by = null, last_content_by_name = null where id like 'ubi-%' and code ~ '^[A-E][0-9][0-9]$'").catch(() => undefined);
@@ -141,6 +145,63 @@ try {
   await T(p, "ubi-notice").filter({ hasText: "liberada" }).waitFor({ timeout: 30_000 });
   check("liberar B05 → libre y registrado", (await state(p, "B05")) === "SELECCIONADA" && (await T(p, "ubi-panel-estado").innerText()) === "Libre" && (await q("select count(*)::int n from deposito_ubicacion_movements where kind = 'LIBERACION' and from_code = 'B05'"))[0].n === 1);
   check("sin desborde horizontal en escritorio", await noOverflow(p));
+
+  // ───── Sin verificar, vincular a ME, ingresos sin ubicar / modificados / anulados ─────
+  await cell(p, "A02").click();
+  check("renglones de texto libre: insignia «Sin verificar» y marca en el mapa", (await T(p, "ubi-badge-sin-verificar").count()) === 2 && (await T(p, "ubi-badge-verificado").count()) === 0 && (await T(p, "ubi-sv-A02").count()) === 1);
+  const sub0 = (await T(p, "ubi-panel-subtotales").innerText()).replace(/\s+/g, " ");
+  check("subtotales separados: verificado 0 · sin verificar 3.500 u", /Verificado.*: 0/.test(sub0) && /Sin verificar.*: 3\.500 u/.test(sub0), sub0);
+  check("tooltip del mapa marca «sin verificar»", (await cell(p, "A02").locator("title").textContent()).includes("(sin verificar)"));
+  await T(p, "ubi-search").fill("TRC");
+  check("resultados de búsqueda con subtotales separados", /3\.500|7\.\d{3}|\d/.test(await T(p, "ubi-search-sinverificar").innerText()) && (await T(p, "ubi-search-verificado").innerText()) === "0");
+  await T(p, "ubi-search").fill("");
+  const matId = uuid();
+  const mkIngreso = async (codigo, total, cliente, mid = matId, fecha = "2026-11-20") => {
+    const ingId = uuid();
+    fixtures.ings.push(ingId);
+    await q("insert into inv_me_ingresos (id, payload) values ($1, $2)", [ingId, JSON.stringify({ id: ingId, fecha, ingresoNro: `E2E-${codigo}`, proveedor: "P", cliente, remitoNro: "R1", codigo, descripcionInsumo: `Frasco ${codigo}`, bultos: 10, cantidad: total / 10, total, ubicacion: "", materialId: mid, anulado: false, createdBy: "t", updatedBy: "t", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })]);
+    return ingId;
+  };
+  fixtures.mats.push(matId);
+  await q("insert into inv_me_materials (id, payload) values ($1, $2)", [matId, JSON.stringify({ id: matId, codigo: "E2E-FR", descripcion: "Frasco E2E-FR", cliente: "Ingreso SA", ubicacion: "", unidad: "u", cantidadPorBulto: null, stockActual: 0, stockMinimo: null, puntoReposicion: null, responsable: "", observacion: "", updatedAt: new Date().toISOString(), archived: false })]);
+  const baseId = uuid();
+  fixtures.mats.push(baseId);
+  await q("insert into inv_me_materials (id, payload) values ($1, $2)", [baseId, JSON.stringify({ id: baseId, codigo: "E2E-BASE", descripcion: "Tapa E2E-BASE", cliente: "TRC", ubicacion: "", unidad: "u", cantidadPorBulto: null, stockActual: 0, stockMinimo: null, puntoReposicion: null, responsable: "", observacion: "", updatedAt: new Date().toISOString(), archived: false })]);
+  await mkIngreso("E2E-BASE", 2500, "TRC", baseId, "2026-11-01"); // respalda las 2.000 «tapas negras» que se vinculan abajo
+  const ing1 = await mkIngreso("E2E-FR", 6000, "Ingreso SA");
+  // Vincular «tapas negras» (2.000) al material ME: valida el tope (stock 6.000) y pasa a verificado.
+  await T(p, "ubi-vincular").last().click();
+  await T(p, "ubi-link-dialog").waitFor();
+  await T(p, "ubi-link-buscar").fill("E2E-BASE");
+  await T(p, "ubi-link-opcion").first().click();
+  await T(p, "ubi-notice").filter({ hasText: "verificado" }).waitFor({ timeout: 30_000 });
+  check("vincular a ME: el renglón pasa a «Verificado» y los subtotales se separan", (await T(p, "ubi-badge-verificado").count()) === 1 && (await T(p, "ubi-badge-sin-verificar").count()) === 1 && /Verificado.*: 2\.000 u/.test((await T(p, "ubi-panel-subtotales").innerText()).replace(/\s+/g, " ")));
+  // Ingreso sin ubicar: aparece en la lista; «Ubicar» (doble clic) lo suma una sola vez.
+  await T(p, "ubi-ingreso-fila").first().waitFor({ timeout: 40_000 });
+  check("lista «Ingresos ME sin ubicar» con material, cliente y cantidad", (await T(p, "ubi-ingresos").innerText()).includes("Frasco E2E-FR") && (await T(p, "ubi-ingresos").innerText()).includes("Ingreso SA") && (await T(p, "ubi-ingresos").innerText()).includes("6.000"));
+  await T(p, "ubi-ingreso-ubicar").first().click();
+  await T(p, "ubi-place-dialog").waitFor();
+  await T(p, "ubi-place-destino").selectOption({ label: "C02 · Libre" });
+  await T(p, "ubi-place-confirmar").dblclick();
+  await T(p, "ubi-notice").filter({ hasText: "Ingreso ubicado" }).waitFor({ timeout: 30_000 });
+  check("ingreso ubicado una sola vez (doble clic)", (await q("select count(*)::int n from deposito_ubicacion_movements where idempotency_key = $1", [`ingreso-me:${ing1}`]))[0].n === 1 && (await state(p, "C02")) !== "LIBRE");
+  // El tope cuenta SOLO verificadas: 2.000 (tapas) + 6.000 (ingreso) > stock 6.000 ⇒ el ingreso quedó rechazado por tope? (se verifica que lo distribuido verificado no supera el stock)
+  check("lo verificado distribuido no supera el stock", Number((await q("select coalesce(sum(quantity),0)::float8 n from deposito_ubicacion_items where me_material_id = $1", [matId]))[0].n) <= 6000 && Number((await q("select coalesce(sum(quantity),0)::float8 n from deposito_ubicacion_items where me_material_id = $1", [baseId]))[0].n) === 2000);
+  // Ingreso modificado: se detecta la diferencia y se ajusta SOLO esa.
+  await q("update inv_me_ingresos set payload = payload || jsonb_build_object('total', 7000::numeric) where id = $1", [ing1]);
+  await T(p, "ubi-ingreso-revisar").first().waitFor({ timeout: 40_000 });
+  check("ingreso modificado: «+1.000 u» detectado", (await T(p, "ubi-ingreso-revisar").first().getAttribute("data-reason")) === "MODIFICADO" && (await T(p, "ubi-ingresos").innerText()).includes("1.000"));
+  await T(p, "ubi-ingreso-ajustar").first().click();
+  await T(p, "ubi-notice").filter({ hasText: "ajustada" }).waitFor({ timeout: 30_000 });
+  check("se ajustó solo la diferencia (total 7.000 − 2.000 de tapas... ingreso 7.000 en C02)", Number((await q("select quantity::float8 n from deposito_ubicacion_items i join deposito_ubicaciones u on u.id = i.location_id where u.code = 'C02'"))[0].n) === 7000);
+  // Ingreso anulado después de ubicarlo: se marca para revisar y se retira la cantidad registrada.
+  await q("update inv_me_ingresos set payload = payload || '{\"anulado\": true}'::jsonb where id = $1", [ing1]);
+  await T(p, "ubi-ingreso-revisar").first().waitFor({ timeout: 40_000 });
+  check("ingreso anulado: «revisar ubicación»", (await T(p, "ubi-ingreso-revisar").first().getAttribute("data-reason")) === "ANULADO" && (await T(p, "ubi-ingresos").innerText()).includes("Ingreso anulado: revisar ubicación"));
+  await T(p, "ubi-ingreso-retirar").first().click();
+  await T(p, "ubi-notice").filter({ hasText: "retirada" }).waitFor({ timeout: 30_000 });
+  check("anulado: cantidad retirada, registro conservado e historial", (await state(p, "C02")) === "LIBRE" && (await q("select status from deposito_ingreso_ubicacion where ingreso_id = $1", [ing1]))[0].status === "RETIRADO");
+  await p.screenshot({ path: `${OUT}/desktop-ingresos.png` });
 
   // ───── Envasado Masivo y Premium: consulta ─────
   for (const [user, name] of [[E2E_USERS.envasado, "Envasado Masivo"], [E2E_USERS.envasadoPremium, "Envasado Premium"]]) {

@@ -8,7 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { assertMarkedDatabase, e2eEnvironmentProblem } from "../../scripts/e2e/e2e-safety.mjs";
-import { cellState, computeIndicators, searchLocations } from "@/lib/ubicaciones/rules";
+import { cellState, computeIndicators, searchLocations, subtotals } from "@/lib/ubicaciones/rules";
 
 const PROBLEM = e2eEnvironmentProblem() ?? (process.env.GENUS_E2E_DATABASE_URL ? null : "falta GENUS_E2E_DATABASE_URL");
 const RUN = Date.now().toString().slice(-6);
@@ -151,12 +151,18 @@ describe.skipIf(Boolean(PROBLEM))(`Ubicaciones en Postgres real${PROBLEM ? ` —
     const l = await newLoc("T1");
     const r1 = await s.addContent(deposito, { key: key(), locationId: l.id, lines: [line({ quantity: 100 }), line({ clientName: "B.L. Cosmetics S.A.", material: "tapas", quantity: 50 })] });
     expect(new Set(r1.locations[0]!.items.map((i) => i.clientName))).toEqual(new Set(["TRC", "B.L. Cosmetics S.A."]));
-    // Mismo cliente + mismo material (con otra escritura del cliente) = un solo renglón sumado.
-    const r2 = await s.addContent(deposito, { key: key(), locationId: l.id, lines: [line({ clientName: "trc", material: "FRASCOS DE SHAMPOO 250 ML", quantity: 25.5 })] });
+    // Mismo texto y cliente SIN elegir el renglón = renglón aparte (la identidad no es el texto).
+    const sep = await s.addContent(deposito, { key: key(), locationId: l.id, lines: [line({ clientName: "trc", material: "FRASCOS DE SHAMPOO 250 ML", quantity: 1 })] });
+    expect(sep.locations[0]!.items.filter((i) => i.material.toLowerCase().startsWith("frascos"))).toHaveLength(2);
+    const extra = sep.locations[0]!.items.find((i) => i.material === "FRASCOS DE SHAMPOO 250 ML")!;
+    await s.removeContent(deposito, { key: key(), locationId: l.id, lines: [{ itemId: extra.id, quantity: null }] });
+    // Eligiendo EXPLÍCITAMENTE el renglón existente, se suma a ese.
+    const target = r1.locations[0]!.items.find((i) => i.material.startsWith("frascos"))!;
+    const r2 = await s.addContent(deposito, { key: key(), locationId: l.id, lines: [line({ clientName: "trc", material: "FRASCOS DE SHAMPOO 250 ML", quantity: 25.5, mergeIntoItemId: target.id })] });
     const fr = r2.locations[0]!.items.filter((i) => i.material.toLowerCase().startsWith("frascos"));
     expect(fr).toHaveLength(1);
     expect(fr[0]!.quantity).toBe(125.5);
-    expect((await s.listMovements(deposito, { locationId: l.id })).map((m) => m.kind)).toEqual(["AGREGADO", "ASIGNACION", "CONFIG"]);
+    expect((await s.listMovements(deposito, { locationId: l.id })).map((m) => m.kind)).toEqual(["AGREGADO", "RETIRO", "AGREGADO", "ASIGNACION", "CONFIG"]);
     const r3 = await s.removeContent(deposito, { key: key(), locationId: l.id, lines: [{ itemId: fr[0]!.id, quantity: 25.5 }] });
     expect(r3.locations[0]!.items.find((i) => i.id === fr[0]!.id)!.quantity).toBe(100);
     await expect(s.removeContent(deposito, { key: key(), locationId: l.id, lines: [{ itemId: fr[0]!.id, quantity: 100.001 }] })).rejects.toThrow(/No hay tanta cantidad/);
@@ -257,10 +263,16 @@ describe.skipIf(Boolean(PROBLEM))(`Ubicaciones en Postgres real${PROBLEM ? ` —
     // Los renglones pueden desaparecer/reaparecer (ids nuevos): lo único que se exige es no perder ni duplicar y que ninguno falle por interbloqueo.
     expect(res.filter((e) => e instanceof Error && /deadlock/i.test(e.message))).toHaveLength(0);
     expect(await total("frascos de shampoo 250 ml", [a.id, b.id])).toBe(1000);
-    // Asignaciones concurrentes de lo mismo a una misma posición: se suman, sin duplicar renglones.
+    // Asignaciones concurrentes: ninguna se pierde (renglones libres aparte, total exacto) y, si es un material ME, se suman a UN renglón.
     const c = await newLoc("T8");
     await Promise.all(Array.from({ length: 10 }, () => s.addContent(deposito, { key: key(), locationId: c.id, lines: [line({ quantity: 10 })] })));
-    expect((await s.getMap(deposito)).locations.find((l) => l.id === c.id)!.items).toMatchObject([{ quantity: 100 }]);
+    const cItems = (await s.getMap(deposito)).locations.find((l) => l.id === c.id)!.items;
+    expect(cItems).toHaveLength(10);
+    expect(cItems.reduce((a, i) => a + (i.quantity ?? 0), 0)).toBe(100);
+    const fxc = await meFixture(`IT-${RUN}-CC`, 1000);
+    const d = await newLoc("T8B");
+    await Promise.all(Array.from({ length: 10 }, () => s.addContent(deposito, { key: key(), locationId: d.id, lines: [line({ material: "Frasco ME", codigo: `IT-${RUN}-CC`, meMaterialId: fxc.matId, quantity: 10 })] })));
+    expect((await s.getMap(deposito)).locations.find((l) => l.id === d.id)!.items).toMatchObject([{ quantity: 100, verified: true }]);
   });
 
   it("tope por stock disponible con material ME vinculado; sin vínculo no se valida", async () => {
@@ -324,6 +336,185 @@ describe.skipIf(Boolean(PROBLEM))(`Ubicaciones en Postgres real${PROBLEM ? ` —
     expect(after.insumo_stock_movements).toEqual(before.insumo_stock_movements);
     expect(after.cajas_genus_movements).toEqual(before.cajas_genus_movements);
     expect((after.inv_me_ingresos as { n: number }).n).toBe((before.inv_me_ingresos as { n: number }).n + 1); // + el ingreso fixture de «anulado»
+  });
+
+  it("verificadas vs sin verificar: el tope solo cuenta verificadas, subtotales separados, el traslado conserva la condición y vincular valida el tope", async () => {
+    const s = await svc();
+    const code = `IT-${RUN}-VV`;
+    const fx = await meFixture(code, 1000);
+    const a = await newLoc("V1");
+    const b = await newLoc("V2");
+    const linked = (qty: number) => line({ material: `Frasco ${code}`, quantity: qty, codigo: code, meMaterialId: fx.matId });
+    const r = await s.addContent(deposito, { key: key(), locationId: a.id, lines: [linked(600), line({ material: "texto libre", quantity: 5000 }), line({ material: "otro libre", codigo: code, quantity: 70 })] });
+    const items = r.locations[0]!.items;
+    expect(items.map((i) => [i.material, i.verified]).sort()).toEqual([["Frasco " + code, true], ["otro libre", false], ["texto libre", false]]);
+    expect(items.find((i) => i.material === "otro libre")!.codigo).toBeNull(); // un código sin vínculo no respalda nada
+    const st = subtotals(items);
+    expect(st.verified).toEqual({ rows: 1, byUnit: { u: 600 } });
+    expect(st.unverified).toEqual({ rows: 2, byUnit: { u: 5070 } });
+    // El tope solo cuenta verificadas: 5.070 sin verificar no consumen stock, pero 401 verificadas más sí lo superan.
+    await expect(s.addContent(deposito, { key: key(), locationId: b.id, lines: [linked(401)] })).rejects.toThrow(/stock disponible/);
+    await s.addContent(deposito, { key: key(), locationId: b.id, lines: [linked(400)] });
+    // Vincular un renglón sin verificar: valida el tope (no se cuela stock inexistente).
+    const libre = items.find((i) => i.material === "texto libre")!;
+    await expect(s.linkContent(deposito, { key: key(), locationId: a.id, itemId: libre.id, meMaterialId: fx.matId })).rejects.toThrow(/stock disponible/);
+    expect((await s.getMap(deposito)).locations.find((l) => l.id === a.id)!.items.find((i) => i.id === libre.id)!.verified).toBe(false);
+    const fx2 = await meFixture(`IT-${RUN}-V2`, 100);
+    const small = items.find((i) => i.material === "otro libre")!;
+    expect(small.quantity).toBe(70);
+    const lk = await s.linkContent(deposito, { key: key(), locationId: a.id, itemId: small.id, meMaterialId: fx2.matId });
+    const linkedRow = lk.locations[0]!.items.find((i) => i.id === small.id)!;
+    expect(linkedRow).toMatchObject({ verified: true, meMaterialId: fx2.matId, codigo: `IT-${RUN}-V2`, quantity: 70 });
+    const hist = await s.listMovements(deposito, { locationId: a.id });
+    expect(hist[0]).toMatchObject({ kind: "AGREGADO", detail: { action: "vincular", itemId: small.id } });
+    expect(hist[0]!.lines[0]).toMatchObject({ verified: true, verifiedBefore: false });
+    // Idempotente por clave y no se vincula dos veces.
+    const k = key();
+    const l2 = await s.linkContent(deposito, { key: k, locationId: a.id, itemId: libre.id, meMaterialId: fx2.matId }).catch((e) => e);
+    expect(l2).toBeInstanceOf(Error); // 5.000 > stock 100 − 70 ya vinculados
+    await expect(s.linkContent(deposito, { key: key(), locationId: a.id, itemId: small.id, meMaterialId: fx2.matId })).rejects.toThrow(/ya está vinculado/);
+    await expect(s.linkContent(masivo, { key: key(), locationId: a.id, itemId: libre.id, meMaterialId: fx2.matId })).rejects.toThrow(/Solo Depósito/);
+    // Traslado parcial: la condición viaja con el renglón, en origen y destino; subtotales separados en el destino.
+    const c = await newLoc("V3");
+    const cur = (await s.getMap(deposito)).locations.find((l) => l.id === a.id)!;
+    const frasco = cur.items.find((i) => i.material === `Frasco ${code}`)!;
+    const libre2 = cur.items.find((i) => i.material === "texto libre")!;
+    const t = await s.transferContent(deposito, { key: key(), fromId: a.id, toId: c.id, lines: [{ itemId: frasco.id, quantity: 100 }, { itemId: libre2.id, quantity: 1000 }] });
+    const src = t.locations.find((l) => l.id === a.id)!;
+    const dst = t.locations.find((l) => l.id === c.id)!;
+    expect(src.items.find((i) => i.id === frasco.id)).toMatchObject({ quantity: 500, verified: true });
+    expect(src.items.find((i) => i.id === libre2.id)).toMatchObject({ quantity: 4000, verified: false });
+    expect(dst.items.map((i) => [i.material, i.quantity, i.verified]).sort()).toEqual([["Frasco " + code, 100, true], ["texto libre", 1000, false]]);
+    expect(subtotals(dst.items)).toMatchObject({ verified: { byUnit: { u: 100 } }, unverified: { byUnit: { u: 1000 } } });
+    expect((await s.listMovements(deposito, { locationId: c.id }))[0]!.lines.map((l) => [l.verified]).sort()).toEqual([[false], [true]]);
+    // Lo verificado distribuido nunca superó el stock (1.000 del código).
+    const dist = await q("select coalesce(sum(quantity),0)::float8 n from deposito_ubicacion_items where codigo = $1 and me_material_id is not null", [code]);
+    expect(dist[0]!.n).toBe(1000);
+    expect((await s.listMaterials(deposito, code)).find((m) => m.codigo === code)!.distributed).toBe(1000);
+  });
+
+  it("identidad, no texto: dos materiales ME distintos con la misma descripción y cliente quedan separados; el mismo id se suma; los libres no se fusionan por texto; el traslado no mezcla identidades", async () => {
+    const s = await svc();
+    const f1 = await meFixture(`IT-${RUN}-I1`, 5000);
+    const f2 = await meFixture(`IT-${RUN}-I2`, 5000);
+    const a = await newLoc("I1");
+    const b = await newLoc("I2");
+    const me = (fx: { matId: string }, code: string, qty: number, desc = "Frasco 250 ml") => line({ material: desc, quantity: qty, codigo: code, meMaterialId: fx.matId });
+    const r = await s.addContent(deposito, { key: key(), locationId: a.id, lines: [me(f1, `IT-${RUN}-I1`, 100), me(f2, `IT-${RUN}-I2`, 200)] });
+    expect(r.locations[0]!.items).toHaveLength(2); // misma descripción y cliente, ids distintos
+    const r2 = await s.addContent(deposito, { key: key(), locationId: a.id, lines: [me(f1, `IT-${RUN}-I1`, 50)] });
+    expect(r2.locations[0]!.items).toHaveLength(2);
+    expect(r2.locations[0]!.items.find((i) => i.meMaterialId === f1.matId)!.quantity).toBe(150);
+    // Libres: dos líneas iguales = dos renglones; solo se suma eligiendo el renglón.
+    const l1 = await s.addContent(deposito, { key: key(), locationId: a.id, lines: [line({ material: "pomos", quantity: 10 }), line({ material: "pomos", quantity: 20 })] });
+    const pomos = l1.locations[0]!.items.filter((i) => i.material === "pomos");
+    expect(pomos.map((i) => i.quantity).sort()).toEqual([10, 20]);
+    const l2 = await s.addContent(deposito, { key: key(), locationId: a.id, lines: [line({ material: "pomos", quantity: 5, mergeIntoItemId: pomos[0]!.id })] });
+    expect(l2.locations[0]!.items.filter((i) => i.material === "pomos").map((i) => i.quantity).sort((x, y) => (x ?? 0) - (y ?? 0))).toEqual(pomos[0]!.quantity === 10 ? [15, 20] : [10, 25]);
+    // Elegir un renglón ME para «sumar», o uno de otro cliente, se rechaza.
+    const meRow = l2.locations[0]!.items.find((i) => i.meMaterialId === f1.matId)!;
+    await expect(s.addContent(deposito, { key: key(), locationId: a.id, lines: [line({ material: "x", quantity: 1, mergeIntoItemId: meRow.id })] })).rejects.toThrow(/ya no está|no está en la ubicación/);
+    await expect(s.addContent(deposito, { key: key(), locationId: a.id, lines: [line({ clientName: "Otro Cliente", material: "pomos", quantity: 1, mergeIntoItemId: pomos[0]!.id })] })).rejects.toThrow(/otro cliente/);
+    // Traslado parcial: se fusiona en destino SOLO por identidad.
+    const cur = l2.locations[0]!.items;
+    const [p1, p2] = cur.filter((i) => i.material === "pomos");
+    const f1row = cur.find((i) => i.meMaterialId === f1.matId)!;
+    const f2row = cur.find((i) => i.meMaterialId === f2.matId)!;
+    await s.transferContent(deposito, { key: key(), fromId: a.id, toId: b.id, lines: [{ itemId: f1row.id, quantity: 10 }, { itemId: f2row.id, quantity: 20 }, { itemId: p1!.id, quantity: 1 }, { itemId: p2!.id, quantity: 2 }] });
+    const t2 = await s.transferContent(deposito, { key: key(), fromId: a.id, toId: b.id, lines: [{ itemId: f1row.id, quantity: 5 }, { itemId: p1!.id, quantity: 1 }] });
+    const dst = t2.locations.find((l) => l.id === b.id)!;
+    expect(dst.items.filter((i) => i.meMaterialId)).toHaveLength(2); // no se mezclan f1 y f2
+    expect(dst.items.find((i) => i.meMaterialId === f1.matId)!.quantity).toBe(15); // mismo id: se suma
+    expect(dst.items.find((i) => i.meMaterialId === f2.matId)!.quantity).toBe(20);
+    const dp = dst.items.filter((i) => i.material === "pomos");
+    expect(dp).toHaveLength(2); // dos lotes libres distintos no se fusionan
+    expect(dp.map((i) => i.quantity).sort()).toEqual([2, 2]);
+    // Volver a mover el mismo lote libre suma al mismo renglón de destino (misma identidad).
+    const total = (await q("select coalesce(sum(quantity),0)::float8 n from deposito_ubicacion_items where location_id = any($1) and material_name = 'pomos'", [[a.id, b.id]]))[0]!.n;
+    expect(total).toBe(10 + 20 + 5);
+    // La búsqueda sigue siendo por texto y encuentra ambos renglones sin fusionarlos.
+    expect(searchLocations((await s.getMap(masivo)).locations, "pomos").map((l) => l.id).sort()).toEqual([a.id, b.id].sort());
+  });
+
+  it("ingreso ME cuya ubicación falló: se ubica después sin duplicar (doble clic, reintento, concurrencia, otra posición); anulados y modificados", async () => {
+    const s = await svc();
+    const code = `IT-${RUN}-IG`;
+    const fx = await meFixture(code, 800);
+    const a = await newLoc("G1");
+    const b = await newLoc("G2");
+    // Sin ubicar: aparece en la lista (con fecha, material, cliente y cantidad).
+    const pend = (await s.listIngresos(deposito)).unplaced.find((x) => x.ingresoId === fx.ingId)!;
+    expect(pend).toMatchObject({ fecha: "2026-11-20", cliente: "TRC", total: 800, codigo: code });
+    // Doble clic / concurrencia: una sola vez.
+    const rs = await Promise.all([a, a, b, a, b].map((l) => s.placeIngresoMe(deposito, { ingresoId: fx.ingId, locationId: l.id })));
+    expect(rs.filter((r) => !r.replayed)).toHaveLength(1);
+    const placedIn = rs.find((r) => !r.replayed)!.placedIn!;
+    expect(rs.every((r) => r.placedIn === placedIn)).toBe(true);
+    const sum = async () => Number((await q("select coalesce(sum(quantity),0)::float8 n from deposito_ubicacion_items where me_material_id = $1", [fx.matId]))[0]!.n);
+    expect(await sum()).toBe(800);
+    expect((await q("select count(*)::int n from deposito_ubicacion_movements where idempotency_key = $1", [`ingreso-me:${fx.ingId}`]))[0]!.n).toBe(1);
+    expect((await q("select count(*)::int n, max(applied_quantity)::float8 a from deposito_ingreso_ubicacion where ingreso_id = $1", [fx.ingId]))[0]).toEqual({ n: 1, a: 800 });
+    expect((await s.listIngresos(deposito)).unplaced.some((x) => x.ingresoId === fx.ingId)).toBe(false);
+    // Pedir otra posición después NO re-suma (mover es un traslado normal).
+    const again = await s.placeIngresoMe(deposito, { ingresoId: fx.ingId, locationId: placedIn === a.code ? b.id : a.id });
+    expect(again.replayed).toBe(true);
+    expect(await sum()).toBe(800);
+    // Registro previo a 0093 (solo movimiento): se re-registra con la misma cantidad y no suma otra vez.
+    await q("delete from deposito_ingreso_ubicacion where ingreso_id = $1", [fx.ingId]);
+    expect((await s.listIngresos(deposito)).unplaced.some((x) => x.ingresoId === fx.ingId)).toBe(false);
+    expect((await s.placeIngresoMe(deposito, { ingresoId: fx.ingId, locationId: b.id })).replayed).toBe(true);
+    expect(await sum()).toBe(800);
+    expect((await q("select applied_quantity::float8 a from deposito_ingreso_ubicacion where ingreso_id = $1", [fx.ingId]))[0]!.a).toBe(800);
+    // Modificado: la cantidad subió de 800 a 1.000 → se ajusta SOLO la diferencia, una vez.
+    const setTotal = (id: string, total: number) => q("update inv_me_ingresos set payload = payload || jsonb_build_object('total', $2::numeric) where id = $1", [id, total]);
+    await setTotal(fx.ingId, 1000);
+    const rv = (await s.listIngresos(deposito)).review.find((x) => x.ingresoId === fx.ingId)!;
+    expect(rv).toMatchObject({ reason: "MODIFICADO", applied: 800, current: 1000, diff: 200 });
+    const adj = await Promise.all([1, 2, 3, 4].map(() => s.adjustIngresoMe(deposito, { ingresoId: fx.ingId })));
+    expect(adj.filter((r) => !r.replayed)).toHaveLength(1);
+    expect(await sum()).toBe(1000);
+    expect((await s.adjustIngresoMe(deposito, { ingresoId: fx.ingId })).replayed).toBe(true);
+    expect(await sum()).toBe(1000);
+    expect((await s.listIngresos(deposito)).review.some((x) => x.ingresoId === fx.ingId)).toBe(false);
+    const hist = await s.listMovements(deposito, { kind: "INGRESO_ME" });
+    expect(hist.filter((m) => (m.detail as { ingresoId?: string }).ingresoId === fx.ingId).map((m) => (m.detail as { action?: string }).action).sort()).toEqual(["ajuste_ingreso", "ubicar"]);
+    // Baja de 1.000 a 900: resta 100. Si el material ya no está todo en la posición de registro, no se inventa nada.
+    await setTotal(fx.ingId, 900);
+    await s.adjustIngresoMe(deposito, { ingresoId: fx.ingId });
+    expect(await sum()).toBe(900);
+    const reg = (await q("select location_id from deposito_ingreso_ubicacion where ingreso_id = $1", [fx.ingId]))[0]!.location_id as string;
+    const other = reg === a.id ? b : a;
+    const here = (await s.getMap(deposito)).locations.find((l) => l.id === reg)!.items.find((i) => i.meMaterialId === fx.matId)!;
+    await s.transferContent(deposito, { key: key(), fromId: reg, toId: other.id, lines: [{ itemId: here.id, quantity: 850 }] });
+    await setTotal(fx.ingId, 700);
+    await expect(s.adjustIngresoMe(deposito, { ingresoId: fx.ingId })).rejects.toThrow(/no queda tanto/);
+    expect(await sum()).toBe(900);
+    // Anulado: no se puede ubicar uno nuevo; si ya estaba ubicado se detecta y se retira la cantidad registrada (sin borrar registros).
+    await setTotal(fx.ingId, 900);
+    await q("update inv_me_ingresos set payload = payload || '{\"anulado\": true}'::jsonb where id = $1", [fx.ingId]);
+    expect((await s.listIngresos(deposito)).review.find((x) => x.ingresoId === fx.ingId)).toMatchObject({ reason: "ANULADO" });
+    await expect(s.adjustIngresoMe(deposito, { ingresoId: fx.ingId })).rejects.toThrow(/anulado/);
+    await expect(s.retireAnuladoIngreso(deposito, { ingresoId: fx.ingId })).rejects.toThrow(/Traela de vuelta/); // 850 están en la otra posición
+    await s.transferContent(deposito, { key: key(), fromId: other.id, toId: reg, lines: [{ itemId: (await s.getMap(deposito)).locations.find((l) => l.id === other.id)!.items.find((i) => i.meMaterialId === fx.matId)!.id, quantity: 850 }] });
+    const ret = await Promise.all([1, 2, 3].map(() => s.retireAnuladoIngreso(deposito, { ingresoId: fx.ingId })));
+    expect(ret.filter((r) => !r.replayed)).toHaveLength(1);
+    expect(await sum()).toBe(0);
+    expect((await q("select status from deposito_ingreso_ubicacion where ingreso_id = $1", [fx.ingId]))[0]!.status).toBe("RETIRADO");
+    const rh = (await s.listMovements(deposito, { locationId: reg })).find((m) => (m.detail as { action?: string }).action === "ingreso_anulado")!;
+    expect(rh).toMatchObject({ kind: "RETIRO" });
+    expect(rh.lines[0]!.quantity).toBe(900);
+    expect((await s.listIngresos(deposito)).review.some((x) => x.ingresoId === fx.ingId)).toBe(false);
+    expect((await s.placeIngresoMe(deposito, { ingresoId: fx.ingId, locationId: a.id })).replayed).toBe(true);
+    expect(await sum()).toBe(0);
+    // Un ingreso anulado SIN ubicar no se puede ubicar ni aparece en la lista.
+    const fy = await meFixture(`IT-${RUN}-IY`, 50);
+    await q("update inv_me_ingresos set payload = payload || '{\"anulado\": true}'::jsonb where id = $1", [fy.ingId]);
+    await expect(s.placeIngresoMe(deposito, { ingresoId: fy.ingId, locationId: a.id })).rejects.toThrow(/anulado/);
+    expect((await s.listIngresos(deposito)).unplaced.some((x) => x.ingresoId === fy.ingId)).toBe(false);
+    // Solo Depósito escribe.
+    await expect(s.adjustIngresoMe(masivo, { ingresoId: fx.ingId })).rejects.toThrow(/Solo Depósito/);
+    await expect(s.retireAnuladoIngreso(produccion, { ingresoId: fx.ingId })).rejects.toThrow(/Solo Depósito/);
+    expect(Array.isArray((await s.listIngresos(masivo)).unplaced)).toBe(true);
   });
 
   it("permisos: Envasado Masivo/Premium, Producción y Dirección leen; Envasado y los demás NO escriben (403 en toda escritura); otros sectores ni leen", async () => {

@@ -92,6 +92,8 @@ export type UbicacionItem = {
   meMaterialId: string | null;
   unit: string;
   quantity: number | null;
+  /** VERIFICADO ⇔ vinculado a un material ME (id): su cantidad se valida contra el stock. Si no, SIN VERIFICAR (texto libre). */
+  verified: boolean;
 };
 
 export type UbicacionLike = { id: string; code: string; zone: string; active: boolean; items: ReadonlyArray<Pick<UbicacionItem, "clientKey" | "clientName" | "material" | "codigo">> };
@@ -171,7 +173,7 @@ export function groupZones<T extends { code: string; zone: string; active: boole
 
 // ───────────────────────── Líneas de contenido ─────────────────────────
 
-export type LineInput = { clientName: string; material: string; quantity: number | null; unit: string; codigo: string | null; meMaterialId: string | null };
+export type LineInput = { clientName: string; material: string; quantity: number | null; unit: string; codigo: string | null; meMaterialId: string | null; /** Renglón LIBRE existente al que se suma (elección explícita; nunca por coincidencia de texto). */ mergeIntoItemId: string | null };
 
 /** Valida una línea del pedido (alta/agregado). El cliente se normaliza con la clave compartida; el material libre solo exige texto. */
 export function parseLineInput(raw: unknown): Validation<LineInput & { clientKey: string; materialKey: string }> {
@@ -186,12 +188,60 @@ export function parseLineInput(raw: unknown): Validation<LineInput & { clientKey
   if (material.length > MAX_TEXT) return { ok: false, message: "El nombre del material es demasiado largo." };
   const q = parseQuantity(r.quantity, { allowNull: true });
   if (!q.ok) return q;
-  const codigo = normalizeMaterialCode(r.codigo) || null;
   const meMaterialId = typeof r.meMaterialId === "string" && r.meMaterialId.trim() ? r.meMaterialId.trim() : null;
+  // Un código sin vínculo (id) no respalda nada: el renglón queda libre / sin verificar.
+  const codigo = meMaterialId ? normalizeMaterialCode(r.codigo) || null : null;
   if (meMaterialId && !codigo) return { ok: false, message: "El material vinculado necesita su código." };
+  const mergeIntoItemId = typeof r.mergeIntoItemId === "string" && r.mergeIntoItemId.trim() ? r.mergeIntoItemId.trim() : null;
+  if (mergeIntoItemId && meMaterialId) return { ok: false, message: "Un material del inventario se suma por su identidad, no eligiendo un renglón." };
   if (meMaterialId && q.value == null) return { ok: false, message: "Un material vinculado al inventario necesita cantidad." };
   const unit = cleanLabel(r.unit).slice(0, 20) || "u";
-  return { ok: true, value: { clientName, clientKey, material, quantity: q.value, unit, codigo, meMaterialId, materialKey: materialKeyOf({ codigo, name: material }) } };
+  return { ok: true, value: { clientName, clientKey, material, quantity: q.value, unit, codigo, meMaterialId, mergeIntoItemId, materialKey: materialKeyOf({ codigo, name: material }) } };
+}
+
+// ───────────────────────── Verificadas vs sin verificar ─────────────────────────
+
+export const isVerified = (i: { meMaterialId?: string | null; verified?: boolean }): boolean => (i.verified !== undefined ? i.verified : Boolean(i.meMaterialId));
+
+export type Subtotal = { rows: number; byUnit: Record<string, number> };
+/** Subtotales SEPARADOS: nunca se suman verificadas con sin verificar. Por unidad (no se mezclan unidades). Los renglones sin cantidad cuentan como renglón. */
+export function subtotals(items: ReadonlyArray<{ quantity: number | null; unit: string; verified: boolean }>): { verified: Subtotal; unverified: Subtotal } {
+  const acc = { verified: { rows: 0, milli: {} as Record<string, number> }, unverified: { rows: 0, milli: {} as Record<string, number> } };
+  for (const i of items) {
+    const t = i.verified ? acc.verified : acc.unverified;
+    t.rows++;
+    if (i.quantity != null) t.milli[i.unit || "u"] = (t.milli[i.unit || "u"] ?? 0) + toMilli(i.quantity);
+  }
+  const out = (t: { rows: number; milli: Record<string, number> }): Subtotal => ({ rows: t.rows, byUnit: Object.fromEntries(Object.entries(t.milli).map(([u, m]) => [u, fromMilli(m)])) });
+  return { verified: out(acc.verified), unverified: out(acc.unverified) };
+}
+export const fmtSubtotal = (t: Subtotal): string => (Object.entries(t.byUnit).map(([u, n]) => fmtQty(n, u)).join(" + ") || (t.rows ? "sin cantidad" : "0"));
+
+/** Identidad de un renglón: ME ⇒ id del material + cliente; libre ⇒ su lote (o su propio id). Dos renglones con igual texto NO son el mismo. */
+export function identityOf(i: { id: string; meMaterialId: string | null; clientKey: string; lotKey?: string | null }): string {
+  return i.meMaterialId ? `me:${i.meMaterialId}|${i.clientKey}` : `lot:${i.lotKey ?? i.id}`;
+}
+
+/** Renglones LIBRES de la posición con el mismo cliente y un texto parecido (para ofrecer «sumar al existente»; por defecto se crea aparte). */
+export function similarFreeItems<T extends { id: string; clientKey: string; material: string; meMaterialId: string | null }>(items: readonly T[], line: { clientName: string; material: string }): T[] {
+  const key = clientKeyOf(line.clientName);
+  const t = normalizeText(line.material);
+  if (!key || t.length < 3) return [];
+  return items.filter((i) => !i.meMaterialId && i.clientKey === key && (normalizeText(i.material) === t || normalizeText(i.material).includes(t) || t.includes(normalizeText(i.material))));
+}
+
+/** ¿Este renglón coincide con la búsqueda (cliente / material / código)? */
+export function itemMatches(i: { clientName: string; material: string; codigo: string | null }, query: string): boolean {
+  const q = normalizeText(query);
+  if (!q) return false;
+  const k = boxClientKey(query);
+  return normalizeText(i.clientName).includes(q) || Boolean(k && k.length >= 2 && boxClientKey(i.clientName) === k) || normalizeText(i.material).includes(q) || Boolean(i.codigo && normalizeText(i.codigo).includes(q));
+}
+
+/** Diferencia entre el total actual del ingreso y lo ya aplicado al mapa (milésimas). Solo se ajusta la DIFERENCIA, nunca se re-suma el total. */
+export function ingresoDelta(total: number, applied: number): { diffMilli: number; kind: "IGUAL" | "AUMENTO" | "BAJA" } {
+  const diffMilli = toMilli(total) - toMilli(applied);
+  return { diffMilli, kind: diffMilli === 0 ? "IGUAL" : diffMilli > 0 ? "AUMENTO" : "BAJA" };
 }
 
 // ───────────────────────── Traslado / retiro ─────────────────────────

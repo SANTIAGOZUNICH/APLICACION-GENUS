@@ -370,12 +370,12 @@ export function MeIngresosView() {
       });
       // Ubicación física opcional: se suma al mapa DESPUÉS de crear el ingreso (idempotente por id de ingreso). Si falla, el ingreso queda igual.
       let ubicNote = "";
-      if (ubicacionId && !form.id) {
+      if (ubicacionId) {
         try {
-          const placed = await opIngresoMe({ ingresoId: form.requestId, locationId: ubicacionId });
-          ubicNote = `Ubicado en ${placed.locations[0]?.code ?? "el mapa"}.`;
+          const placed = await opIngresoMe({ ingresoId: form.id ?? form.requestId, locationId: ubicacionId });
+          ubicNote = placed.replayed ? `Este ingreso ya estaba ubicado en ${placed.placedIn ?? "el mapa"} (no se sumó de nuevo).` : `Ubicado en ${placed.placedIn ?? placed.locations[0]?.code ?? "el mapa"}.`;
         } catch (e) {
-          ubicNote = `El ingreso se guardó, pero no se pudo ubicar en el mapa: ${e instanceof Error ? e.message : "error"} (podés asignarlo desde Depósito › Ubicaciones).`;
+          ubicNote = `El ingreso se guardó, pero no se pudo ubicar en el mapa: ${e instanceof Error ? e.message : "error"} (ubicalo después desde Depósito › Ubicaciones › «Ingresos ME sin ubicar»: no se duplica).`;
         }
       }
       setForm(null);
@@ -606,7 +606,7 @@ export function MeIngresosView() {
                 />
               </label>
             </div>
-            {!form.id ? <IngresoUbicacionSelect value={ubicacionId} onChange={setUbicacionId} /> : null}
+            <IngresoUbicacionSelect value={ubicacionId} onChange={setUbicacionId} />
             <div className="mt-4 flex justify-end gap-2">
               <Button type="button" variant="secondary" onClick={() => { setForm(null); setUbicacionId(""); }}>
                 Cancelar

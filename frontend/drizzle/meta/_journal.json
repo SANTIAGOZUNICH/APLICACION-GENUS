@@ -631,6 +631,13 @@
       "when": 1793900021000,
       "tag": "0092_ubicaciones_deposito",
       "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1793900022000,
+      "tag": "0093_ubicaciones_integridad",
+      "breakpoints": true
     }
   ]
 }

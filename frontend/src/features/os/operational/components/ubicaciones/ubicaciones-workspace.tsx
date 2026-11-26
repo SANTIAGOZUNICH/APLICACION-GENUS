@@ -11,13 +11,13 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { SyncStatus, useAutoSync } from "@/features/os/operational/lib/use-auto-sync";
 import { UbicacionesApiError, fetchClients, fetchMap, newKey, opLiberar, opObservaciones } from "@/lib/ubicaciones/client";
-import { computeIndicators, distinctClients, fmtQty, groupZones, locationStatus, searchLocations } from "@/lib/ubicaciones/rules";
+import { computeIndicators, distinctClients, fmtQty, fmtSubtotal, groupZones, itemMatches, locationStatus, searchLocations, subtotals } from "@/lib/ubicaciones/rules";
 import type { MapView, OpResultView, UbicacionView } from "@/lib/ubicaciones/types";
 import { CELL_STYLE, UbicacionesMap } from "./ubicaciones-map";
-import { AddDialog, HistoryDialog, RemoveDialog, TransferDialog, fieldCls, fmtDate } from "./ubicaciones-dialogs";
+import { AddDialog, HistoryDialog, IngresosPanel, LinkDialog, RemoveDialog, TransferDialog, fieldCls, fmtDate } from "./ubicaciones-dialogs";
 import { LocationConfigForm, NewLocationForm, ShapesDialog } from "./ubicaciones-config";
 
-type Dlg = { type: "add" } | { type: "transfer" } | { type: "remove"; itemId: string } | { type: "history"; all?: boolean } | { type: "release" } | { type: "shapes" } | null;
+type Dlg = { type: "add" } | { type: "link"; itemId: string } | { type: "transfer" } | { type: "remove"; itemId: string } | { type: "history"; all?: boolean } | { type: "release" } | { type: "shapes" } | null;
 const sig = (m: MapView | null) => JSON.stringify(m ? { ...m, serverTime: "" } : null);
 
 function Kpi({ icon, value, label, tone, testid }: { icon: React.ReactNode; value: number; label: string; tone: string; testid: string }) {
@@ -41,6 +41,7 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
   const [configMode, setConfigMode] = useState(false);
   const [editingObs, setEditingObs] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [ingresosToken, setIngresosToken] = useState(0);
 
   const load = useCallback(async () => {
     const m = await fetchMap();
@@ -63,6 +64,9 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
   const matches = useMemo(() => (query.trim() ? searchLocations(locations, query) : []), [locations, query]);
   const matchIds = useMemo(() => new Set(matches.map((m) => m.id)), [matches]);
   const indicators = useMemo(() => computeIndicators(locations), [locations]);
+  // Subtotales SEPARADOS (verificado / sin verificar) de lo que coincide con la búsqueda.
+  const matchSub = useMemo(() => subtotals(matches.flatMap((l) => { const hit = l.items.filter((i) => itemMatches(i, query)); return hit.length ? hit : l.items; })), [matches, query]);
+  const selSub = useMemo(() => subtotals(selected?.items ?? []), [selected]);
   const zones = useMemo(() => groupZones(locations), [locations]);
 
   const applyResult = (r: OpResultView, message: string) => {
@@ -71,6 +75,7 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
     setEditingObs(null);
     setError(null);
     setNotice(r.replayed ? "Esta operación ya estaba registrada: no se repitió." : message);
+    setIngresosToken((n) => n + 1);
     void syncNow(true);
   };
   const fail = (e: unknown) => {
@@ -152,6 +157,9 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
             {query.trim() ? (
               <div className="mt-2" data-testid="ubi-search-result">
                 <p className="text-sm" role="status"><strong data-testid="ubi-search-count">{matches.length}</strong> {matches.length === 1 ? "posición coincide" : "posiciones coinciden"}</p>
+                {matches.length ? (
+                  <p className="text-xs text-[var(--os-text-muted)]" data-testid="ubi-search-subtotales">Verificado: <strong data-testid="ubi-search-verificado">{fmtSubtotal(matchSub.verified)}</strong> · Sin verificar: <strong data-testid="ubi-search-sinverificar">{fmtSubtotal(matchSub.unverified)}</strong></p>
+                ) : null}
                 <div className="mt-1 flex flex-wrap gap-1.5">
                   {matches.map((m) => (
                     <button key={m.id} type="button" className="min-h-11 min-w-11 rounded-lg border border-sky-600 bg-sky-200 px-2 text-sm font-bold text-slate-900" onClick={() => setSelectedId(m.id)} data-testid="ubi-search-chip">{m.code}</button>
@@ -197,18 +205,29 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
                   {selected.items.length ? (
                     <ul className="divide-y divide-[var(--os-border)] rounded-lg border border-[var(--os-border)]" data-testid="ubi-panel-materiales">
                       {selected.items.map((i) => (
-                        <li key={i.id} className="flex items-center gap-2 px-3 py-2 text-sm" data-testid="ubi-panel-item">
+                        <li key={i.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm" data-testid="ubi-panel-item">
                           <div className="min-w-0 flex-1">
                             <p className="break-words font-medium">{i.material}</p>
                             <p className="text-xs text-[var(--os-text-muted)]">{i.clientName}{i.codigo ? ` · ${i.codigo}` : ""}</p>
                           </div>
-                          <strong className="whitespace-nowrap" data-testid="ubi-panel-cantidad">{i.quantity == null ? "sin cantidad" : fmtQty(i.quantity, i.unit)}</strong>
+                          <div className="flex shrink-0 flex-col items-end gap-1">
+                            <strong className="whitespace-nowrap" data-testid="ubi-panel-cantidad">{i.quantity == null ? "sin cantidad" : fmtQty(i.quantity, i.unit)}</strong>
+                            {i.verified ? <span className="rounded bg-emerald-200 px-1.5 text-xs font-bold text-emerald-950" data-testid="ubi-badge-verificado">Verificado</span> : <span className="rounded bg-amber-200 px-1.5 text-xs font-bold text-amber-950" data-testid="ubi-badge-sin-verificar">Sin verificar</span>}
+                          </div>
+                          {canWrite && !i.verified && i.quantity != null ? <button type="button" className="min-h-11 basis-full rounded-lg border border-[var(--os-border)] px-2 text-sm font-semibold hover:bg-[var(--os-bg)]" onClick={() => setDlg({ type: "link", itemId: i.id })} data-testid="ubi-vincular">Vincular a ME</button> : null}
                           {canWrite ? <button type="button" className="grid size-11 shrink-0 place-items-center rounded-lg text-rose-600 hover:bg-rose-500/10" aria-label={`Retirar ${i.material}`} onClick={() => setDlg({ type: "remove", itemId: i.id })} data-testid="ubi-retirar"><Trash2 className="size-5" /></button> : null}
                         </li>
                       ))}
                     </ul>
                   ) : <p className="rounded-lg border border-dashed border-[var(--os-border)] p-3 text-sm text-[var(--os-text-muted)]" data-testid="ubi-panel-vacia">Esta ubicación está libre.</p>}
                 </div>
+                {selected.items.length ? (
+                  <div className="space-y-1 rounded-lg bg-[var(--os-bg)] p-3 text-sm" data-testid="ubi-panel-subtotales">
+                    <p>Verificado (respaldado por el inventario ME): <strong data-testid="ubi-sub-verificado">{fmtSubtotal(selSub.verified)}</strong></p>
+                    <p>Sin verificar (texto libre): <strong data-testid="ubi-sub-sinverificar">{fmtSubtotal(selSub.unverified)}</strong></p>
+                    {selSub.unverified.rows ? <p className="text-xs text-[var(--os-text-muted)]">Lo «sin verificar» no está respaldado por el inventario ME ni cuenta contra el stock.</p> : null}
+                  </div>
+                ) : null}
                 <div>
                   <h4 className="mb-1 flex items-center justify-between gap-2 text-sm font-semibold">
                     <span className="flex items-center gap-2"><StickyNote className="size-5 text-[var(--os-text-muted)]" /> Observaciones</span>
@@ -263,6 +282,7 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
               ))}
             </ul>
           </div>
+          {canWrite ? <IngresosPanel locations={locations} refreshToken={ingresosToken} onDone={applyResult} /> : null}
           <div className="rounded-xl border border-[var(--os-border)] p-3" data-testid="ubi-sectores">
             <h3 className="mb-2 text-sm font-semibold">Sectores y posiciones</h3>
             <div className="divide-y divide-[var(--os-border)]">
@@ -286,6 +306,7 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
       </div>
 
       {dlg?.type === "add" && selected ? <AddDialog location={selected} clients={clients} onClose={() => setDlg(null)} onDone={applyResult} /> : null}
+      {dlg?.type === "link" && selected && selected.items.find((i) => i.id === dlg.itemId) ? <LinkDialog location={selected} item={selected.items.find((i) => i.id === dlg.itemId)!} onClose={() => setDlg(null)} onDone={applyResult} /> : null}
       {dlg?.type === "transfer" && selected ? <TransferDialog from={selected} locations={locations} onClose={() => setDlg(null)} onDone={applyResult} /> : null}
       {dlg?.type === "remove" && selected ? <RemoveDialog location={selected} itemId={dlg.itemId} onClose={() => setDlg(null)} onDone={applyResult} /> : null}
       {dlg?.type === "history" ? <HistoryDialog location={dlg.all ? null : selected} onClose={() => setDlg(null)} /> : null}

@@ -1,5 +1,5 @@
 /** Cliente de navegador — Ubicaciones. La identidad la resuelve el servidor por la cookie de sesión. */
-import type { MapView, MaterialOption, MovementView, OpResultView, UbicacionView, ShapeView } from "./types";
+import type { IngresoPendiente, IngresoReview, MapView, MaterialOption, MovementView, OpResultView, UbicacionView, ShapeView } from "./types";
 
 const BASE = "/api/v1/ubicaciones";
 
@@ -29,6 +29,10 @@ export const fetchHistory = (locationId?: string) => call<{ movements: MovementV
 export const fetchClients = () => call<{ clients: Array<{ name: string; key: string }> }>("?view=clients").then((r) => r.clients);
 export const fetchMaterials = (q: string) => call<{ materials: MaterialOption[] }>(`?view=materials&q=${encodeURIComponent(q)}`).then((r) => r.materials);
 
+export const fetchIngresos = (q = "") => call<{ unplaced: IngresoPendiente[]; review: IngresoReview[] }>(`?view=ingresos${q ? `&q=${encodeURIComponent(q)}` : ""}`);
+export const opIngresoAjustar = (b: Record<string, unknown>) => post("", { action: "ingreso_ajustar", ...b }) as Promise<OpResultView>;
+export const opIngresoRetirar = (b: Record<string, unknown>) => post("", { action: "ingreso_retirar", ...b }) as Promise<OpResultView>;
+export const opVincular = (b: Record<string, unknown>) => post("", { action: "vincular", ...b }) as Promise<OpResultView>;
 export const opAgregar = (b: Record<string, unknown>) => post("", { action: "agregar", ...b }) as Promise<OpResultView>;
 export const opRetirar = (b: Record<string, unknown>) => post("", { action: "retirar", ...b }) as Promise<OpResultView>;
 export const opObservaciones = (b: Record<string, unknown>) => post("", { action: "observaciones", ...b }) as Promise<OpResultView>;

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { addContent, getMap, listClients, listMaterials, listMovements, placeIngresoMe, releaseLocation, removeContent, setObservations, transferContent } from "@/lib/ubicaciones/service";
+import { addContent, adjustIngresoMe, getMap, linkContent, listClients, listIngresos, listMaterials, listMovements, placeIngresoMe, releaseLocation, removeContent, retireAnuladoIngreso, setObservations, transferContent } from "@/lib/ubicaciones/service";
 import { readJson, resolveUbActor, ubErrorResponse } from "@/lib/ubicaciones/http";
 import { OrdersValidationError } from "@/lib/orders/types";
 
@@ -17,6 +17,8 @@ export async function GET(request: Request) {
         return NextResponse.json({ movements: await listMovements(actor, { locationId: p.get("locationId") ?? undefined, kind: p.get("kind") ?? undefined, limit: p.get("limit") ? Number(p.get("limit")) : undefined }) }, { headers: NO_STORE });
       case "clients":
         return NextResponse.json({ clients: await listClients(actor) }, { headers: NO_STORE });
+      case "ingresos":
+        return NextResponse.json(await listIngresos(actor, p.get("q") ?? undefined), { headers: NO_STORE });
       case "materials":
         return NextResponse.json({ materials: await listMaterials(actor, p.get("q") ?? undefined) }, { headers: NO_STORE });
       default:
@@ -46,6 +48,12 @@ export async function POST(request: Request) {
         return NextResponse.json(await releaseLocation(actor, { key: b.key, locationId: b.locationId, expectedVersion: b.expectedVersion }));
       case "ingreso_me":
         return NextResponse.json(await placeIngresoMe(actor, { ingresoId: b.ingresoId, locationId: b.locationId, clientName: b.clientName }));
+      case "ingreso_ajustar":
+        return NextResponse.json(await adjustIngresoMe(actor, { ingresoId: b.ingresoId }));
+      case "ingreso_retirar":
+        return NextResponse.json(await retireAnuladoIngreso(actor, { ingresoId: b.ingresoId }));
+      case "vincular":
+        return NextResponse.json(await linkContent(actor, { key: b.key, locationId: b.locationId, itemId: b.itemId, meMaterialId: b.meMaterialId, expectedVersion: b.expectedVersion }));
       default:
         throw new OrdersValidationError("Acción inválida.");
     }
