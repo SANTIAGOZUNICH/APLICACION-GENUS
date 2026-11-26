@@ -2551,3 +2551,114 @@ export const insumoStockAudit = pgTable(
   },
   (table) => [index("insumo_stock_audit_insumo_idx").on(table.insumoId, table.createdAt), index("insumo_stock_audit_at_idx").on(table.createdAt)]
 );
+
+// ───────────────────────── DEPÓSITO › UBICACIONES (migración 0092) ─────────────────────────
+
+/** Lienzo del plano (una fila `main`). */
+export const depositoMapaConfig = pgTable("deposito_mapa_config", {
+  id: text("id").primaryKey().default("main"),
+  viewWidth: doublePrecision("view_width").notNull().default(400),
+  viewHeight: doublePrecision("view_height").notNull().default(740),
+  title: text("title").notNull().default("Planta alta · Depósito de material de envase y empaque"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: text("updated_by"),
+});
+
+/** Contorno en L, pasillos, escalera y vacío del plano. Configurables; se desactivan, no se borran. */
+export const depositoMapaShapes = pgTable("deposito_mapa_shapes", {
+  id: text("id").primaryKey(),
+  /** CONTORNO | PASILLO | ESCALERA | VACIO */
+  kind: text("kind").notNull(),
+  label: text("label").notNull().default(""),
+  sublabel: text("sublabel").notNull().default(""),
+  x: doublePrecision("x").notNull().default(0),
+  y: doublePrecision("y").notNull().default(0),
+  w: doublePrecision("w").notNull().default(0),
+  h: doublePrecision("h").notNull().default(0),
+  /** Polígono `[[x,y],…]` (el contorno en L); null = rectángulo x/y/w/h. */
+  points: jsonb("points"),
+  rotation: integer("rotation").notNull().default(0),
+  sortOrder: integer("sort_order").notNull().default(0),
+  active: boolean("active").notNull().default(true),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: text("updated_by"),
+});
+
+/** Posiciones físicas de pallets. Nunca se eliminan: se desactivan (solo vacías). `version` = bloqueo optimista. */
+export const depositoUbicaciones = pgTable(
+  "deposito_ubicaciones",
+  {
+    id: text("id").primaryKey(),
+    code: text("code").notNull(),
+    zone: text("zone").notNull().default(""),
+    x: doublePrecision("x").notNull().default(0),
+    y: doublePrecision("y").notNull().default(0),
+    w: doublePrecision("w").notNull().default(50),
+    h: doublePrecision("h").notNull().default(36),
+    sortOrder: integer("sort_order").notNull().default(0),
+    active: boolean("active").notNull().default(true),
+    version: integer("version").notNull().default(1),
+    observations: text("observations").notNull().default(""),
+    lastContentAt: timestamp("last_content_at", { withTimezone: true }),
+    lastContentBy: text("last_content_by"),
+    lastContentByName: text("last_content_by_name"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedBy: text("updated_by"),
+  },
+  (table) => [index("deposito_ubicaciones_order_idx").on(table.sortOrder)]
+);
+
+/** Contenido ACTUAL de cada posición. Una fila por (posición, cliente, material). No es stock: solo dónde está cada cosa. */
+export const depositoUbicacionItems = pgTable(
+  "deposito_ubicacion_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    locationId: text("location_id").notNull().references(() => depositoUbicaciones.id),
+    clientKey: text("client_key").notNull(),
+    clientName: text("client_name").notNull(),
+    materialKey: text("material_key").notNull(),
+    materialName: text("material_name").notNull(),
+    /** Código del material ME vinculado (normalizado); null = material libre por texto. */
+    codigo: text("codigo"),
+    meMaterialId: text("me_material_id"),
+    unit: text("unit").notNull().default("u"),
+    quantity: numeric("quantity", { precision: 16, scale: 3 }),
+    ingresoId: text("ingreso_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedBy: text("updated_by"),
+  },
+  (table) => [
+    uniqueIndex("deposito_ubicacion_items_slot_uidx").on(table.locationId, table.clientKey, table.materialKey),
+    index("deposito_ubicacion_items_codigo_idx").on(table.codigo),
+  ]
+);
+
+/** Historial INMUTABLE de movimientos (solo INSERT). Guarda snapshot de los códigos y de las líneas afectadas. */
+export const depositoUbicacionMovements = pgTable(
+  "deposito_ubicacion_movements",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    seq: bigint("seq", { mode: "number" }).generatedAlwaysAsIdentity().notNull(),
+    kind: text("kind").notNull(),
+    fromLocationId: text("from_location_id"),
+    fromCode: text("from_code"),
+    toLocationId: text("to_location_id"),
+    toCode: text("to_code"),
+    lines: jsonb("lines").notNull().default(sql`'[]'::jsonb`),
+    note: text("note"),
+    detail: jsonb("detail").notNull().default(sql`'{}'::jsonb`),
+    idempotencyKey: text("idempotency_key").notNull(),
+    actorEmail: text("actor_email").notNull(),
+    actorName: text("actor_name"),
+    actorSector: text("actor_sector").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("deposito_ubicacion_movements_idem_uidx").on(table.idempotencyKey),
+    uniqueIndex("deposito_ubicacion_movements_seq_uidx").on(table.seq),
+    index("deposito_ubicacion_movements_from_idx").on(table.fromLocationId, table.seq),
+    index("deposito_ubicacion_movements_to_idx").on(table.toLocationId, table.seq),
+  ]
+);
