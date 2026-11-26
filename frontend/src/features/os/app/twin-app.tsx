@@ -131,9 +131,8 @@ export function TwinRouter() {
     case "entregas-produccion":
       return <EntregasProduccionView />;
     case "ubicaciones":
-      return <UbicacionesView mode="deposito" />;
-    case "ubicacion-materiales":
-      return <UbicacionesView mode="consulta" />;
+    case "ubicacion-materiales": // ruta anterior (Envasado): mismo módulo unificado
+      return <UbicacionesView />;
     case "ingreso-cajas-genus":
       return <IngresoCajasGenusView />;
     case "observaciones-produccion":

@@ -4,13 +4,13 @@ import { TwinShell } from "@/features/os/shell/twin-shell";
 import { UbicacionesWorkspace } from "../components/ubicaciones/ubicaciones-workspace";
 
 /**
- * Depósito › UBICACIONES (`mode="deposito"`: asigna, mueve, libera; Depósito y Dirección configuran el mapa) y
- * Envasado › UBICACIÓN DE MATERIALES (`mode="consulta"`: el mismo mapa y buscador, solo lectura).
+ * UBICACIONES: pestaña única para TODOS los sectores. Todos consultan el mapa completo (solo lectura); solo Depósito modifica contenido y clientes
+ * (lo decide el servidor: `capabilities`), y Depósito/Dirección configuran el mapa.
  */
-export function UbicacionesView({ mode }: { mode: "deposito" | "consulta" }) {
+export function UbicacionesView() {
   return (
-    <TwinShell title={mode === "deposito" ? "Ubicaciones" : "Ubicación de materiales"}>
-      <UbicacionesWorkspace mode={mode} />
+    <TwinShell title="Ubicaciones">
+      <UbicacionesWorkspace />
     </TwinShell>
   );
 }

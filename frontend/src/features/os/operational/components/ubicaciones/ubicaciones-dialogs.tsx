@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { fetchHistory, fetchIngresos, fetchMaterials, newKey, opAgregar, opIngresoAjustar, opIngresoRetirar, opIngresoMe, opRetirar, opTrasladar, opVincular } from "@/lib/ubicaciones/client";
-import { MOVEMENT_KIND_LABEL, fmtQty, parseQuantity, similarFreeItems } from "@/lib/ubicaciones/rules";
+import { fetchHistory, fetchIngresos, fetchMaterials, newKey, opAgregar, opClientes, opIngresoAjustar, opIngresoRetirar, opIngresoMe, opRetirar, opTrasladar, opVincular } from "@/lib/ubicaciones/client";
+import { MOVEMENT_KIND_LABEL, clientKeyOf, cleanLabel, fmtQty, parseQuantity, similarFreeItems } from "@/lib/ubicaciones/rules";
 import type { IngresoPendiente, IngresoReview, MaterialOption, MovementView, OpResultView, UbicacionItemView, UbicacionView } from "@/lib/ubicaciones/types";
 
 export const fieldCls = "mt-1 block min-h-11 w-full rounded-lg border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-base";
@@ -182,6 +182,89 @@ export function AddDialog({ location, clients, onClose, onDone }: Props & { loca
   );
 }
 
+// ───────────────────────── Clientes asignados (sin materiales) ─────────────────────────
+
+export function ClientsDialog({ location, clients, onClose, onDone }: Props & { location: UbicacionView; clients: Array<{ name: string }> }) {
+  const [text, setText] = useState("");
+  const [adds, setAdds] = useState<string[]>([]);
+  const [removes, setRemoves] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const key = useRef(newKey());
+  const current = location.clients.filter((c) => !removes.includes(c.clientKey));
+  const known = new Set([...current.map((c) => c.clientKey), ...adds.map((n) => clientKeyOf(n) ?? n)]);
+
+  function addName() {
+    const name = cleanLabel(text);
+    if (!name) return;
+    const k = clientKeyOf(name);
+    if (!k) return setError("Indicá el nombre del cliente (por ejemplo TRC).");
+    if (known.has(k)) {
+      setText("");
+      return setError("Ese cliente ya está en la lista.");
+    }
+    setError(null);
+    // Si se quitó y se vuelve a escribir, simplemente se cancela la baja.
+    if (removes.includes(k)) setRemoves((r) => r.filter((x) => x !== k));
+    else setAdds((a) => [...a, name]);
+    setText("");
+  }
+  async function submit() {
+    if (busy) return;
+    const pending = cleanLabel(text);
+    const addList = pending && !known.has(clientKeyOf(pending) ?? pending) ? [...adds, pending] : adds;
+    if (!addList.length && !removes.length) return setError("No hay cambios para guardar.");
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await opClientes({ key: key.current, locationId: location.id, expectedVersion: location.version, add: addList, remove: removes });
+      onDone(res, `Clientes de ${location.code} actualizados.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo guardar.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
+      <DialogContent className="max-h-[92vh] w-[min(34rem,calc(100vw-16px))] max-w-[min(34rem,calc(100vw-16px))] overflow-y-auto p-4 sm:p-6" data-testid="ubi-clientes-dialog">
+        <DialogHeader>
+          <DialogTitle>Clientes de {location.code}</DialogTitle>
+          <DialogDescription>Asigná uno o varios clientes a esta ubicación sin cargar materiales. Con un cliente asignado la ubicación queda ocupada. Los clientes que tienen materiales almacenados no se pueden quitar.</DialogDescription>
+        </DialogHeader>
+        <datalist id="ubi-clients-asignar">{clients.map((c) => <option key={c.name} value={c.name} />)}</datalist>
+        <ul className="space-y-1.5" data-testid="ubi-clientes-lista">
+          {current.map((c) => (
+            <li key={c.clientKey} className="flex min-h-11 items-center justify-between gap-2 rounded-lg border border-[var(--os-border)] px-3 py-1.5 text-sm" data-testid="ubi-clientes-item" data-removable={c.removable}>
+              <span className="min-w-0 break-words font-semibold">{c.clientName}{c.hasMaterials ? <span className="ml-2 rounded bg-sky-200 px-1.5 text-xs font-bold text-sky-950" data-testid="ubi-clientes-conmateriales">con materiales</span> : null}</span>
+              <button type="button" className="grid size-11 shrink-0 place-items-center rounded-lg text-rose-600 hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-35" disabled={!c.removable || busy} title={c.removable ? "Quitar cliente" : "Tiene materiales almacenados: retiralos primero"} aria-label={c.removable ? `Quitar ${c.clientName}` : `${c.clientName} tiene materiales: no se puede quitar`} onClick={() => setRemoves((r) => [...r, c.clientKey])} data-testid="ubi-clientes-quitar"><X className="size-5" /></button>
+            </li>
+          ))}
+          {adds.map((n) => (
+            <li key={n} className="flex min-h-11 items-center justify-between gap-2 rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-3 py-1.5 text-sm" data-testid="ubi-clientes-nuevo">
+              <span className="min-w-0 break-words font-semibold">{n} <span className="text-xs font-normal text-[var(--os-text-muted)]">(nuevo)</span></span>
+              <button type="button" className="grid size-11 shrink-0 place-items-center rounded-lg text-rose-600" aria-label={`Descartar ${n}`} onClick={() => setAdds((a) => a.filter((x) => x !== n))}><X className="size-5" /></button>
+            </li>
+          ))}
+          {!current.length && !adds.length ? <li className="rounded-lg border border-dashed border-[var(--os-border)] p-3 text-sm text-[var(--os-text-muted)]">Sin clientes asignados.</li> : null}
+        </ul>
+        <div className="flex items-end gap-2">
+          <label className={`${labelCls} min-w-0 flex-1`}>
+            Cliente
+            <input className={fieldCls} list="ubi-clients-asignar" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addName(); } }} placeholder="Ej.: TRC" autoComplete="off" data-testid="ubi-clientes-input" />
+          </label>
+          <Button type="button" variant="secondary" className={bigBtn} onClick={addName} data-testid="ubi-clientes-agregar"><Plus className="size-4" /> Agregar</Button>
+        </div>
+        {error ? <p role="alert" className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-sm" data-testid="ubi-clientes-error">{error}</p> : null}
+        <DialogFooter>
+          <Button type="button" variant="secondary" className={bigBtn} onClick={onClose} disabled={busy}>Cancelar</Button>
+          <Button type="button" className={bigBtn} onClick={() => void submit()} disabled={busy} data-testid="ubi-clientes-guardar">{busy ? "Guardando…" : "Guardar"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ───────────────────────── Trasladar ─────────────────────────
 
 export function TransferDialog({ from, locations, onClose, onDone }: Props & { from: UbicacionView; locations: UbicacionView[] }) {
@@ -314,7 +397,7 @@ export function RemoveDialog({ location, itemId, onClose, onDone }: Props & { lo
 
 // ───────────────────────── Historial ─────────────────────────
 
-const ACTION_LABEL: Record<string, string> = { vincular: "Vinculado a material ME", ajuste_ingreso: "Ajuste por ingreso de ME modificado", ingreso_anulado: "Retiro por ingreso de ME anulado", ubicar: "Ingreso de ME ubicado" };
+const ACTION_LABEL: Record<string, string> = { cliente_asignado: "Cliente asignado", cliente_quitado: "Cliente quitado", vincular: "Vinculado a material ME", ajuste_ingreso: "Ajuste por ingreso de ME modificado", ingreso_anulado: "Retiro por ingreso de ME anulado", ubicar: "Ingreso de ME ubicado" };
 const movementLabel = (m: MovementView) => ACTION_LABEL[String(m.detail.action ?? "")] ?? MOVEMENT_KIND_LABEL[m.kind] ?? m.kind;
 
 export function HistoryDialog({ location, onClose }: { location: UbicacionView | null; onClose: () => void }) {
@@ -349,7 +432,7 @@ export function HistoryDialog({ location, onClose }: { location: UbicacionView |
               {m.lines.length ? (
                 <ul className="mt-1 list-disc pl-5">
                   {m.lines.map((l, k) => (
-                    <li key={k}>{l.clientName} · {l.material}: <strong>{fmtQty(l.quantity, l.unit)}</strong>{l.verified === false ? <span className="ml-1 rounded bg-amber-200 px-1 text-xs font-bold text-amber-950">Sin verificar</span> : null}{l.remaining != null ? <span className="text-[var(--os-text-muted)]"> (queda {fmtQty(l.remaining, l.unit)})</span> : null}</li>
+                    <li key={k}>{l.clientName}{!l.material ? " (sin materiales)" : ""}{l.material ? <> · {l.material}: <strong>{fmtQty(l.quantity, l.unit)}</strong></> : null}{l.material && l.verified === false ? <span className="ml-1 rounded bg-amber-200 px-1 text-xs font-bold text-amber-950">Sin verificar</span> : null}{l.remaining != null ? <span className="text-[var(--os-text-muted)]"> (queda {fmtQty(l.remaining, l.unit)})</span> : null}</li>
                   ))}
                 </ul>
               ) : null}

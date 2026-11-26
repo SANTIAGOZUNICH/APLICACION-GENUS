@@ -4,12 +4,12 @@
  * errores de punto flotante), tope por stock disponible y validación de la geometría del mapa.
  */
 import { boxClientKey } from "@/lib/cajas-genus/rules";
-import type { SectorId } from "@/types/operational/sector";
+import { OPERATIONAL_SECTOR_IDS, type SectorId } from "@/types/operational/sector";
 
 // ───────────────────────── Permisos ─────────────────────────
 
-/** Consultan el mapa (solo lectura). */
-export const UBICACIONES_READ_SECTORS = ["DEPOSITO", "ENVASADO_MASIVO", "ENVASADO_PREMIUM", "PRODUCCION", "DIRECCION"] as const satisfies readonly SectorId[];
+/** Consultan el mapa (solo lectura): TODOS los sectores operativos (la lista sale de OPERATIONAL_SECTOR_IDS, no de una lista fija). */
+export const UBICACIONES_READ_SECTORS: readonly SectorId[] = OPERATIONAL_SECTOR_IDS;
 /** Asignan, mueven y liberan contenido. */
 export const UBICACIONES_WRITE_SECTORS = ["DEPOSITO"] as const satisfies readonly SectorId[];
 /** Configuran el mapa (posiciones, geometría, forma del plano). */
@@ -96,15 +96,53 @@ export type UbicacionItem = {
   verified: boolean;
 };
 
-export type UbicacionLike = { id: string; code: string; zone: string; active: boolean; items: ReadonlyArray<Pick<UbicacionItem, "clientKey" | "clientName" | "material" | "codigo">> };
+/** Cliente asignado DIRECTAMENTE a una posición (sin materiales). */
+export type AssignedClient = { id: string; clientKey: string; clientName: string; assignedAt: string; assignedBy: string | null };
+/** Cliente de una posición: asignado ∪ el de sus materiales. Los que vienen de materiales NO se pueden quitar a mano. */
+export type LocationClient = { clientKey: string; clientName: string; assigned: boolean; hasMaterials: boolean; removable: boolean };
+
+type Occupiable = { items: readonly unknown[]; assignedClients?: readonly unknown[] };
+/** OCUPADA ⇔ tiene materiales o al menos un cliente asignado. */
+export const isOccupied = (l: Occupiable): boolean => l.items.length > 0 || (l.assignedClients?.length ?? 0) > 0;
+
+export type UbicacionLike = { id: string; code: string; zone: string; active: boolean; items: ReadonlyArray<Pick<UbicacionItem, "clientKey" | "clientName" | "material" | "codigo">>; assignedClients?: ReadonlyArray<Pick<AssignedClient, "clientKey" | "clientName">> };
 
 export type LocationStatus = "LIBRE" | "OCUPADA";
-export const locationStatus = (l: { items: readonly unknown[] }): LocationStatus => (l.items.length > 0 ? "OCUPADA" : "LIBRE");
+export const locationStatus = (l: Occupiable): LocationStatus => (isOccupied(l) ? "OCUPADA" : "LIBRE");
 
-/** Totales sobre posiciones ACTIVAS (las desactivadas no cuentan). */
-export function computeIndicators(locations: ReadonlyArray<{ active: boolean; items: readonly unknown[] }>): { total: number; ocupadas: number; libres: number } {
+/** Lista de clientes de la posición = asignados ∪ clientes de sus materiales (por clave normalizada). Un cliente con materiales no es removible. */
+export function locationClients(l: { items: ReadonlyArray<{ clientKey: string; clientName: string }>; assignedClients?: ReadonlyArray<{ clientKey: string; clientName: string }> }): LocationClient[] {
+  const map = new Map<string, LocationClient>();
+  for (const a of l.assignedClients ?? []) if (!map.has(a.clientKey)) map.set(a.clientKey, { clientKey: a.clientKey, clientName: a.clientName, assigned: true, hasMaterials: false, removable: true });
+  for (const i of l.items) {
+    const cur = map.get(i.clientKey);
+    if (cur) {
+      cur.hasMaterials = true;
+      cur.removable = false;
+    } else map.set(i.clientKey, { clientKey: i.clientKey, clientName: i.clientName, assigned: false, hasMaterials: true, removable: false });
+  }
+  return [...map.values()].sort((a, b) => a.clientName.localeCompare(b.clientName));
+}
+
+/** ¿Se puede quitar este cliente asignado? No si todavía tiene materiales almacenados en la posición. */
+export function canRemoveAssignedClient(l: { items: ReadonlyArray<{ clientKey: string }> }, clientKey: string): Validation<true> {
+  if (l.items.some((i) => i.clientKey === clientKey)) return { ok: false, message: "Este cliente todavía tiene materiales almacenados en la ubicación: retiralos primero para poder quitarlo." };
+  return { ok: true, value: true };
+}
+
+/** Valida el nombre de un cliente a asignar: devuelve nombre limpio + clave compartida. */
+export function parseClientName(raw: unknown): Validation<{ clientName: string; clientKey: string }> {
+  const clientName = cleanLabel(raw);
+  const clientKey = clientKeyOf(clientName);
+  if (!clientName || !clientKey) return { ok: false, message: "Indicá el nombre del cliente (por ejemplo TRC)." };
+  if (clientName.length > MAX_TEXT) return { ok: false, message: "El nombre del cliente es demasiado largo." };
+  return { ok: true, value: { clientName, clientKey } };
+}
+
+/** Totales sobre posiciones ACTIVAS (las desactivadas no cuentan). Ocupada = con materiales o con cliente asignado. */
+export function computeIndicators(locations: ReadonlyArray<{ active: boolean } & Occupiable>): { total: number; ocupadas: number; libres: number } {
   const active = locations.filter((l) => l.active);
-  const ocupadas = active.filter((l) => l.items.length > 0).length;
+  const ocupadas = active.filter(isOccupied).length;
   return { total: active.length, ocupadas, libres: active.length - ocupadas };
 }
 
@@ -137,6 +175,10 @@ export function locationMatches(l: UbicacionLike, query: string): boolean {
   if (qCode && squeezeCode(normalizeText(l.code)).includes(qCode) && /\d|^[a-z]$/.test(q)) return true;
   if (normalizeText(l.code).includes(q)) return true;
   const qKey = boxClientKey(query);
+  for (const c of l.assignedClients ?? []) {
+    if (normalizeText(c.clientName).includes(q)) return true;
+    if (qKey && qKey.length >= 2 && boxClientKey(c.clientName) === qKey) return true;
+  }
   for (const i of l.items) {
     if (normalizeText(i.clientName).includes(q)) return true;
     if (qKey && qKey.length >= 2 && boxClientKey(i.clientName) === qKey) return true;
@@ -154,11 +196,11 @@ export function searchLocations<T extends UbicacionLike>(locations: readonly T[]
 
 export type CellState = "LIBRE" | "OCUPADA" | "SELECCIONADA" | "RESULTADO" | "INACTIVA";
 /** Prioridad: seleccionada > resultado de búsqueda > ocupada/libre. */
-export function cellState(l: { active: boolean; items: readonly unknown[] }, o: { selected: boolean; match: boolean }): CellState {
+export function cellState(l: { active: boolean } & Occupiable, o: { selected: boolean; match: boolean }): CellState {
   if (!l.active) return "INACTIVA";
   if (o.selected) return "SELECCIONADA";
   if (o.match) return "RESULTADO";
-  return l.items.length > 0 ? "OCUPADA" : "LIBRE";
+  return isOccupied(l) ? "OCUPADA" : "LIBRE";
 }
 
 /** «A01 – A11» por zona, en el orden del mapa (para la lista «Sectores y posiciones»). */
@@ -337,8 +379,8 @@ export function findOverlap<T extends Geometry & { id: string; code: string; act
 }
 
 /** Una posición solo se puede desactivar o renombrar si está vacía: así el historial y el contenido nunca quedan huérfanos. */
-export function canRetireOrRename(l: { items: readonly unknown[] }): boolean {
-  return l.items.length === 0;
+export function canRetireOrRename(l: Occupiable): boolean {
+  return !isOccupied(l);
 }
 
 export const SHAPE_KINDS = ["CONTORNO", "PASILLO", "ESCALERA", "VACIO"] as const;

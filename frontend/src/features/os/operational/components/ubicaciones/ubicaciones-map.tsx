@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Maximize2, Minus, Plus } from "lucide-react";
-import { cellState, clientsLabel, type CellState } from "@/lib/ubicaciones/rules";
+import { cellState, clientsLabel, isOccupied, locationClients, type CellState } from "@/lib/ubicaciones/rules";
 import type { MapConfigView, ShapeView, UbicacionView } from "@/lib/ubicaciones/types";
 
 const PAD = 8;
@@ -192,8 +192,8 @@ export function UbicacionesMap({
           {visible.map((l) => {
             const state = cellState(l, { selected: l.id === selectedId, match: matchIds.has(l.id) });
             const st = CELL_STYLE[state];
-            const client = clientsLabel(l.items);
-            const occupied = l.items.length > 0;
+            const client = clientsLabel(locationClients(l));
+            const occupied = isOccupied(l);
             const codeSize = Math.min(11.5, l.h * 0.3);
             const clientSize = Math.min(8.2, l.h * 0.23);
             const maxChars = Math.floor(l.w / (clientSize * 0.52));
@@ -218,7 +218,7 @@ export function UbicacionesMap({
                   }
                 }}
               >
-                <title>{`${l.code}${occupied ? ` · ${l.items.map((i) => `${i.clientName}: ${i.material}${i.verified ? "" : " (sin verificar)"}`).join(" · ")}` : l.active ? " · Libre" : " · Inactiva"}`}</title>
+                <title>{`${l.code}${occupied ? ` · ${[...l.assignedClients.filter((c) => !l.items.some((i) => i.clientKey === c.clientKey)).map((c) => `${c.clientName}: sin materiales`), ...l.items.map((i) => `${i.clientName}: ${i.material}${i.verified ? "" : " (sin verificar)"}`)].join(" · ")}` : l.active ? " · Libre" : " · Inactiva"}`}</title>
                 <rect x={l.x} y={l.y} width={l.w} height={l.h} rx={4} fill={st.fill} stroke={st.stroke} strokeWidth={state === "SELECCIONADA" ? 2.4 : state === "RESULTADO" ? 2 : 1.2} strokeDasharray={state === "INACTIVA" ? "3 2" : undefined} />
                 <text x={l.x + l.w / 2} y={l.y + (occupied ? l.h * 0.43 : l.h / 2)} textAnchor="middle" dominantBaseline="middle" fontSize={codeSize} fontWeight={800} fill={st.text}>{l.code}</text>
                 {l.active && l.items.some((i) => !i.verified) ? (

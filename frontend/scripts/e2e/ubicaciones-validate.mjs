@@ -1,5 +1,5 @@
 // E2E en Chromium real de DEPÓSITO › UBICACIONES. Base DESCARTABLE (marca verificada) y login real. Ver run-ubicaciones-local.sh.
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { chromium } from "playwright";
 import { assertE2eEnvironment, assertMarkedDatabase } from "./e2e-safety.mjs";
@@ -27,6 +27,7 @@ const cleanup = async () => {
   await q("delete from deposito_ingreso_ubicacion").catch(() => undefined);
   await q("delete from inv_me_ingresos where id = any($1::uuid[])", [fixtures.ings]).catch(() => undefined);
   await q("delete from inv_me_materials where id = any($1::uuid[])", [fixtures.mats]).catch(() => undefined);
+  await q("delete from deposito_ubicacion_clientes").catch(() => undefined);
   await q("delete from deposito_ubicacion_items").catch(() => undefined);
   await q("delete from deposito_ubicacion_movements where actor_email = any($1)", [EMAILS]).catch(() => undefined);
   await q("update deposito_ubicaciones set version = 1, observations = '', last_content_at = null, last_content_by = null, last_content_by_name = null where id like 'ubi-%' and code ~ '^[A-E][0-9][0-9]$'").catch(() => undefined);
@@ -69,7 +70,7 @@ try {
   const dep = await openAs(E2E_USERS.deposito, DESKTOP);
   const p = dep.page;
   await nav(p, "Ubicaciones");
-  check("título «Depósito · Ubicaciones»", (await T(p, "ubi-title").innerText()) === "Depósito · Ubicaciones");
+  check("título «Ubicaciones» (módulo unificado) y modo escritura para Depósito", (await T(p, "ubi-title").innerText()) === "Ubicaciones" && (await T(p, "ubi-root").getAttribute("data-mode")) === "deposito");
   check("mapa con las 36 posiciones", (await p.locator('[data-testid^="ubi-cell-"]').count()) === 36);
   check("indicadores 36 / 0 / 36 (calculados)", (await T(p, "ubi-kpi-total-valor").innerText()) === "36" && (await T(p, "ubi-kpi-ocupadas-valor").innerText()) === "0" && (await T(p, "ubi-kpi-libres-valor").innerText()) === "36");
   check("contorno en L, pasillo, escalera y vacío dibujados", (await T(p, "ubi-shape-contorno").count()) === 1 && (await T(p, "ubi-shape-vacio").count()) === 1 && (await T(p, "ubi-shape-escalera").count()) === 1 && (await T(p, "ubi-shape-pasillo").count()) >= 1);
@@ -203,28 +204,100 @@ try {
   check("anulado: cantidad retirada, registro conservado e historial", (await state(p, "C02")) === "LIBRE" && (await q("select status from deposito_ingreso_ubicacion where ingreso_id = $1", [ing1]))[0].status === "RETIRADO");
   await p.screenshot({ path: `${OUT}/desktop-ingresos.png` });
 
+  // ───── Asignación directa de clientes (Depósito) y consulta desde otro sector ─────
+  const B08 = ids.B08;
+  await cell(p, "B08").click();
+  check("B08 libre: botón «Asignar» del cliente visible para Depósito", (await state(p, "B08")) === "SELECCIONADA" && (await T(p, "ubi-clientes-editar").innerText()).includes("Asignar") && (await T(p, "ubi-panel-estado").innerText()) === "Libre");
+  await T(p, "ubi-clientes-editar").click();
+  await T(p, "ubi-clientes-dialog").waitFor();
+  await T(p, "ubi-clientes-input").fill("TRC");
+  await T(p, "ubi-clientes-agregar").click();
+  await T(p, "ubi-clientes-guardar").dblclick(); // doble toque: una sola asignación
+  await T(p, "ubi-notice").filter({ hasText: "Clientes de B08 actualizados" }).waitFor({ timeout: 30_000 });
+  check("B08 pasa a ocupada SIN materiales y el pallet muestra «TRC»", (await state(p, "B08")) === "SELECCIONADA" && (await T(p, "ubi-panel-estado").innerText()) === "Ocupada" && (await T(p, "ubi-panel-item").count()) === 0 && (await cell(p, "B08").textContent()).includes("TRC") && (await T(p, "ubi-panel-clientes").innerText()) === "TRC");
+  check("persistido: 1 cliente asignado, 0 materiales, 1 movimiento con usuario", (await q("select count(*)::int n from deposito_ubicacion_clientes where location_id = $1", [B08]))[0].n === 1 && (await q("select count(*)::int n from deposito_ubicacion_items where location_id = $1", [B08]))[0].n === 0 && (await q("select count(*)::int n from deposito_ubicacion_movements where to_location_id = $1 and detail->>'action' = 'cliente_asignado' and actor_email = $2", [B08, E2E_USERS.deposito.email]))[0].n === 1);
+  check("el botón pasa a «Editar» y los indicadores cuentan B08", (await T(p, "ubi-clientes-editar").innerText()).includes("Editar") && (await T(p, "ubi-kpi-libres-valor").innerText()) === String(36 - Number(await T(p, "ubi-kpi-ocupadas-valor").innerText())));
+  // Varios clientes → «TRC +1»; quitar uno.
+  await T(p, "ubi-clientes-editar").click();
+  await T(p, "ubi-clientes-input").fill("Zeta SA");
+  await T(p, "ubi-clientes-input").press("Enter");
+  await T(p, "ubi-clientes-guardar").click();
+  await T(p, "ubi-clientes-dialog").waitFor({ state: "detached", timeout: 30_000 });
+  await p.waitForFunction(() => document.querySelector('[data-testid="ubi-cell-B08"]')?.textContent?.includes("+1"), null, { timeout: 30_000 }).catch(() => undefined);
+  check("varios clientes: forma compacta «TRC +1» en el pallet", (await cell(p, "B08").textContent()).includes("TRC +1"));
+  await T(p, "ubi-clientes-editar").click();
+  await T(p, "ubi-clientes-item").filter({ hasText: "Zeta SA" }).locator('[data-testid="ubi-clientes-quitar"]').click();
+  await T(p, "ubi-clientes-guardar").click();
+  await T(p, "ubi-clientes-dialog").waitFor({ state: "detached", timeout: 30_000 });
+  await p.waitForFunction(() => !document.querySelector('[data-testid="ubi-cell-B08"]')?.textContent?.includes("+1"), null, { timeout: 30_000 }).catch(() => undefined);
+  check("quitar un cliente sin materiales: vuelve a «TRC» y queda en el historial", (await cell(p, "B08").textContent()).includes("TRC") && !(await cell(p, "B08").textContent()).includes("+1") && (await q("select count(*)::int n from deposito_ubicacion_movements where from_location_id = $1 and detail->>'action' = 'cliente_quitado'", [B08]))[0].n === 1);
+  // Cliente con materiales: no removible (UI deshabilitada y backend 4xx).
+  await cell(p, "A02").click();
+  await T(p, "ubi-clientes-editar").click();
+  await T(p, "ubi-clientes-dialog").waitFor();
+  check("cliente con materiales: botón de quitar deshabilitado", await T(p, "ubi-clientes-quitar").first().isDisabled());
+  await p.keyboard.press("Escape");
+  const rm = await api(p, "POST", { action: "clientes", key: uuid(), locationId: ids.A02, remove: ["trc"] });
+  check("backend rechaza quitar un cliente con materiales (409)", rm.status === 409 && /materiales/.test(String(rm.body.error)), `${rm.status} ${rm.body.error}`);
+
+  // Otro sector consulta: busca TRC, ve B08 resaltado y no puede editar.
+  const otro = await openAs(E2E_USERS.produccion, DESKTOP);
+  await nav(otro.page, "Ubicaciones");
+  await T(otro.page, "ubi-search").fill("TRC");
+  check("otro sector: la búsqueda de TRC resalta B08 (solo cliente asignado)", (await state(otro.page, "B08")) === "RESULTADO" && (await T(otro.page, "ubi-search-count").innerText()) === "4");
+  await cell(otro.page, "B08").click();
+  check("otro sector: ve cliente y estado de B08 pero SIN botón de edición", (await T(otro.page, "ubi-panel-clientes").innerText()) === "TRC" && (await T(otro.page, "ubi-panel-estado").innerText()) === "Ocupada" && (await T(otro.page, "ubi-clientes-editar").count()) === 0 && (await T(otro.page, "ubi-agregar").count()) === 0);
+  await otro.ctx.close();
+
   // ───── Envasado Masivo y Premium: consulta ─────
   for (const [user, name] of [[E2E_USERS.envasado, "Envasado Masivo"], [E2E_USERS.envasadoPremium, "Envasado Premium"]]) {
     const s = await openAs(user, DESKTOP);
-    await nav(s.page, "Ubicación de materiales");
+    await nav(s.page, "Ubicaciones");
     check(`${name}: mismo mapa (36 posiciones) en modo consulta`, (await s.page.locator('[data-testid^="ubi-cell-"]').count()) === 36 && (await T(s.page, "ubi-root").getAttribute("data-mode")) === "consulta");
     await T(s.page, "ubi-search").fill("TRC");
-    check(`${name}: buscar TRC resalta A02, A05 y D02`, (await T(s.page, "ubi-search-count").innerText()) === "3" && (await state(s.page, "A05")) === "RESULTADO");
+    check(`${name}: buscar TRC resalta A02, A05, D02 y B08 (solo cliente asignado)`, (await T(s.page, "ubi-search-count").innerText()) === "4" && (await state(s.page, "A05")) === "RESULTADO" && (await state(s.page, "B08")) === "RESULTADO");
     await cell(s.page, "A02").click();
     check(`${name}: ve cliente y materiales`, (await T(s.page, "ubi-panel-clientes").innerText()) === "TRC" && (await T(s.page, "ubi-panel-item").count()) === 2);
-    const hidden = await Promise.all(["ubi-agregar", "ubi-mover", "ubi-liberar", "ubi-obs-editar", "ubi-retirar", "ubi-config-toggle"].map((id) => T(s.page, id).count()));
+    const hidden = await Promise.all(["ubi-agregar", "ubi-mover", "ubi-liberar", "ubi-obs-editar", "ubi-retirar", "ubi-config-toggle", "ubi-clientes-editar"].map((id) => T(s.page, id).count()));
     check(`${name}: sin acciones de escritura visibles`, hidden.every((n) => n === 0), hidden.join(","));
+    const cl = await api(s.page, "POST", { action: "clientes", key: uuid(), locationId: ids.A03, add: ["X"] });
     const w = await api(s.page, "POST", { action: "agregar", key: uuid(), locationId: ids.A03, lines: [{ clientName: "X", material: "Y", quantity: 1 }] });
     const t = await api(s.page, "POST", { action: "trasladar", key: uuid(), fromId: ids.A02, toId: ids.A03, all: true });
     const c = await api(s.page, "POST", { action: "crear", code: "F91", x: 1, y: 1, w: 20, h: 20 }, "/config");
-    check(`${name}: el backend responde 403 a toda escritura`, w.status === 403 && t.status === 403 && c.status === 403, `${w.status}/${t.status}/${c.status}`);
+    check(`${name}: el backend responde 403 a toda escritura (incluida asignar clientes)`, w.status === 403 && t.status === 403 && c.status === 403 && cl.status === 403, `${w.status}/${t.status}/${c.status}/${cl.status}`);
     await s.page.screenshot({ path: `${OUT}/${user === E2E_USERS.envasado ? "masivo" : "premium"}-consulta.png` });
     await s.ctx.close();
   }
 
+  // ───── TODOS los sectores del registro ven UBICACIONES y el mapa de 36 posiciones ─────
+  const sectorSrc = readFileSync(new URL("../../src/types/operational/sector.ts", import.meta.url), "utf8");
+  const sectorIds = [...sectorSrc.match(/OPERATIONAL_SECTOR_IDS = \[([\s\S]*?)\] as const/)[1].matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]);
+  check(`registro de sectores leído (${sectorIds.length})`, sectorIds.length >= 11);
+  for (const sector of sectorIds) {
+    const user = Object.values(E2E_USERS).find((u) => u.sector === sector);
+    if (!user) { check(`sector ${sector}: existe usuario E2E`, false); continue; }
+    const s = await openAs(user, DESKTOP);
+    try {
+      await nav(s.page, "Ubicaciones");
+      const entries = await s.page.getByRole("button", { name: /^Ubicaciones$/ }).or(s.page.getByRole("link", { name: /^Ubicaciones$/ })).count();
+      const legacy = await s.page.getByText("Ubicación de materiales", { exact: true }).count();
+      const writeUi = (await Promise.all(["ubi-agregar", "ubi-mover", "ubi-liberar", "ubi-obs-editar", "ubi-retirar", "ubi-clientes-editar"].map((id) => T(s.page, id).count()))).reduce((a, b) => a + b, 0);
+      const mode = await T(s.page, "ubi-root").getAttribute("data-mode");
+      check(`sector ${sector}: pestaña UBICACIONES única, mapa de 36 posiciones, ${sector === "DEPOSITO" ? "modo escritura" : "solo lectura"}`, entries === 1 && legacy === 0 && (await s.page.locator('[data-testid^="ubi-cell-"]').count()) === 36 && (sector === "DEPOSITO" ? mode === "deposito" : mode === "consulta" && writeUi === 0), `${entries}/${legacy}/${mode}/${writeUi}`);
+      await cell(s.page, "A02").click();
+      check(`sector ${sector}: ve clientes, materiales y observaciones de A02`, (await T(s.page, "ubi-panel-clientes").innerText()).includes("TRC") && (await T(s.page, "ubi-panel-item").count()) >= 1 && (await T(s.page, "ubi-panel-obs").count()) === 1);
+      if (sector !== "DEPOSITO") {
+        const w = await api(s.page, "POST", { action: "clientes", key: uuid(), locationId: ids.A03, add: ["Intruso"] });
+        check(`sector ${sector}: backend 403 a asignar clientes y 200 a leer`, w.status === 403 && (await api(s.page, "GET")).status === 200, String(w.status));
+      }
+    } finally {
+      await s.ctx.close();
+    }
+  }
+
   // ───── Sincronización entre dos sesiones, sin recargar ─────
   const viewer = await openAs(E2E_USERS.envasado, DESKTOP);
-  await nav(viewer.page, "Ubicación de materiales");
+  await nav(viewer.page, "Ubicaciones");
   check("sesión B: C01 libre antes", (await state(viewer.page, "C01")) === "LIBRE");
   const r = await api(p, "POST", { action: "agregar", key: uuid(), locationId: ids.C01, lines: [{ clientName: "Sync SA", material: "Pomos", quantity: 10 }] });
   check("sesión A asigna C01", r.status === 200);
@@ -286,7 +359,7 @@ try {
 
   // Envasado en celular.
   const pm = await openAs(E2E_USERS.envasado, PHONE);
-  await nav(pm.page, "Ubicación de materiales");
+  await nav(pm.page, "Ubicaciones");
   check("celular Envasado: sin desborde y mapa visible", (await noOverflow(pm.page)) && (await T(pm.page, "ubi-map").isVisible()));
   await pm.ctx.close();
 } catch (e) {

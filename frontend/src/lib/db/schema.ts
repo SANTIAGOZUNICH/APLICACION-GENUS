@@ -2690,3 +2690,18 @@ export const depositoIngresoUbicacion = pgTable(
   },
   (table) => [index("deposito_ingreso_ubicacion_loc_idx").on(table.locationId)]
 );
+
+/** Clientes asignados DIRECTAMENTE a una posición (0094), independientes de los materiales. ≥ 1 ⇒ la posición está OCUPADA. Única por (posición, cliente). */
+export const depositoUbicacionClientes = pgTable(
+  "deposito_ubicacion_clientes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    locationId: text("location_id").notNull().references(() => depositoUbicaciones.id),
+    clientKey: text("client_key").notNull(),
+    clientName: text("client_name").notNull(),
+    assignedBy: text("assigned_by").notNull(),
+    assignedByName: text("assigned_by_name"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("deposito_ubicacion_clientes_uidx").on(table.locationId, table.clientKey), index("deposito_ubicacion_clientes_key_idx").on(table.clientKey)]
+);

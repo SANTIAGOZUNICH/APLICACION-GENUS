@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { addContent, adjustIngresoMe, getMap, linkContent, listClients, listIngresos, listMaterials, listMovements, placeIngresoMe, releaseLocation, removeContent, retireAnuladoIngreso, setObservations, transferContent } from "@/lib/ubicaciones/service";
+import { addContent, adjustIngresoMe, getMap, linkContent, listClients, listIngresos, listMaterials, listMovements, placeIngresoMe, releaseLocation, removeContent, retireAnuladoIngreso, setLocationClients, setObservations, transferContent } from "@/lib/ubicaciones/service";
 import { readJson, resolveUbActor, ubErrorResponse } from "@/lib/ubicaciones/http";
 import { OrdersValidationError } from "@/lib/orders/types";
 
@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const NO_STORE = { "Cache-Control": "no-store" };
 
-/** Lectura (Depósito, Envasado Masivo/Premium, Producción, Dirección). `?view=map` (por defecto) · `history` (locationId, kind, limit) · `clients` · `materials` (q). */
+/** Lectura (TODO sector autenticado). `?view=map` (por defecto) · `history` (locationId, kind, limit) · `clients` · `materials` (q). */
 export async function GET(request: Request) {
   try {
     const actor = await resolveUbActor(request);
@@ -29,7 +29,7 @@ export async function GET(request: Request) {
   }
 }
 
-/** Escritura de contenido (solo Depósito): `{ action: "agregar" | "retirar" | "observaciones" | "trasladar" | "liberar" | "ingreso_me", key, ... }`. */
+/** Escritura de contenido (solo Depósito): `{ action: "agregar" | "clientes" | "retirar" | "observaciones" | "trasladar" | "liberar" | "ingreso_me", key, ... }`. */
 export async function POST(request: Request) {
   try {
     const actor = await resolveUbActor(request);
@@ -38,6 +38,8 @@ export async function POST(request: Request) {
       case "agregar":
       case "asignar":
         return NextResponse.json(await addContent(actor, { key: b.key, locationId: b.locationId, expectedVersion: b.expectedVersion, lines: b.lines, observations: b.observations }));
+      case "clientes":
+        return NextResponse.json(await setLocationClients(actor, { key: b.key, locationId: b.locationId, expectedVersion: b.expectedVersion, add: b.add, remove: b.remove }));
       case "retirar":
         return NextResponse.json(await removeContent(actor, { key: b.key, locationId: b.locationId, expectedVersion: b.expectedVersion, lines: b.lines }));
       case "observaciones":
