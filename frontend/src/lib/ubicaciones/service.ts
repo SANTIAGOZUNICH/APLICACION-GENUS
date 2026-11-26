@@ -29,8 +29,8 @@ import {
   clientKeyOf,
   cleanLabel,
   computeIndicators,
+  findOverlap,
   fromMilli,
-  materialKeyOf,
   mergeQuantity,
   normalizeMaterialCode,
   normalizeText,
@@ -560,6 +560,9 @@ export async function createLocation(actor: UbActor, input: { code: unknown; zon
     if (!geo.ok) fail(geo.message);
     const dup = await tx.select({ id: depositoUbicaciones.id }).from(depositoUbicaciones).where(sql`upper(${depositoUbicaciones.code}) = ${code.value}`).limit(1);
     if (dup.length) fail(`Ya existe una ubicación con el código ${code.value} (puede estar desactivada).`);
+    const others = (await tx.select().from(depositoUbicaciones).where(eq(depositoUbicaciones.active, true))) as LocRow[];
+    const hit = findOverlap(geo.value, others);
+    if (hit) fail(`La posición se superpone con ${hit.code}. Elegí otras coordenadas.`);
     const [max] = await tx.select({ m: sql<number>`coalesce(max(${depositoUbicaciones.sortOrder}), 0)` }).from(depositoUbicaciones);
     const sortOrder = Number.isInteger(input.sortOrder) ? (input.sortOrder as number) : Number(max?.m ?? 0) + 1;
     const [row] = await tx
@@ -609,6 +612,11 @@ export async function updateLocation(actor: UbActor, input: { id: unknown; expec
       if (typeof input.active !== "boolean") fail("Estado inválido.");
       if (!input.active && loc.active && items.length) fail(`La ubicación ${loc.code} está ocupada: liberala antes de desactivarla.`);
       patch.active = input.active;
+    }
+    if ((patch.active ?? loc.active) && (patch.x !== undefined || patch.active === true)) {
+      const rect = { id: loc.id, x: patch.x ?? loc.x, y: patch.y ?? loc.y, w: patch.w ?? loc.w, h: patch.h ?? loc.h };
+      const hit = findOverlap(rect, (await tx.select().from(depositoUbicaciones).where(eq(depositoUbicaciones.active, true))) as LocRow[]);
+      if (hit) fail(`La posición se superpone con ${hit.code}. Elegí otras coordenadas.`);
     }
     const now = new Date();
     const [row] = await tx.update(depositoUbicaciones).set({ ...patch, version: loc.version + 1, updatedAt: now, updatedBy: actor.email }).where(eq(depositoUbicaciones.id, loc.id)).returning();

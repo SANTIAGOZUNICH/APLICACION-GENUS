@@ -26,7 +26,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Reportar problema",
       "Registrar avance",
     ],
-    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "entregas", "historial", "avisos", "entregas_internas", "vista_mensual", "dashboard", "procedimientos", "metricas", "insumos"],
+    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "entregas", "historial", "avisos", "entregas_internas", "vista_mensual", "dashboard", "procedimientos", "metricas", "insumos", "ubicacion_materiales"],
     creamyContext: {
       role: "Copiloto de envasado masivo",
       topics: ["prioridades", "OA", "bloqueos", "insumos", "entregas"],
@@ -64,7 +64,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Entregar",
       "Reportar problema",
     ],
-    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "entregas", "historial", "avisos", "entregas_internas", "vista_mensual", "dashboard", "procedimientos", "metricas", "insumos"],
+    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "entregas", "historial", "avisos", "entregas_internas", "vista_mensual", "dashboard", "procedimientos", "metricas", "insumos", "ubicacion_materiales"],
     creamyContext: {
       role: "Copiloto de envasado premium",
       topics: ["prioridades", "OA", "lotes premium", "insumos", "entregas"],
@@ -203,6 +203,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "expedicion",
       "ingreso_cajas_genus",
       "insumos",
+      "ubicaciones",
     ],
     creamyContext: {
       role: "Copiloto de depósito",
@@ -354,7 +355,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     visibleEntities: ["pedido", "plan_semanal", "lote"],
     workItemSources: ["semanas_2026", "pedidos_2026"],
     allowedActions: ["Ver panorama", "Consultar pedido", "Ver alertas"],
-    sidebarItems: ["mi_trabajo", "consulta", "plan_semanal", "pendientes", "entregas", "entregas_produccion", "portal_clientes", "configuracion", "entregas_internas", "vista_mensual", "dashboard", "procedimientos", "observaciones_produccion"],
+    sidebarItems: ["mi_trabajo", "consulta", "plan_semanal", "pendientes", "entregas", "entregas_produccion", "portal_clientes", "configuracion", "entregas_internas", "vista_mensual", "dashboard", "procedimientos", "observaciones_produccion", "ubicaciones"],
     restrictedSidebarItems: ["direccion"],
     creamyContext: {
       role: "Copiloto ejecutivo",

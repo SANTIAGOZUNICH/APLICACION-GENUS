@@ -33,6 +33,7 @@ import { PedidosDepositoView } from "@/features/os/operational/views/pedidos-dep
 import { EntregasProduccionView } from "@/features/os/operational/views/entregas-produccion-view";
 import { InsumosView } from "@/features/os/operational/views/insumos-view";
 import { IngresoCajasGenusView } from "@/features/os/operational/views/ingreso-cajas-genus-view";
+import { UbicacionesView } from "@/features/os/operational/views/ubicaciones-view";
 import { ObservacionesProduccionView } from "@/features/os/operational/views/observaciones-produccion-view";
 import { DepositoGranelesView } from "@/features/os/operational/views/deposito-graneles-view";
 import { MeAvisosView } from "@/features/os/operational/views/me-avisos-view";
@@ -129,6 +130,10 @@ export function TwinRouter() {
       return <DepositoGranelesView />;
     case "entregas-produccion":
       return <EntregasProduccionView />;
+    case "ubicaciones":
+      return <UbicacionesView mode="deposito" />;
+    case "ubicacion-materiales":
+      return <UbicacionesView mode="consulta" />;
     case "ingreso-cajas-genus":
       return <IngresoCajasGenusView />;
     case "observaciones-produccion":

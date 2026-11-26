@@ -149,3 +149,14 @@ describe("configuración del mapa", () => {
     expect(parsePolygon([[0, 0], [500, 0], [1, 1]], c)).toMatchObject({ ok: false });
   });
 });
+
+describe("superposición de posiciones", () => {
+  const others = [{ id: "a", code: "A01", active: true, x: 10, y: 10, w: 50, h: 36 }, { id: "b", code: "B01", active: false, x: 100, y: 10, w: 50, h: 36 }];
+  it("detecta superposición, ignora bordes que se tocan, inactivas y a sí misma", async () => {
+    const { findOverlap } = await import("./rules");
+    expect(findOverlap({ x: 30, y: 20, w: 20, h: 20 }, others)?.code).toBe("A01");
+    expect(findOverlap({ x: 60, y: 10, w: 20, h: 20 }, others)).toBeNull();
+    expect(findOverlap({ x: 100, y: 10, w: 20, h: 20 }, others)).toBeNull();
+    expect(findOverlap({ id: "a", x: 10, y: 10, w: 50, h: 36 }, others)).toBeNull();
+  });
+});

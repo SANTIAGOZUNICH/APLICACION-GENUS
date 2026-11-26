@@ -33,6 +33,7 @@ import {
   Receipt,
   PackagePlus,
   MessageSquareText,
+  MapPinned,
 } from "lucide-react";
 import type { SidebarItemId } from "@/lib/role-engine/types";
 
@@ -59,6 +60,8 @@ const ICONS = {
   deposito_graneles: FlaskConical,
   entregas_produccion: Truck,
   ingreso_cajas_genus: PackagePlus,
+  ubicaciones: MapPinned,
+  ubicacion_materiales: MapPinned,
   observaciones_produccion: MessageSquareText,
   pedidos_deposito: ClipboardList,
   control_me: ShieldAlert,
@@ -112,6 +115,8 @@ export const SIDEBAR_LABELS: Record<SidebarItemId, string> = {
   deposito_graneles: "Depósito Graneles",
   entregas_produccion: "Entregas Producción",
   ingreso_cajas_genus: "Ingreso de Cajas Genus",
+  ubicaciones: "Ubicaciones",
+  ubicacion_materiales: "Ubicación de materiales",
   observaciones_produccion: "Observaciones",
   pedidos_deposito: "Pedidos",
   control_me: "Control de ME",

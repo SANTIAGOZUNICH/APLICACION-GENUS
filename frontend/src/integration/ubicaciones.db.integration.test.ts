@@ -50,9 +50,11 @@ describe.skipIf(Boolean(PROBLEM))(`Ubicaciones en Postgres real${PROBLEM ? ` —
   });
 
   /** Posición de prueba propia (no depende de las sembradas). */
+  let slot = 0;
   const newLoc = async (code: string) => {
     const s = await svc();
-    const l = await s.createLocation(deposito, { code: `${code}${RUN}`, zone: "Prueba", x: 1, y: 1, w: 20, h: 20 });
+    const n = slot++; // cada posición de prueba en su propio lugar del plano (no se permiten superposiciones)
+    const l = await s.createLocation(deposito, { code: `${code}${RUN}`, zone: "Prueba", x: 2 + (n % 16) * 24, y: 680 + Math.floor(n / 16) * 18, w: 20, h: 15 });
     created.push(l.id);
     return l;
   };
@@ -365,6 +367,8 @@ describe.skipIf(Boolean(PROBLEM))(`Ubicaciones en Postgres real${PROBLEM ? ` —
     await expect(s.createLocation(deposito, { code: `CFG${RUN}`, x: 5, y: 5, w: 30, h: 20 })).rejects.toThrow(/Ya existe/);
     await expect(s.createLocation(deposito, { code: "A01", x: 5, y: 5, w: 30, h: 20 })).rejects.toThrow(/Ya existe/);
     await expect(s.createLocation(deposito, { code: "OUT1", x: 390, y: 5, w: 30, h: 20 })).rejects.toThrow(/se sale del plano/);
+    await expect(s.createLocation(deposito, { code: "OVL1", x: 100, y: 20, w: 30, h: 20 })).rejects.toThrow(/se superpone con C01/);
+    await expect(s.updateLocation(deposito, { id: l.id, x: 12, y: 106 })).rejects.toThrow(/se superpone con A01/);
     await expect(s.createLocation(deposito, { code: "bad code!", x: 5, y: 5, w: 30, h: 20 })).rejects.toThrow(/letras, números/);
     const moved = await s.updateLocation(deposito, { id: l.id, expectedVersion: l.version, x: 40, y: 50, w: 44, h: 30, zone: "Otra", sortOrder: 500 });
     expect(moved).toMatchObject({ x: 40, y: 50, w: 44, h: 30, zone: "Otra", sortOrder: 500, version: l.version + 1 });
@@ -375,7 +379,7 @@ describe.skipIf(Boolean(PROBLEM))(`Ubicaciones en Postgres real${PROBLEM ? ` —
     await expect(s.updateLocation(deposito, { id: l.id, code: `otro${RUN}` })).rejects.toThrow(/ocupada/);
     await expect(s.updateLocation(deposito, { id: l.id, active: false })).rejects.toThrow(/ocupada/);
     // Sí se puede mover/redimensionar una ocupada.
-    expect((await s.updateLocation(deposito, { id: l.id, x: 60, y: 60 })).x).toBe(60);
+    expect((await s.updateLocation(deposito, { id: l.id, x: 45, y: 60 })).x).toBe(45);
     await expect(s.addContent(deposito, { key: key(), locationId: l.id, lines: [line({ quantity: 1 })] })).resolves.toBeTruthy();
     await s.releaseLocation(deposito, { key: key(), locationId: l.id });
     const off = await s.updateLocation(deposito, { id: l.id, active: false });

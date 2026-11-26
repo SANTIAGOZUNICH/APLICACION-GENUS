@@ -280,6 +280,12 @@ export function parseGeometry(raw: Partial<Record<keyof Geometry, unknown>>, can
   return { ok: true, value: g };
 }
 
+/** Posición de `others` que se superpone con el rectángulo (los bordes que solo se tocan no cuentan). */
+export function findOverlap<T extends Geometry & { id: string; code: string; active: boolean }>(rect: Geometry & { id?: string }, others: readonly T[]): T | null {
+  const eps = 0.05;
+  return others.find((o) => o.active && o.id !== rect.id && rect.x < o.x + o.w - eps && o.x < rect.x + rect.w - eps && rect.y < o.y + o.h - eps && o.y < rect.y + rect.h - eps) ?? null;
+}
+
 /** Una posición solo se puede desactivar o renombrar si está vacía: así el historial y el contenido nunca quedan huérfanos. */
 export function canRetireOrRename(l: { items: readonly unknown[] }): boolean {
   return l.items.length === 0;
