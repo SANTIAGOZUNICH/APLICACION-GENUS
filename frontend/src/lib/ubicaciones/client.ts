@@ -34,6 +34,7 @@ export const opIngresoAjustar = (b: Record<string, unknown>) => post("", { actio
 export const opIngresoRetirar = (b: Record<string, unknown>) => post("", { action: "ingreso_retirar", ...b }) as Promise<OpResultView>;
 export const opVincular = (b: Record<string, unknown>) => post("", { action: "vincular", ...b }) as Promise<OpResultView>;
 export const opAgregar = (b: Record<string, unknown>) => post("", { action: "agregar", ...b }) as Promise<OpResultView>;
+export const opClientes = (b: Record<string, unknown>) => post("", { action: "clientes", ...b }) as Promise<OpResultView>;
 export const opRetirar = (b: Record<string, unknown>) => post("", { action: "retirar", ...b }) as Promise<OpResultView>;
 export const opObservaciones = (b: Record<string, unknown>) => post("", { action: "observaciones", ...b }) as Promise<OpResultView>;
 export const opTrasladar = (b: Record<string, unknown>) => post("", { action: "trasladar", ...b }) as Promise<OpResultView>;

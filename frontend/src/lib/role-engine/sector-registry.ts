@@ -2,7 +2,7 @@ import { defineSector } from "@/lib/role-engine/sector-definition";
 import type { SectorDefinition } from "@/lib/role-engine/types";
 import type { SectorId } from "@/types/operational/sector";
 
-export const SECTOR_DEFINITIONS: SectorDefinition[] = [
+const BASE_SECTOR_DEFINITIONS: SectorDefinition[] = [
   defineSector({
     id: "ENVASADO_MASIVO",
     title: "Envasado Masivo",
@@ -26,7 +26,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Reportar problema",
       "Registrar avance",
     ],
-    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "entregas", "historial", "avisos", "entregas_internas", "vista_mensual", "dashboard", "procedimientos", "metricas", "insumos", "ubicacion_materiales"],
+    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "entregas", "historial", "avisos", "entregas_internas", "vista_mensual", "dashboard", "procedimientos", "metricas", "insumos"],
     creamyContext: {
       role: "Copiloto de envasado masivo",
       topics: ["prioridades", "OA", "bloqueos", "insumos", "entregas"],
@@ -64,7 +64,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Entregar",
       "Reportar problema",
     ],
-    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "entregas", "historial", "avisos", "entregas_internas", "vista_mensual", "dashboard", "procedimientos", "metricas", "insumos", "ubicacion_materiales"],
+    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "entregas", "historial", "avisos", "entregas_internas", "vista_mensual", "dashboard", "procedimientos", "metricas", "insumos"],
     creamyContext: {
       role: "Copiloto de envasado premium",
       topics: ["prioridades", "OA", "lotes premium", "insumos", "entregas"],
@@ -395,6 +395,21 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     dataMode: "placeholder",
   }),
 ];
+
+/** Id único de la pestaña UBICACIONES y el id anterior que se reemplaza (Envasado › «Ubicación de materiales»). */
+export const UBICACIONES_SIDEBAR_ID = "ubicaciones" as const;
+export const LEGACY_UBICACION_MATERIALES_ID = "ubicacion_materiales" as const;
+
+/**
+ * UBICACIONES la ven TODOS los sectores del registro, sin excepción: se agrega acá (una sola vez, al final) en vez de repetirla a mano en cada
+ * definición, así un sector nuevo la recibe solo y nunca queda duplicada ni con el id viejo. Solo lectura salvo Depósito (lo decide el servidor).
+ */
+function withUbicaciones(definition: SectorDefinition): SectorDefinition {
+  const items = (definition.sidebarItems as string[]).filter((i) => i !== UBICACIONES_SIDEBAR_ID && i !== LEGACY_UBICACION_MATERIALES_ID);
+  return defineSector({ ...definition, sidebarItems: [...items, UBICACIONES_SIDEBAR_ID] as SectorDefinition["sidebarItems"] });
+}
+
+export const SECTOR_DEFINITIONS: SectorDefinition[] = BASE_SECTOR_DEFINITIONS.map(withUbicaciones);
 
 export const SECTOR_REGISTRY: ReadonlyMap<SectorId, SectorDefinition> = new Map(
   SECTOR_DEFINITIONS.map((definition) => [definition.id, definition])

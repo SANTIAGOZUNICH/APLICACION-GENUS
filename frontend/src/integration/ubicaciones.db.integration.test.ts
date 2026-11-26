@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { assertMarkedDatabase, e2eEnvironmentProblem } from "../../scripts/e2e/e2e-safety.mjs";
+import { OPERATIONAL_SECTOR_IDS } from "@/types/operational/sector";
 import { cellState, computeIndicators, searchLocations, subtotals } from "@/lib/ubicaciones/rules";
 
 const PROBLEM = e2eEnvironmentProblem() ?? (process.env.GENUS_E2E_DATABASE_URL ? null : "falta GENUS_E2E_DATABASE_URL");
@@ -40,6 +41,7 @@ describe.skipIf(Boolean(PROBLEM))(`Ubicaciones en Postgres real${PROBLEM ? ` —
 
   afterAll(async () => {
     const ids = created.length ? created : ["-"];
+    await q("delete from deposito_ubicacion_clientes where location_id = any($1)", [ids]).catch(() => undefined);
     await q("delete from deposito_ubicacion_items where location_id = any($1) or location_id in ('ubi-a02','ubi-b05','ubi-a03')", [ids]).catch(() => undefined);
     await q("delete from deposito_ubicacion_movements where actor_email like $1", [`it-ubi-%-${RUN}@%`]).catch(() => undefined);
     await q("delete from deposito_ubicaciones where id = any($1)", [ids]).catch(() => undefined);
@@ -517,7 +519,7 @@ describe.skipIf(Boolean(PROBLEM))(`Ubicaciones en Postgres real${PROBLEM ? ` —
     expect(Array.isArray((await s.listIngresos(masivo)).unplaced)).toBe(true);
   });
 
-  it("permisos: Envasado Masivo/Premium, Producción y Dirección leen; Envasado y los demás NO escriben (403 en toda escritura); otros sectores ni leen", async () => {
+  it("permisos: TODOS los sectores leen; solo Depósito escribe (403 en toda escritura de los demás); config solo Depósito y Dirección", async () => {
     const s = await svc();
     const l = await newLoc("TE");
     const l2 = await newLoc("TF");
@@ -546,7 +548,14 @@ describe.skipIf(Boolean(PROBLEM))(`Ubicaciones en Postgres real${PROBLEM ? ` —
       await expect(s.upsertShape(who, { kind: "PASILLO", x: 1, y: 1, w: 20, h: 20 })).rejects.toThrow(/Solo Depósito y Dirección/);
       await expect(s.updateMapConfig(who, { title: "x" })).rejects.toThrow(/Solo Depósito y Dirección/);
     }
-    await expect(s.getMap(codificado)).rejects.toThrow(/no puede consultar/);
+    // Todos los sectores operativos consultan (solo lectura); sin sesión/sector válido no.
+    for (const sector of OPERATIONAL_SECTOR_IDS) {
+      const m = await s.getMap(actor(sector));
+      expect(m.locations.length).toBeGreaterThan(36);
+      expect(m.capabilities.read).toBe(true);
+      expect(m.capabilities.write).toBe(sector === "DEPOSITO");
+    }
+    await expect(s.getMap({ email: "x@y.z", sector: "NADA" as never })).rejects.toThrow(/no puede consultar/);
     expect((await s.getMap(deposito)).locations.find((x) => x.id === l.id)!.items[0]!.quantity).toBe(10); // nada cambió
   });
 
@@ -596,5 +605,102 @@ describe.skipIf(Boolean(PROBLEM))(`Ubicaciones en Postgres real${PROBLEM ? ` —
     await expect(s.updateMapConfig(deposito, { width: 100, height: 100 })).rejects.toThrow(/más chico/);
     expect(await s.updateMapConfig(direccion, { title: "Planta alta" })).toMatchObject({ width: 400, height: 740, title: "Planta alta" });
     await s.updateMapConfig(direccion, { title: "Planta alta · Depósito de material de envase y empaque" });
+  });
+
+  it("clientes asignados: sin materiales = ocupada; búsqueda; varios; quitar sin materiales OK, con materiales rechazado; idempotencia, versión, historial y permisos", async () => {
+    const s = await svc();
+    const l = await newLoc("CL");
+    const freeBefore = (await s.getMap(deposito)).indicators;
+    // 1) Asignar TRC sin materiales → ocupada, sin items.
+    const k1 = key();
+    const r1 = await s.setLocationClients(deposito, { key: k1, locationId: l.id, expectedVersion: l.version, add: ["TRC"] });
+    let v = r1.locations[0]!;
+    expect(v.items).toHaveLength(0);
+    expect(v.assignedClients.map((c) => c.clientName)).toEqual(["TRC"]);
+    expect(v.clients).toEqual([{ clientKey: "trc", clientName: "TRC", assigned: true, hasMaterials: false, removable: true }]);
+    expect(v.version).toBe(l.version + 1);
+    expect(cellState(v, { selected: false, match: false })).toBe("OCUPADA");
+    let map = await s.getMap(masivo); // otro sector lo ve igual
+    expect(map.indicators.ocupadas).toBe(freeBefore.ocupadas + 1);
+    expect(map.indicators.libres).toBe(freeBefore.libres - 1);
+    expect(searchLocations(map.locations, "trc").some((x) => x.id === l.id)).toBe(true);
+    expect((await q("select count(*)::int n from deposito_ubicacion_items where location_id = $1", [l.id]))[0]!.n).toBe(0); // sin materiales ficticios
+    // 2) Idempotencia: misma clave = no se repite; nueva clave con el mismo cliente = rechazo claro; el cliente no se duplica.
+    const again = await s.setLocationClients(deposito, { key: k1, locationId: l.id, add: ["TRC"] });
+    expect(again.replayed).toBe(true);
+    await expect(s.setLocationClients(deposito, { key: key(), locationId: l.id, add: ["  trc "] })).rejects.toThrow(/ya están asignados/);
+    expect((await q("select count(*)::int n from deposito_ubicacion_clientes where location_id = $1", [l.id]))[0]!.n).toBe(1);
+    // 3) Versión: una versión vieja da conflicto 409.
+    await expect(s.setLocationClients(deposito, { key: key(), locationId: l.id, expectedVersion: l.version, add: ["Zeta"] })).rejects.toThrow(/fue modificada por otra persona/);
+    // 4) Varios clientes a la vez; el mapa muestra «TRC +1».
+    const r2 = await s.setLocationClients(deposito, { key: key(), locationId: l.id, expectedVersion: v.version, add: ["Zeta SA", "Beta"] });
+    v = r2.locations[0]!;
+    expect(v.clients.map((c) => c.clientName)).toEqual(["Beta", "TRC", "Zeta SA"]);
+    // 5) Materiales de TRC: pasa a «con materiales», no removible; quitar → rechazado (422) y no cambia nada.
+    const r3 = await s.addContent(deposito, { key: key(), locationId: l.id, expectedVersion: v.version, lines: [line({ clientName: "TRC", quantity: 5 })] });
+    v = r3.locations[0]!;
+    expect(v.clients.find((c) => c.clientKey === "trc")).toMatchObject({ assigned: true, hasMaterials: true, removable: false });
+    await expect(s.setLocationClients(deposito, { key: key(), locationId: l.id, remove: ["trc"] })).rejects.toThrow(/todavía tiene materiales/);
+    expect((await s.getMap(deposito)).locations.find((x) => x.id === l.id)!.assignedClients).toHaveLength(3);
+    // Un cliente que solo existe por sus materiales tampoco se quita.
+    const r4 = await s.addContent(deposito, { key: key(), locationId: l.id, lines: [line({ clientName: "Gamma", quantity: 1 })] });
+    expect(r4.locations[0]!.clients.find((c) => c.clientKey === "gamma")).toMatchObject({ assigned: false, removable: false });
+    await expect(s.setLocationClients(deposito, { key: key(), locationId: l.id, remove: ["gamma"] })).rejects.toThrow(/todavía tiene materiales/);
+    // 6) Quitar clientes sin materiales: OK; mezcla alta + baja en una operación.
+    const kq = key();
+    const r5 = await s.setLocationClients(deposito, { key: kq, locationId: l.id, remove: ["beta"], add: ["Delta"] });
+    v = r5.locations[0]!;
+    expect(v.assignedClients.map((c) => c.clientName).sort()).toEqual(["Delta", "TRC", "Zeta SA"]);
+    expect((await s.setLocationClients(deposito, { key: kq, locationId: l.id, remove: ["beta"], add: ["Delta"] })).replayed).toBe(true);
+    await expect(s.setLocationClients(deposito, { key: key(), locationId: l.id, remove: ["beta"] })).rejects.toThrow(/no está asignado/);
+    // 7) Retirar todos los materiales: sigue ocupada por clientes asignados (independiente del contenido).
+    const items = (await s.getMap(deposito)).locations.find((x) => x.id === l.id)!.items;
+    const r6 = await s.removeContent(deposito, { key: key(), locationId: l.id, lines: items.map((i) => ({ itemId: i.id, quantity: null })) });
+    expect(r6.locations[0]!.items).toHaveLength(0);
+    expect(cellState(r6.locations[0]!, { selected: false, match: false })).toBe("OCUPADA");
+    // 8) Con solo clientes asignados no se puede desactivar/renombrar; liberar quita todo y queda libre.
+    await expect(s.updateLocation(deposito, { id: l.id, active: false })).rejects.toThrow(/ocupada/);
+    const rel = await s.releaseLocation(deposito, { key: key(), locationId: l.id });
+    expect(rel.locations[0]!.assignedClients).toHaveLength(0);
+    expect(cellState(rel.locations[0]!, { selected: false, match: false })).toBe("LIBRE");
+    expect((await s.getMap(deposito)).indicators).toEqual(freeBefore);
+    // 9) Historial INSERT-only con usuario y fecha.
+    const hist = await s.listMovements(masivo, { locationId: l.id });
+    const asig = hist.filter((m) => m.detail.action === "cliente_asignado");
+    const quit = hist.filter((m) => m.detail.action === "cliente_quitado");
+    expect(asig.length).toBe(3);
+    expect(quit.length).toBe(1);
+    expect(asig.every((m) => m.kind === "ASIGNACION" && m.actorEmail === deposito.email && m.actorName === deposito.displayName && m.actorSector === "DEPOSITO" && !Number.isNaN(Date.parse(m.createdAt)))).toBe(true);
+    expect(quit[0]).toMatchObject({ kind: "RETIRO", fromCode: l.code });
+    expect(quit[0]!.lines.map((x) => x.clientName)).toEqual(["Beta"]);
+    // 10) Permisos en el backend: ningún otro sector asigna ni quita; todos leen.
+    for (const sector of OPERATIONAL_SECTOR_IDS.filter((x) => x !== "DEPOSITO")) {
+      await expect(s.setLocationClients(actor(sector), { key: key(), locationId: l.id, add: ["Intruso"] })).rejects.toThrow(/Solo Depósito/);
+      await expect(s.setLocationClients(actor(sector), { key: key(), locationId: l.id, remove: ["trc"] })).rejects.toThrow(/Solo Depósito/);
+      expect((await s.getMap(actor(sector))).locations.some((x) => x.id === l.id)).toBe(true);
+    }
+    // 11) Validaciones y posición inactiva.
+    await expect(s.setLocationClients(deposito, { key: key(), locationId: l.id, add: ["   "] })).rejects.toThrow(/nombre del cliente/);
+    await expect(s.setLocationClients(deposito, { key: key(), locationId: l.id })).rejects.toThrow(/Indicá qué cliente/);
+    await expect(s.setLocationClients(deposito, { key: "corta", locationId: l.id, add: ["X"] })).rejects.toThrow(/clave de la operación/);
+    // La lista de clientes sugeridos incluye los asignados (misma fuente que el resto del módulo).
+    await s.setLocationClients(deposito, { key: key(), locationId: l.id, add: [`Cli Unico ${RUN}`] });
+    expect((await s.listClients(masivo)).some((c) => c.name === `Cli Unico ${RUN}`)).toBe(true);
+  });
+
+  it("clientes asignados: concurrencia (misma posición y misma clave) no duplica y el stock/inventario no se toca", async () => {
+    const s = await svc();
+    const l = await newLoc("CC");
+    const before = await stockSnapshot();
+    const k = key();
+    const res = await Promise.allSettled([
+      s.setLocationClients(deposito, { key: k, locationId: l.id, add: ["TRC"] }),
+      s.setLocationClients(deposito, { key: k, locationId: l.id, add: ["TRC"] }),
+      s.setLocationClients(deposito, { key: key(), locationId: l.id, add: ["TRC"] }),
+    ]);
+    expect(res.filter((r) => r.status === "fulfilled").length).toBeGreaterThanOrEqual(1);
+    expect((await q("select count(*)::int n from deposito_ubicacion_clientes where location_id = $1", [l.id]))[0]!.n).toBe(1);
+    expect((await q("select count(*)::int n from deposito_ubicacion_movements where to_location_id = $1 and detail->>'action' = 'cliente_asignado'", [l.id]))[0]!.n).toBe(1);
+    expect(await stockSnapshot()).toEqual(before);
   });
 });

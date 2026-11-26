@@ -2,7 +2,7 @@
 
 /**
  * Cuerpo ÚNICO del mapa de ubicaciones: indicadores, buscador, referencias, mapa, panel de la posición y lista de sectores.
- * Depósito (`mode="deposito"`) agrega las acciones; Envasado Masivo/Premium (`mode="consulta"`) usa exactamente lo mismo SIN acciones de escritura.
+ * Lo ven TODOS los sectores (solo lectura). Las acciones de escritura aparecen solo si el servidor dice que el usuario puede escribir (Depósito) y la configuración del mapa si puede configurar (Depósito y Dirección).
  * Se mantiene al día solo (sondeo de lectura cada 10 s, postergado mientras se escribe en un formulario o hay una ventana abierta).
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -11,13 +11,13 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { SyncStatus, useAutoSync } from "@/features/os/operational/lib/use-auto-sync";
 import { UbicacionesApiError, fetchClients, fetchMap, newKey, opLiberar, opObservaciones } from "@/lib/ubicaciones/client";
-import { computeIndicators, distinctClients, fmtQty, fmtSubtotal, groupZones, itemMatches, locationStatus, searchLocations, subtotals } from "@/lib/ubicaciones/rules";
+import { computeIndicators, fmtQty, fmtSubtotal, groupZones, isOccupied, itemMatches, locationStatus, searchLocations, subtotals } from "@/lib/ubicaciones/rules";
 import type { MapView, OpResultView, UbicacionView } from "@/lib/ubicaciones/types";
 import { CELL_STYLE, UbicacionesMap } from "./ubicaciones-map";
-import { AddDialog, HistoryDialog, IngresosPanel, LinkDialog, RemoveDialog, TransferDialog, fieldCls, fmtDate } from "./ubicaciones-dialogs";
+import { AddDialog, ClientsDialog, HistoryDialog, IngresosPanel, LinkDialog, RemoveDialog, TransferDialog, fieldCls, fmtDate } from "./ubicaciones-dialogs";
 import { LocationConfigForm, NewLocationForm, ShapesDialog } from "./ubicaciones-config";
 
-type Dlg = { type: "add" } | { type: "link"; itemId: string } | { type: "transfer" } | { type: "remove"; itemId: string } | { type: "history"; all?: boolean } | { type: "release" } | { type: "shapes" } | null;
+type Dlg = { type: "add" } | { type: "clients" } | { type: "link"; itemId: string } | { type: "transfer" } | { type: "remove"; itemId: string } | { type: "history"; all?: boolean } | { type: "release" } | { type: "shapes" } | null;
 const sig = (m: MapView | null) => JSON.stringify(m ? { ...m, serverTime: "" } : null);
 
 function Kpi({ icon, value, label, tone, testid }: { icon: React.ReactNode; value: number; label: string; tone: string; testid: string }) {
@@ -30,7 +30,7 @@ function Kpi({ icon, value, label, tone, testid }: { icon: React.ReactNode; valu
   );
 }
 
-export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }) {
+export function UbicacionesWorkspace() {
   const [map, setMap] = useState<MapView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -51,8 +51,9 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
   const sync = useAutoSync({ run: load });
   const { syncNow } = sync;
 
-  const canWrite = mode === "deposito" && Boolean(map?.capabilities.write);
-  const canConfig = mode === "deposito" && Boolean(map?.capabilities.config);
+  const canWrite = Boolean(map?.capabilities.write);
+  const canConfig = Boolean(map?.capabilities.config);
+  const mode = canWrite ? "deposito" : "consulta";
 
   useEffect(() => {
     if (!canWrite) return;
@@ -115,7 +116,7 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
   }
 
   const actBtn = "min-h-11 flex-1 whitespace-nowrap";
-  const title = mode === "deposito" ? "Depósito · Ubicaciones" : "Ubicación de materiales";
+  const title = "Ubicaciones";
 
   if (!map) {
     return (
@@ -131,7 +132,7 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
       <header className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="text-2xl font-semibold tracking-tight" data-testid="ubi-title">{title}</h2>
-          <p className="text-sm text-[var(--os-text-muted)]">{mode === "deposito" ? "Gestión de pallets y materiales de envase." : "Consultá dónde está el material de cada cliente."}</p>
+          <p className="text-sm text-[var(--os-text-muted)]">{canWrite ? "Gestión de pallets, clientes y materiales de envase." : "Consultá dónde está el material de cada cliente (solo lectura)."}</p>
           <SyncStatus lastSyncAt={sync.lastSyncAt} error={sync.error} deferred={sync.deferred} />
         </div>
         <div className="flex flex-wrap gap-2">
@@ -187,20 +188,21 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
             <article className="overflow-hidden rounded-xl border border-[var(--os-border)] bg-[var(--os-surface)]" data-testid="ubi-panel" data-code={selected.code} data-state={locationStatus(selected)}>
               <header className="flex items-center justify-between gap-2 bg-[#0b2a4a] px-4 py-3 text-white">
                 <h3 className="flex items-center gap-2 text-lg font-bold"><MapPin className="size-5" /> Ubicación <span data-testid="ubi-panel-code">{selected.code}</span></h3>
-                <span className="rounded-md px-2.5 py-1 text-sm font-bold text-slate-900" style={{ background: selected.active ? CELL_STYLE[selected.items.length ? "OCUPADA" : "LIBRE"].fill : CELL_STYLE.INACTIVA.fill }} data-testid="ubi-panel-estado">{!selected.active ? "Inactiva" : selected.items.length ? "Ocupada" : "Libre"}</span>
+                <span className="rounded-md px-2.5 py-1 text-sm font-bold text-slate-900" style={{ background: selected.active ? CELL_STYLE[locationStatus(selected)].fill : CELL_STYLE.INACTIVA.fill }} data-testid="ubi-panel-estado">{!selected.active ? "Inactiva" : isOccupied(selected) ? "Ocupada" : "Libre"}</span>
               </header>
               <div className="space-y-4 p-4">
                 <div className="flex items-start gap-3">
                   <Users className="mt-1 size-5 shrink-0 text-[var(--os-text-muted)]" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs text-[var(--os-text-muted)]">{distinctClients(selected.items).length > 1 ? "Clientes asignados" : "Cliente asignado"}</p>
-                    <p className="break-words text-lg font-bold" data-testid="ubi-panel-clientes">{distinctClients(selected.items).join(" · ") || "—"}</p>
+                    <p className="text-xs text-[var(--os-text-muted)]">{selected.clients.length > 1 ? "Clientes asignados" : "Cliente asignado"}</p>
+                    <p className="break-words text-lg font-bold" data-testid="ubi-panel-clientes">{selected.clients.map((c) => c.clientName).join(" · ") || "—"}</p>
                   </div>
+                  {canWrite && selected.active ? <Button type="button" variant="secondary" className="min-h-11 shrink-0" onClick={() => setDlg({ type: "clients" })} data-testid="ubi-clientes-editar"><Pencil className="size-4" /> {selected.clients.length ? "Editar" : "Asignar"}</Button> : null}
                 </div>
                 <div>
                   <h4 className="mb-1 flex items-center justify-between gap-2 text-sm font-semibold">
                     <span className="flex items-center gap-2"><Package className="size-5 text-[var(--os-text-muted)]" /> Materiales almacenados ({selected.items.length})</span>
-                    {canWrite && selected.active ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => setDlg({ type: "add" })} data-testid="ubi-agregar"><Plus className="size-4" /> {selected.items.length ? "Agregar material" : "Asignar"}</Button> : null}
+                    {canWrite && selected.active ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => setDlg({ type: "add" })} data-testid="ubi-agregar"><Plus className="size-4" /> {selected.items.length ? "Agregar material" : "Cargar material"}</Button> : null}
                   </h4>
                   {selected.items.length ? (
                     <ul className="divide-y divide-[var(--os-border)] rounded-lg border border-[var(--os-border)]" data-testid="ubi-panel-materiales">
@@ -219,7 +221,7 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
                         </li>
                       ))}
                     </ul>
-                  ) : <p className="rounded-lg border border-dashed border-[var(--os-border)] p-3 text-sm text-[var(--os-text-muted)]" data-testid="ubi-panel-vacia">Esta ubicación está libre.</p>}
+                  ) : <p className="rounded-lg border border-dashed border-[var(--os-border)] p-3 text-sm text-[var(--os-text-muted)]" data-testid="ubi-panel-vacia">{isOccupied(selected) ? "Sin materiales cargados (ocupada por cliente asignado)." : "Esta ubicación está libre."}</p>}
                 </div>
                 {selected.items.length ? (
                   <div className="space-y-1 rounded-lg bg-[var(--os-bg)] p-3 text-sm" data-testid="ubi-panel-subtotales">
@@ -249,7 +251,7 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
                 </dl>
                 <div className="flex flex-wrap gap-2">
                   {canWrite && selected.items.length ? <Button type="button" variant="secondary" className={actBtn} onClick={() => setDlg({ type: "transfer" })} data-testid="ubi-mover"><ArrowLeftRight className="size-4" /> Mover ubicación</Button> : null}
-                  {canWrite && selected.items.length ? <Button type="button" variant="secondary" className={actBtn} onClick={() => setDlg({ type: "release" })} data-testid="ubi-liberar"><Trash2 className="size-4" /> Liberar ubicación</Button> : null}
+                  {canWrite && isOccupied(selected) ? <Button type="button" variant="secondary" className={actBtn} onClick={() => setDlg({ type: "release" })} data-testid="ubi-liberar"><Trash2 className="size-4" /> Liberar ubicación</Button> : null}
                   <Button type="button" variant="secondary" className={actBtn} onClick={() => setDlg({ type: "history" })} data-testid="ubi-historial"><History className="size-4" /> Ver historial</Button>
                 </div>
                 {canConfig && configMode ? (
@@ -294,7 +296,7 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
                   </summary>
                   <div className="flex flex-wrap gap-1.5 pb-2">
                     {z.items.map((l) => (
-                      <button key={l.id} type="button" className="min-h-11 min-w-11 rounded-lg border-2 px-1.5 text-sm font-bold text-slate-900" style={{ background: l.items.length ? CELL_STYLE.OCUPADA.fill : CELL_STYLE.LIBRE.fill, borderColor: l.id === selectedId ? "#0b1f3a" : l.items.length ? CELL_STYLE.OCUPADA.stroke : CELL_STYLE.LIBRE.stroke }} onClick={() => setSelectedId(l.id)} data-testid={`ubi-chip-${l.code}`}>{l.code}</button>
+                      <button key={l.id} type="button" className="min-h-11 min-w-11 rounded-lg border-2 px-1.5 text-sm font-bold text-slate-900" style={{ background: isOccupied(l) ? CELL_STYLE.OCUPADA.fill : CELL_STYLE.LIBRE.fill, borderColor: l.id === selectedId ? "#0b1f3a" : isOccupied(l) ? CELL_STYLE.OCUPADA.stroke : CELL_STYLE.LIBRE.stroke }} onClick={() => setSelectedId(l.id)} data-testid={`ubi-chip-${l.code}`}>{l.code}</button>
                     ))}
                   </div>
                 </details>
@@ -306,6 +308,7 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
       </div>
 
       {dlg?.type === "add" && selected ? <AddDialog location={selected} clients={clients} onClose={() => setDlg(null)} onDone={applyResult} /> : null}
+      {dlg?.type === "clients" && selected ? <ClientsDialog location={selected} clients={clients} onClose={() => setDlg(null)} onDone={applyResult} /> : null}
       {dlg?.type === "link" && selected && selected.items.find((i) => i.id === dlg.itemId) ? <LinkDialog location={selected} item={selected.items.find((i) => i.id === dlg.itemId)!} onClose={() => setDlg(null)} onDone={applyResult} /> : null}
       {dlg?.type === "transfer" && selected ? <TransferDialog from={selected} locations={locations} onClose={() => setDlg(null)} onDone={applyResult} /> : null}
       {dlg?.type === "remove" && selected ? <RemoveDialog location={selected} itemId={dlg.itemId} onClose={() => setDlg(null)} onDone={applyResult} /> : null}
@@ -315,7 +318,7 @@ export function UbicacionesWorkspace({ mode }: { mode: "deposito" | "consulta" }
         open={dlg?.type === "release" && Boolean(selected)}
         onOpenChange={(o) => !o && setDlg(null)}
         title={`Liberar ${selected?.code ?? ""}`}
-        description="Se quita todo el contenido de esta ubicación y queda libre. El movimiento queda registrado en el historial. No cambia el stock del depósito."
+        description="Se quitan todos los materiales y los clientes asignados de esta ubicación y queda libre. El movimiento queda registrado en el historial. No cambia el stock del depósito."
         confirmLabel="Liberar ubicación"
         variant="destructive"
         onConfirm={() => void release()}

@@ -105,7 +105,6 @@ export const SIDEBAR_ITEM_IDS = [
   "insumos",
   "ingreso_cajas_genus",
   "ubicaciones",
-  "ubicacion_materiales",
   "observaciones_produccion",
   "pedidos_deposito",
   "control_me",

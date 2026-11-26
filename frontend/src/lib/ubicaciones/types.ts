@@ -1,5 +1,5 @@
 import type { SectorId } from "@/types/operational/sector";
-import type { ShapeKind, UbicacionItem } from "./rules";
+import type { AssignedClient, LocationClient, ShapeKind, UbicacionItem } from "./rules";
 
 export type UbicacionItemView = UbicacionItem;
 
@@ -24,6 +24,10 @@ export type UbicacionView = {
   lastModifiedAt: string | null;
   lastModifiedBy: string | null;
   items: UbicacionItem[];
+  /** Clientes asignados directamente (sin materiales). Con ≥ 1 la posición está OCUPADA. */
+  assignedClients: AssignedClient[];
+  /** Lista efectiva = asignados ∪ clientes de los materiales (los de materiales no se pueden quitar). */
+  clients: LocationClient[];
 };
 
 export type MapView = {

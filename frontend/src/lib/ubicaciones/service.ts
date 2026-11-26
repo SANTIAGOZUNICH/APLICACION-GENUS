@@ -13,7 +13,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
-import { depositoIngresoUbicacion, depositoMapaConfig, depositoMapaShapes, depositoUbicacionItems, depositoUbicacionMovements, depositoUbicaciones, invMeMaterials } from "@/lib/db/schema";
+import { depositoIngresoUbicacion, depositoMapaConfig, depositoMapaShapes, depositoUbicacionClientes, depositoUbicacionItems, depositoUbicacionMovements, depositoUbicaciones, invMeMaterials } from "@/lib/db/schema";
 import { loadLedgerInputs, stockOf } from "@/lib/inventory/me-planilla-db";
 import { OrdersForbiddenError, OrdersNotFoundError, OrdersUnavailableError, OrdersValidationError } from "@/lib/orders/types";
 import type { MeMaterial } from "@/lib/inventory/types";
@@ -23,6 +23,7 @@ import {
   SHAPE_KINDS,
   canConfigUbicaciones,
   canReadUbicaciones,
+  canRemoveAssignedClient,
   canRetireOrRename,
   canWriteUbicaciones,
   checkStockCap,
@@ -31,6 +32,8 @@ import {
   computeIndicators,
   findOverlap,
   identityOf,
+  locationClients,
+  parseClientName,
   ingresoDelta,
   fromMilli,
   mergeQuantity,
@@ -85,11 +88,20 @@ function checkKey(raw: unknown): string {
 
 type LocRow = typeof depositoUbicaciones.$inferSelect;
 type ItemRow = typeof depositoUbicacionItems.$inferSelect;
+type ClientRow = typeof depositoUbicacionClientes.$inferSelect;
 
 const num = (v: string | number | null): number | null => (v == null ? null : Number(v));
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
-function toView(l: LocRow, items: ItemRow[]): UbicacionView {
+function toView(l: LocRow, items: ItemRow[], assigned: ClientRow[] = []): UbicacionView {
+  const itemViews = items
+    .filter((i) => i.locationId === l.id)
+    .sort((a, b) => a.clientName.localeCompare(b.clientName) || a.materialName.localeCompare(b.materialName))
+    .map((i) => ({ id: i.id, clientKey: i.clientKey, clientName: i.clientName, materialKey: i.materialKey, material: i.materialName, codigo: i.codigo, meMaterialId: i.meMaterialId, unit: i.unit, quantity: num(i.quantity), verified: Boolean(i.meMaterialId) }));
+  const assignedViews = assigned
+    .filter((c) => c.locationId === l.id)
+    .sort((a, b) => a.clientName.localeCompare(b.clientName))
+    .map((c) => ({ id: c.id, clientKey: c.clientKey, clientName: c.clientName, assignedAt: c.createdAt.toISOString(), assignedBy: c.assignedByName ?? c.assignedBy }));
   return {
     id: l.id,
     code: l.code,
@@ -104,10 +116,9 @@ function toView(l: LocRow, items: ItemRow[]): UbicacionView {
     observations: l.observations,
     lastModifiedAt: iso(l.lastContentAt) ?? iso(l.updatedAt),
     lastModifiedBy: l.lastContentByName ?? l.lastContentBy ?? l.updatedBy,
-    items: items
-      .filter((i) => i.locationId === l.id)
-      .sort((a, b) => a.clientName.localeCompare(b.clientName) || a.materialName.localeCompare(b.materialName))
-      .map((i) => ({ id: i.id, clientKey: i.clientKey, clientName: i.clientName, materialKey: i.materialKey, material: i.materialName, codigo: i.codigo, meMaterialId: i.meMaterialId, unit: i.unit, quantity: num(i.quantity), verified: Boolean(i.meMaterialId) })),
+    items: itemViews,
+    assignedClients: assignedViews,
+    clients: locationClients({ items: itemViews, assignedClients: assignedViews }),
   };
 }
 
@@ -119,13 +130,14 @@ async function loadConfig(tx: AnyTx): Promise<MapConfigView> {
 export async function getMap(actor: UbActor): Promise<MapView> {
   assertRead(actor);
   const d = db();
-  const [config, shapes, locs, items] = await Promise.all([
+  const [config, shapes, locs, items, assigned] = await Promise.all([
     loadConfig(d),
     d.select().from(depositoMapaShapes).orderBy(asc(depositoMapaShapes.sortOrder), asc(depositoMapaShapes.id)),
     d.select().from(depositoUbicaciones).orderBy(asc(depositoUbicaciones.sortOrder), asc(depositoUbicaciones.code)),
     d.select().from(depositoUbicacionItems),
+    d.select().from(depositoUbicacionClientes),
   ]);
-  const locations = (locs as LocRow[]).map((l) => toView(l, items as ItemRow[]));
+  const locations = (locs as LocRow[]).map((l) => toView(l, items as ItemRow[], assigned as ClientRow[]));
   return {
     config,
     shapes: (shapes as Array<typeof depositoMapaShapes.$inferSelect>).map(
@@ -175,6 +187,7 @@ export async function listClients(actor: UbActor): Promise<Array<{ name: string;
     select name from (
       select btrim(display_name) as name from portal_clients
       union select btrim(client_name) from deposito_ubicacion_items
+      union select btrim(client_name) from deposito_ubicacion_clientes
       union select btrim(payload->>'cliente') from inv_me_materials
       union select btrim(client) from work_items where client is not null and deleted_at is null
       union select btrim(cliente) from production_pedidos where cliente is not null and deleted_at is null
@@ -259,6 +272,7 @@ async function getLocation(tx: AnyTx, id: unknown, opts: { activeOnly?: boolean 
   return l as LocRow;
 }
 const itemsOf = async (tx: AnyTx, locationId: string): Promise<ItemRow[]> => tx.select().from(depositoUbicacionItems).where(eq(depositoUbicacionItems.locationId, locationId));
+const assignedOf = async (tx: AnyTx, locationId: string): Promise<ClientRow[]> => tx.select().from(depositoUbicacionClientes).where(eq(depositoUbicacionClientes.locationId, locationId));
 
 function checkVersion(l: LocRow, expected: unknown) {
   if (expected === undefined || expected === null) return;
@@ -277,7 +291,8 @@ async function touch(tx: AnyTx, l: LocRow, actor: UbActor, patch: Partial<typeof
 async function viewsOf(tx: AnyTx, ids: string[]): Promise<UbicacionView[]> {
   const locs = (await tx.select().from(depositoUbicaciones).where(inArray(depositoUbicaciones.id, ids))) as LocRow[];
   const items = (await tx.select().from(depositoUbicacionItems).where(inArray(depositoUbicacionItems.locationId, ids))) as ItemRow[];
-  return locs.map((l) => toView(l, items));
+  const assigned = (await tx.select().from(depositoUbicacionClientes).where(inArray(depositoUbicacionClientes.locationId, ids))) as ClientRow[];
+  return locs.map((l) => toView(l, items, assigned));
 }
 
 const lineOf = (i: Pick<ItemRow, "clientName" | "clientKey" | "materialName" | "codigo" | "meMaterialId" | "unit">, quantity: number | null, remaining?: number | null): MovementLine => ({
@@ -516,11 +531,80 @@ export async function releaseLocation(actor: UbActor, input: { key: unknown; loc
     const loc = await getLocation(tx, locationId);
     checkVersion(loc, input.expectedVersion);
     const items = await itemsOf(tx, loc.id);
-    if (!items.length) fail(`La ubicación ${loc.code} ya está libre.`);
+    const assigned = await assignedOf(tx, loc.id);
+    if (!items.length && !assigned.length) fail(`La ubicación ${loc.code} ya está libre.`);
     await tx.delete(depositoUbicacionItems).where(eq(depositoUbicacionItems.locationId, loc.id));
+    await tx.delete(depositoUbicacionClientes).where(eq(depositoUbicacionClientes.locationId, loc.id));
     await touch(tx, loc, actor, { observations: "" });
-    const id = await insertMovement(tx, actor, { kind: "LIBERACION", key, from: loc, lines: items.map((i) => lineOf(i, num(i.quantity))), detail: { observations: loc.observations } });
+    const id = await insertMovement(tx, actor, { kind: "LIBERACION", key, from: loc, lines: items.map((i) => lineOf(i, num(i.quantity))), detail: { observations: loc.observations, assignedClients: assigned.map((c) => c.clientName) } });
     return done(tx, false, id, [loc.id]);
+  });
+}
+
+// ───────────────────────── Clientes asignados directamente (sin materiales) ─────────────────────────
+
+/**
+ * Asigna y/o quita clientes de una posición SIN cargar materiales ni cantidades. La posición con ≥ 1 cliente asignado queda OCUPADA.
+ *  - `add`: nombres (se normalizan con la clave compartida; ya asignados = se ignoran).
+ *  - `remove`: claves de cliente asignado. No se puede quitar un cliente que aún tiene materiales en la posición (422).
+ * Transaccional, con candado por posición, versión opcional e idempotente por clave. Historial INSERT-only (ASIGNACION / RETIRO con detail.action
+ * = cliente_asignado / cliente_quitado) con usuario y fecha.
+ */
+export async function setLocationClients(actor: UbActor, input: { key: unknown; locationId: unknown; expectedVersion?: unknown; add?: unknown; remove?: unknown }): Promise<OpResult> {
+  assertWrite(actor);
+  const key = checkKey(input.key);
+  const locationId = String(input.locationId ?? "");
+  const addRaw = input.add === undefined || input.add === null ? [] : input.add;
+  const removeRaw = input.remove === undefined || input.remove === null ? [] : input.remove;
+  if (!Array.isArray(addRaw) || !Array.isArray(removeRaw)) fail("Pedido inválido.");
+  if (addRaw.length + removeRaw.length === 0) fail("Indicá qué cliente asignar o quitar.");
+  if (addRaw.length + removeRaw.length > MAX_LINES) fail(`No se pueden modificar más de ${MAX_LINES} clientes a la vez.`);
+  const toAdd = new Map<string, { clientName: string; clientKey: string }>();
+  for (const raw of addRaw) {
+    const p = parseClientName(typeof raw === "string" ? raw : (raw as { clientName?: unknown } | null)?.clientName);
+    if (!p.ok) fail(p.message);
+    if (!toAdd.has(p.value.clientKey)) toAdd.set(p.value.clientKey, p.value);
+  }
+  const toRemove = new Set<string>();
+  for (const raw of removeRaw) {
+    const k = typeof raw === "string" ? raw.trim() : "";
+    if (!k) fail("Cliente a quitar inválido.");
+    toRemove.add(k);
+  }
+  for (const k of toRemove) if (toAdd.has(k)) fail("Un cliente no puede asignarse y quitarse a la vez.");
+  const keyAdd = `${key}#asig`;
+  const keyRem = `${key}#quit`;
+  return db().transaction(async (tx: AnyTx) => {
+    await lockAll(tx, { locations: [locationId] });
+    const prev = (await replayOf(tx, keyAdd)) ?? (await replayOf(tx, keyRem));
+    if (prev) return done(tx, true, prev.id, [locationId]);
+    const loc = await getLocation(tx, locationId, { activeOnly: true });
+    checkVersion(loc, input.expectedVersion);
+    const items = await itemsOf(tx, loc.id);
+    const assigned = await assignedOf(tx, loc.id);
+    // Primero validar todo (nada queda a medias).
+    const removing: ClientRow[] = [];
+    for (const k of toRemove) {
+      const row = assigned.find((c) => c.clientKey === k);
+      const blocked = canRemoveAssignedClient({ items }, k);
+      if (!blocked.ok) throw new UbicacionesConflictError(`${items.find((i) => i.clientKey === k)?.clientName ?? row?.clientName ?? "El cliente"}: ${blocked.message}`);
+      if (!row) fail("Ese cliente no está asignado a la ubicación. Actualizá la pantalla.");
+      removing.push(row);
+    }
+    const adding = [...toAdd.values()].filter((c) => !assigned.some((a) => a.clientKey === c.clientKey));
+    if (!adding.length && !removing.length) fail("Esos clientes ya están asignados a la ubicación.");
+    const lineOfClient = (c: { clientName: string; clientKey: string }): MovementLine => ({ clientName: c.clientName, clientKey: c.clientKey, material: "", codigo: null, meMaterialId: null, unit: "u", quantity: null });
+    let lastId = "";
+    if (adding.length) {
+      await tx.insert(depositoUbicacionClientes).values(adding.map((c) => ({ locationId: loc.id, clientKey: c.clientKey, clientName: c.clientName, assignedBy: actor.email, assignedByName: actor.displayName ?? null })));
+      lastId = await insertMovement(tx, actor, { kind: "ASIGNACION", key: keyAdd, to: loc, lines: adding.map(lineOfClient), detail: { action: "cliente_asignado", clients: adding.map((c) => c.clientName) } });
+    }
+    if (removing.length) {
+      await tx.delete(depositoUbicacionClientes).where(inArray(depositoUbicacionClientes.id, removing.map((r) => r.id)));
+      lastId = await insertMovement(tx, actor, { kind: "RETIRO", key: keyRem, from: loc, lines: removing.map(lineOfClient), detail: { action: "cliente_quitado", clients: removing.map((c) => c.clientName) } });
+    }
+    await touch(tx, loc, actor);
+    return done(tx, false, lastId, [loc.id]);
   });
 }
 
@@ -813,7 +897,7 @@ export async function createLocation(actor: UbActor, input: { code: unknown; zon
       .values({ id: `ubi-${code.value.toLowerCase()}-${randomUUID().slice(0, 6)}`, code: code.value, zone: cleanLabel(input.zone), ...geo.value, sortOrder, updatedBy: actor.email })
       .returning();
     await configMovement(tx, actor, row, { action: "crear", after: snap(row) });
-    return toView(row, []);
+    return toView(row, [], []);
   });
 }
 
@@ -829,12 +913,13 @@ export async function updateLocation(actor: UbActor, input: { id: unknown; expec
     const loc = await getLocation(tx, id);
     checkVersion(loc, input.expectedVersion);
     const items = await itemsOf(tx, loc.id);
+    const assigned = await assignedOf(tx, loc.id);
     const patch: Partial<typeof depositoUbicaciones.$inferInsert> = {};
     if (input.code !== undefined) {
       const c = parseLocationCode(input.code);
       if (!c.ok) fail(c.message);
       if (c.value !== loc.code) {
-        if (!canRetireOrRename({ items })) fail(`La ubicación ${loc.code} está ocupada: liberala antes de cambiarle el código.`);
+        if (!canRetireOrRename({ items, assignedClients: assigned })) fail(`La ubicación ${loc.code} está ocupada: liberala antes de cambiarle el código.`);
         const dup = await tx.select({ id: depositoUbicaciones.id }).from(depositoUbicaciones).where(sql`upper(${depositoUbicaciones.code}) = ${c.value} and ${depositoUbicaciones.id} <> ${loc.id}`).limit(1);
         if (dup.length) fail(`Ya existe una ubicación con el código ${c.value}.`);
         patch.code = c.value;
@@ -853,7 +938,7 @@ export async function updateLocation(actor: UbActor, input: { id: unknown; expec
     }
     if (input.active !== undefined) {
       if (typeof input.active !== "boolean") fail("Estado inválido.");
-      if (!input.active && loc.active && items.length) fail(`La ubicación ${loc.code} está ocupada: liberala antes de desactivarla.`);
+      if (!input.active && loc.active && (items.length || assigned.length)) fail(`La ubicación ${loc.code} está ocupada: liberala antes de desactivarla.`);
       patch.active = input.active;
     }
     if ((patch.active ?? loc.active) && (patch.x !== undefined || patch.active === true)) {
@@ -864,7 +949,7 @@ export async function updateLocation(actor: UbActor, input: { id: unknown; expec
     const now = new Date();
     const [row] = await tx.update(depositoUbicaciones).set({ ...patch, version: loc.version + 1, updatedAt: now, updatedBy: actor.email }).where(eq(depositoUbicaciones.id, loc.id)).returning();
     await configMovement(tx, actor, row, { action: "actualizar", before: snap(loc), after: snap(row) });
-    return toView(row, items);
+    return toView(row, items, assigned);
   });
 }
 

@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
+import { OPERATIONAL_SECTOR_IDS } from "@/types/operational/sector";
 import {
   canConfigUbicaciones, canReadUbicaciones, canRetireOrRename, canWriteUbicaciones, cellState, checkStockCap, clientsLabel, computeIndicators, groupZones,
-  locationMatches, locationStatus, materialKeyOf, mergeQuantity, normalizeText, parseGeometry, parseLineInput, parseLocationCode, parsePolygon, parseQuantity, planMove, searchLocations,
+  canRemoveAssignedClient, isOccupied, locationClients, parseClientName, locationMatches, locationStatus, materialKeyOf, mergeQuantity, normalizeText, parseGeometry, parseLineInput, parseLocationCode, parsePolygon, parseQuantity, planMove, searchLocations,
 } from "./rules";
 
 const item = (clientName: string, material: string, codigo: string | null = null) => ({ clientName, clientKey: clientName.toLowerCase(), material, codigo });
 const loc = (code: string, items: ReturnType<typeof item>[] = [], active = true, zone = "Z") => ({ id: code, code, zone, active, items, sortOrder: 0 });
 
 describe("permisos por sector", () => {
-  it("lectura: Depósito, Envasado Masivo/Premium, Producción y Dirección", () => {
-    for (const s of ["DEPOSITO", "ENVASADO_MASIVO", "ENVASADO_PREMIUM", "PRODUCCION", "DIRECCION"]) expect(canReadUbicaciones(s)).toBe(true);
-    for (const s of ["CODIFICADO", "ELABORACION", "MATERIA_PRIMA", "ADMINISTRACION", "CALIDAD", "", null, undefined]) expect(canReadUbicaciones(s)).toBe(false);
+  it("lectura: TODOS los sectores operativos; nada para sectores inexistentes o sin sesión", () => {
+    for (const s of OPERATIONAL_SECTOR_IDS) expect(canReadUbicaciones(s)).toBe(true);
+    for (const s of ["", "OTRO", null, undefined]) expect(canReadUbicaciones(s)).toBe(false);
   });
   it("escritura de contenido: solo Depósito; configuración: Depósito y Dirección", () => {
     expect(["DEPOSITO", "DIRECCION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM", "PRODUCCION"].filter(canWriteUbicaciones)).toEqual(["DEPOSITO"]);
@@ -200,5 +201,50 @@ describe("verificadas, identidad e ingresos", () => {
     expect(ingresoDelta(0.3, 0.1)).toEqual({ diffMilli: 200, kind: "AUMENTO" });
     expect(ingresoDelta(700, 900).kind).toBe("BAJA");
     expect(ingresoDelta(900, 900).kind).toBe("IGUAL");
+  });
+});
+
+describe("clientes asignados directamente (sin materiales)", () => {
+  const assigned = (name: string) => ({ id: name, clientName: name, clientKey: name.toLowerCase(), assignedAt: "", assignedBy: null });
+  const withClients = (code: string, names: string[], items: ReturnType<typeof item>[] = [], active = true) => ({ ...loc(code, items, active), assignedClients: names.map(assigned) });
+
+  it("un cliente asignado sin materiales = OCUPADA (estado, indicadores y celda)", () => {
+    const b08 = withClients("B08", ["TRC"]);
+    expect(isOccupied(b08)).toBe(true);
+    expect(locationStatus(b08)).toBe("OCUPADA");
+    expect(cellState(b08, { selected: false, match: false })).toBe("OCUPADA");
+    expect(locationStatus(withClients("B09", []))).toBe("LIBRE");
+    expect(computeIndicators([b08, withClients("B09", []), withClients("B10", ["X"], [], false)])).toEqual({ total: 2, ocupadas: 1, libres: 1 });
+  });
+  it("lista de clientes = asignados ∪ clientes de materiales; los de materiales no son removibles", () => {
+    const l = withClients("A01", ["TRC", "Zeta"], [item("TRC", "Tapas"), item("Beta", "Cajas")]);
+    const cs = locationClients(l);
+    expect(cs.map((c) => c.clientName)).toEqual(["Beta", "TRC", "Zeta"]);
+    expect(cs.find((c) => c.clientName === "TRC")).toMatchObject({ assigned: true, hasMaterials: true, removable: false });
+    expect(cs.find((c) => c.clientName === "Zeta")).toMatchObject({ assigned: true, hasMaterials: false, removable: true });
+    expect(cs.find((c) => c.clientName === "Beta")).toMatchObject({ assigned: false, hasMaterials: true, removable: false });
+  });
+  it("etiqueta compacta del pallet: «TRC» / «TRC +1»", () => {
+    expect(clientsLabel(locationClients(withClients("B08", ["TRC"])))).toBe("TRC");
+    expect(clientsLabel(locationClients(withClients("B08", ["TRC", "Zeta"])))).toBe("TRC +1");
+  });
+  it("no se puede quitar un cliente con materiales en la posición", () => {
+    const l = withClients("A01", ["trc"], [item("TRC", "Tapas")]);
+    expect(canRemoveAssignedClient(l, "trc").ok).toBe(false);
+    expect(canRemoveAssignedClient(l, "zeta").ok).toBe(true);
+  });
+  it("la búsqueda encuentra ubicaciones con solo clientes asignados", () => {
+    const locs = [withClients("B08", ["TRC"]), withClients("B09", [])];
+    expect(searchLocations(locs, "trc").map((l) => l.code)).toEqual(["B08"]);
+    expect(searchLocations(locs, "TRC").length).toBe(1);
+  });
+  it("nombre de cliente: obligatorio y con la clave compartida", () => {
+    expect(parseClientName("  TRC ").ok).toBe(true);
+    expect(parseClientName("   ").ok).toBe(false);
+    expect(parseClientName(null).ok).toBe(false);
+  });
+  it("una posición con cliente asignado no se puede renombrar ni desactivar", () => {
+    expect(canRetireOrRename(withClients("B08", ["TRC"]))).toBe(false);
+    expect(canRetireOrRename(withClients("B08", []))).toBe(true);
   });
 });
