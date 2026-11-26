@@ -62,7 +62,9 @@
     "test:e2e:mp-control-faltantes": "bash scripts/e2e/run-mp-control-faltantes-local.sh",
     "test:e2e:mp-correccion": "bash scripts/e2e/run-mp-correccion-local.sh",
     "test:e2e:insumos-db": "bash scripts/e2e/run-insumos-db-local.sh",
-    "test:e2e:insumos": "bash scripts/e2e/run-insumos-local.sh"
+    "test:e2e:insumos": "bash scripts/e2e/run-insumos-local.sh",
+    "test:e2e:ubicaciones-db": "bash scripts/e2e/run-ubicaciones-db-local.sh",
+    "test:e2e:ubicaciones": "bash scripts/e2e/run-ubicaciones-local.sh"
   },
   "engines": {
     "node": ">=20"

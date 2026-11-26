@@ -128,6 +128,7 @@ describe("DEPOSITO acceso y navegación", () => {
       "expedicion",
       "ingreso_cajas_genus",
       "insumos",
+      "ubicaciones",
     ]);
     expect(home.sidebarItems).not.toContain("avisos_me");
   });

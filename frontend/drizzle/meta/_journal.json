@@ -624,6 +624,20 @@
       "when": 1793900020000,
       "tag": "0091_insumos_deposito",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1793900021000,
+      "tag": "0092_ubicaciones_deposito",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1793900022000,
+      "tag": "0093_ubicaciones_integridad",
+      "breakpoints": true
     }
   ]
 }

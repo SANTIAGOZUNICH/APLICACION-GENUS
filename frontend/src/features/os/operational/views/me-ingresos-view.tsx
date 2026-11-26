@@ -27,6 +27,8 @@ import type { GenusGridDraftRows } from "@/components/data-grid/genus-grid";
 import { canWriteInventory } from "@/lib/inventory/rbac";
 import { validateMeSheetValue } from "@/lib/inventory/me-sheet-edit";
 import { MeDiferenciaCell, MePedidoPicker, ingresoDifClass, ingresoDifText, ingresoPrevisto, previstoText, useIngresoDiferencias } from "@/features/os/operational/components/me-diferencia-cell";
+import { IngresoUbicacionSelect } from "@/features/os/operational/components/ubicaciones/ingreso-ubicacion-select";
+import { opIngresoMe } from "@/lib/ubicaciones/client";
 import { IngresoRemitoFotosButton, useIngresoAdjuntoCounts } from "@/features/os/operational/components/ingreso-remito-fotos";
 import { canManageAdjuntos, canViewAdjuntos } from "@/lib/inventory/ingreso-adjuntos-rules";
 import { IngresoConRemitoButtons } from "@/features/os/operational/components/ingreso-con-remito";
@@ -117,6 +119,7 @@ export function MeIngresosView() {
   const [banner, setBanner] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<FormState | null>(null);
+  const [ubicacionId, setUbicacionId] = useState("");
   const [pendingDelete, setPendingDelete] = useState<{ id: string; label: string } | null>(null);
   const [pasteOpen, setPasteOpen] = useState(false);
   // Historial permanente: por defecto se ven TODOS los ingresos, también los anulados (marcados). Nada se oculta solo.
@@ -365,8 +368,20 @@ export function MeIngresosView() {
           ubicacion: form.ubicacion,
         },
       });
+      // Ubicación física opcional: se suma al mapa DESPUÉS de crear el ingreso (idempotente por id de ingreso). Si falla, el ingreso queda igual.
+      let ubicNote = "";
+      if (ubicacionId) {
+        try {
+          const placed = await opIngresoMe({ ingresoId: form.id ?? form.requestId, locationId: ubicacionId });
+          ubicNote = placed.replayed ? `Este ingreso ya estaba ubicado en ${placed.placedIn ?? "el mapa"} (no se sumó de nuevo).` : `Ubicado en ${placed.placedIn ?? placed.locations[0]?.code ?? "el mapa"}.`;
+        } catch (e) {
+          ubicNote = `El ingreso se guardó, pero no se pudo ubicar en el mapa: ${e instanceof Error ? e.message : "error"} (ubicalo después desde Depósito › Ubicaciones › «Ingresos ME sin ubicar»: no se duplica).`;
+        }
+      }
       setForm(null);
+      setUbicacionId("");
       await reload();
+      if (ubicNote) setBanner(ubicNote);
       const s = saved.data?.stockSummary;
       if (s) {
         const fmt = (n: number) => n.toLocaleString("es-AR");
@@ -381,7 +396,7 @@ export function MeIngresosView() {
             ? `🔴 STOCK ACTUAL: ${fmt(s.stockActual)} un. Revisar movimientos pendientes de carga.`
             : `Stock actual: ${fmt(s.stockActual)} un.`
         );
-        setBanner(lines.join(" · "));
+        setBanner([...lines, ubicNote].filter(Boolean).join(" · "));
       }
     } catch (e) {
       setBanner(e instanceof InventoryClientError ? e.message : "No se pudo guardar");
@@ -591,8 +606,9 @@ export function MeIngresosView() {
                 />
               </label>
             </div>
+            <IngresoUbicacionSelect value={ubicacionId} onChange={setUbicacionId} />
             <div className="mt-4 flex justify-end gap-2">
-              <Button type="button" variant="secondary" onClick={() => setForm(null)}>
+              <Button type="button" variant="secondary" onClick={() => { setForm(null); setUbicacionId(""); }}>
                 Cancelar
               </Button>
               <Button type="button" onClick={() => void saveForm()}>
