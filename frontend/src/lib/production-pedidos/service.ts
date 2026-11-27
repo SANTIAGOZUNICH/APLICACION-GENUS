@@ -1,6 +1,8 @@
 import "server-only";
 
-import { ensureClientIdentitySafe } from "@/lib/portal/client-identity";
+import { clientExists, linkPedidoSafe, listPortalClientOptions, type PortalClientOption } from "@/lib/portal/client-link";
+import { isClientUuid } from "@/lib/portal/client-link-rules";
+import { clientKey } from "@/lib/entregas/rules";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
@@ -125,6 +127,16 @@ function assertAccess(actor: ProductionPedidosActor): ProductionPedidosActor {
   return a;
 }
 
+/** Cliente del portal elegido en el formulario: debe existir (el vínculo por ID nunca apunta a la nada). Solo en modo base de datos. */
+async function assertExplicitPortalClient(id: unknown): Promise<string | null> {
+  if (id == null || id === "") return null;
+  if (!isClientUuid(id)) throw new OrdersValidationError("El cliente elegido no es válido.");
+  if (!isDatabaseConfigured() || !(await clientExists(getDb() as never, id))) {
+    throw new OrdersValidationError("El cliente elegido ya no existe en el Portal de Clientes. Elegilo de nuevo.");
+  }
+  return id;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -160,6 +172,7 @@ function mapRow(row: Record<string, unknown>): ProductionPedidoRecord {
     deleteReason: row.delete_reason == null ? null : String(row.delete_reason),
     createdAt: new Date(String(row.created_at)).toISOString(),
     updatedAt: new Date(String(row.updated_at)).toISOString(),
+    portalClientId: row.portal_client_id == null ? null : String(row.portal_client_id),
   });
 }
 
@@ -311,6 +324,18 @@ export class ProductionPedidosService {
     return queryNextOp(getDb());
   }
 
+  /** Clientes del Portal de Clientes (con sus alias) para el selector del formulario de pedidos. Sin base: lista vacía. */
+  async listPortalClients(actor: ProductionPedidosActor): Promise<PortalClientOption[]> {
+    assertAccess(actor);
+    if (!isDatabaseConfigured()) return [];
+    try {
+      return await listPortalClientOptions();
+    } catch (err) {
+      console.error("[pedidos] no se pudieron listar los clientes del portal", err instanceof Error ? err.message : err);
+      return [];
+    }
+  }
+
   async create(actor: ProductionPedidosActor, input: ProductionPedidoCreateInput): Promise<ProductionPedidoRecord> {
     return (await this.createWithMeta(actor, input)).record;
   }
@@ -358,6 +383,7 @@ export class ProductionPedidosService {
       return { record, opReassigned: auto && record.op !== requestedOp };
     }
 
+    const explicitClientId = await assertExplicitPortalClient(input.portalClientId);
     const db = getDb();
     await db.transaction(async (tx) => {
       if (auto) {
@@ -390,7 +416,9 @@ export class ProductionPedidosService {
       )
     `);
     });
-    await ensureClientIdentitySafe(record.cliente, "pedido", a.email);
+    // Vínculo por ID: el cliente elegido en el formulario o, si se tipeó, el nombre resuelto SIN ambigüedad (cliente nuevo si no existe).
+    const linked = await linkPedidoSafe(record.id, { cliente: record.cliente, portalClientId: explicitClientId, source: "pedido", actor: a.email });
+    record.portalClientId = linked?.clientId ?? null;
     recordLifecycleEvent({
       entityKind: "pedido",
       entityId: record.id,
@@ -441,6 +469,8 @@ export class ProductionPedidosService {
     if (!(existing.rows as unknown[]).length) {
       throw new OrdersNotFoundError("Pedido no encontrado.");
     }
+    const explicitClientId = await assertExplicitPortalClient(input.portalClientId);
+    const prevRow = (existing.rows as Record<string, unknown>[])[0]!;
     await db.execute(sql`
       update production_pedidos set
         op = ${fields.op},
@@ -463,7 +493,11 @@ export class ProductionPedidosService {
       action: "editar",
       actor: { email: a.email, sector: a.sector as SectorId },
     });
-    await ensureClientIdentitySafe(fields.cliente, "pedido", a.email);
+    // Con el mismo nombre y un vínculo ya existente (y sin elegir otro cliente) el ID se conserva: editar otro campo nunca lo pierde.
+    const sameName = clientKey(String(prevRow.cliente ?? "")) === clientKey(fields.cliente ?? "");
+    if (explicitClientId || !(sameName && prevRow.portal_client_id)) {
+      await linkPedidoSafe(id, { cliente: fields.cliente, portalClientId: explicitClientId, source: "pedido", actor: a.email });
+    }
     const refreshed = await db.execute(sql`
       select * from production_pedidos where id = ${id}::uuid limit 1
     `);
@@ -569,9 +603,9 @@ export class ProductionPedidosService {
         }
       });
     }
-    for (const [, edits] of touched) {
+    for (const [id, edits] of touched) {
       for (const e of edits) {
-        if (e.field === "cliente") await ensureClientIdentitySafe(e.newValue, "pedido", a.email);
+        if (e.field === "cliente") await linkPedidoSafe(id, { cliente: e.newValue, source: "pedido", actor: a.email });
       }
     }
     for (const [id, edits] of touched) {
@@ -801,12 +835,8 @@ export class ProductionPedidosService {
         }
       });
       // Ya confirmada la importación: cada cliente distinto recibe su código (una sola vez por nombre).
-      const seen = new Set<string>();
       for (const c of created) {
-        const k = String(c.cliente ?? "").trim().toLowerCase();
-        if (!k || seen.has(k)) continue;
-        seen.add(k);
-        await ensureClientIdentitySafe(c.cliente, "importacion_pedidos", a.email);
+        await linkPedidoSafe(c.id, { cliente: c.cliente, source: "importacion_pedidos", actor: a.email });
       }
     }
 

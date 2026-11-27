@@ -67,6 +67,19 @@ export async function createProductionPedidoApi(
   return { ...body.item!, opReassigned: Boolean(body.opReassigned) };
 }
 
+export type PortalClientChoice = { id: string; name: string; code: string; status: string; labels: string[] };
+
+/** Clientes del Portal de Clientes para el selector del formulario (vacío si no se pudo consultar: el texto libre sigue funcionando). */
+export async function fetchPortalClientChoicesApi(session: OrdersClientSession): Promise<PortalClientChoice[]> {
+  try {
+    const res = await fetch("/api/v1/production-pedidos/clients", { credentials: "include", cache: "no-store", headers: headers(session) });
+    if (!res.ok) return [];
+    return ((await res.json()) as { clients?: PortalClientChoice[] }).clients ?? [];
+  } catch {
+    return [];
+  }
+}
+
 /** Siguiente N° de OP correlativo según el último OP real del sistema (null si no hay o no se pudo consultar). */
 export async function fetchNextOpApi(session: OrdersClientSession): Promise<string | null> {
   try {

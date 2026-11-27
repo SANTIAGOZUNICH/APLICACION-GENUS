@@ -1,7 +1,7 @@
 import "server-only";
 
 import { triggerMeControlSync } from "@/lib/me-control/trigger";
-import { ensureClientIdentitySafe } from "@/lib/portal/client-identity";
+import { linkWorkSafe } from "@/lib/portal/client-link";
 import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb, type GenusDb } from "@/lib/db/client";
 import {
@@ -465,7 +465,7 @@ export class DrizzlePlanningRepository implements PlanningRepository {
         originRef: input.originRef ?? null,
       })
       .returning();
-    await ensureClientIdentitySafe(input.client, "planificacion", actor.email);
+    await linkWorkSafe(row.id, input.client, "planificacion", actor.email);
     triggerMeControlSync();
     return mapItem(row);
   }

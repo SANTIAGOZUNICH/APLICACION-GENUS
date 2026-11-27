@@ -24,12 +24,15 @@ import {
   createProductionPedidoApi,
   deleteProductionPedidoApi,
   fetchNextOpApi,
+  fetchPortalClientChoicesApi,
   fetchProductionPedidosApi,
+  type PortalClientChoice,
   importProductionPedidosApi,
   previewProductionPedidosPasteApi,
   updateProductionPedidoApi,
 } from "@/lib/production-pedidos/client";
 import { computeKg, formatKg } from "@/lib/production-pedidos/kg";
+import { choicesMatching } from "@/lib/portal/client-link-rules";
 import { coercePedidoFields, normalizeFecha } from "@/lib/production-pedidos/types";
 import { todayDdMmAaArgentina } from "@/lib/production-pedidos/next-op";
 import type { ColumnAssociation } from "@/lib/production-pedidos/excel-paste";
@@ -88,6 +91,8 @@ type Draft = {
   q: string;
   ml: string;
   estado: string;
+  /** Cliente del Portal de Clientes elegido (vínculo por ID). Vacío = el servidor resuelve el texto sin ambigüedad. */
+  portalClientId: string;
 };
 
 const emptyDraft = (): Draft => ({
@@ -100,6 +105,7 @@ const emptyDraft = (): Draft => ({
   q: "",
   ml: "",
   estado: "",
+  portalClientId: "",
 });
 
 function draftFromRecord(r: ProductionPedidoRecord): Draft {
@@ -113,6 +119,7 @@ function draftFromRecord(r: ProductionPedidoRecord): Draft {
     q: r.q == null ? "" : String(r.q),
     ml: r.ml == null ? "" : String(r.ml),
     estado: r.estado ?? "",
+    portalClientId: r.portalClientId ?? "",
   };
 }
 
@@ -127,6 +134,7 @@ function draftToInput(d: Draft): ProductionPedidoInput {
     q: d.q,
     ml: d.ml,
     estado: d.estado,
+    portalClientId: d.portalClientId || null,
   };
 }
 
@@ -210,6 +218,8 @@ export function ProductionPedidosView() {
   /** OP sugerido por el autocompletado (siguiente correlativo); null si no hay o el usuario no lo usa. */
   const [autoOp, setAutoOp] = useState<string | null>(null);
   const openNewSeq = useRef(0);
+  /** Clientes del Portal de Clientes para el selector (id + nombre comercial + alias). */
+  const [clientChoices, setClientChoices] = useState<PortalClientChoice[]>([]);
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
@@ -316,7 +326,20 @@ export function ProductionPedidosView() {
   const visibleIds = useMemo(() => sortedItems.map((r) => r.id), [sortedItems]);
   const sel = useListSelectionMode(visibleIds);
 
+  function loadClientChoices() {
+    void fetchPortalClientChoicesApi(session).then(setClientChoices);
+  }
+
+  /** Texto del cliente: si coincide EXACTO (normalizado) con UN cliente del portal se guarda su ID; si no, el servidor resuelve al guardar. */
+  function setClienteText(text: string) {
+    setDraft((d) => {
+      const matches = choicesMatching(text, clientChoices);
+      return { ...d, cliente: text, portalClientId: matches.length === 1 ? matches[0]! : "" };
+    });
+  }
+
   function openNew() {
+    loadClientChoices();
     setEditingId(null);
     // FECHA: hoy en Buenos Aires (Intl con timeZone; no la hora del navegador), mostrada DD/MM/AA.
     setDraft({ ...emptyDraft(), fecha: todayDdMmAaArgentina() });
@@ -332,6 +355,7 @@ export function ProductionPedidosView() {
   }
 
   function openEdit(r: ProductionPedidoRecord) {
+    loadClientChoices();
     setEditingId(r.id);
     setDraft(draftFromRecord(r));
     setEditorOpen(true);
@@ -915,13 +939,27 @@ export function ProductionPedidosView() {
                     <input
                       type={key === "fecha" && editingId ? "date" : "text"}
                       placeholder={key === "fecha" && !editingId ? "DD/MM/AA" : undefined}
-                      data-testid={key === "op" || key === "fecha" ? `pedido-form-${key}` : undefined}
+                      data-testid={key === "op" || key === "fecha" || key === "cliente" || key === "producto" || key === "q" ? `pedido-form-${key}` : undefined}
+                      list={key === "cliente" ? "pedido-form-clientes" : undefined}
+                      autoComplete={key === "cliente" ? "off" : undefined}
                       className="min-h-10 w-full rounded border border-[var(--os-border)] bg-transparent px-2 text-sm"
                       value={draft[key]}
-                      onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
+                      onChange={(e) => (key === "cliente" ? setClienteText(e.target.value) : setDraft((d) => ({ ...d, [key]: e.target.value })))}
                     />
+                    {key === "cliente" ? (
+                      <span className="mt-1 block text-[11px] text-[var(--os-text-muted)]" data-testid="pedido-form-cliente-estado">
+                        {draft.portalClientId
+                          ? `Cliente del portal: ${clientChoices.find((c) => c.id === draft.portalClientId)?.name ?? "vinculado"} (vínculo por ID)`
+                          : draft.cliente.trim()
+                            ? "Sin cliente del portal elegido: se resuelve por nombre al guardar (elegí uno de la lista para vincularlo por ID)."
+                            : "Elegí un cliente de la lista (vínculo por ID) o escribí su nombre."}
+                      </span>
+                    ) : null}
                   </label>
                 ))}
+                <datalist id="pedido-form-clientes">
+                  {clientChoices.flatMap((c) => c.labels.map((l) => <option key={`${c.id}:${l}`} value={l}>{`${c.name} · ${c.code}`}</option>))}
+                </datalist>
                 <label className="block text-xs">
                   <span className="mb-1 block text-[var(--os-text-muted)]">KG (automático)</span>
                   <input
@@ -933,6 +971,7 @@ export function ProductionPedidosView() {
                 <label className="block text-xs">
                   <span className="mb-1 block text-[var(--os-text-muted)]">ESTADO</span>
                   <select
+                    data-testid="pedido-form-estado"
                     className="min-h-10 w-full rounded border border-[var(--os-border)] bg-transparent px-2 text-sm"
                     value={draft.estado}
                     onChange={(e) => setDraft((d) => ({ ...d, estado: e.target.value }))}
@@ -950,7 +989,7 @@ export function ProductionPedidosView() {
                 <Button type="button" variant="secondary" onClick={() => setEditorOpen(false)}>
                   Cancelar
                 </Button>
-                <Button type="button" onClick={() => void saveEditor()}>
+                <Button type="button" data-testid="pedido-form-guardar" onClick={() => void saveEditor()}>
                   Guardar
                 </Button>
               </div>

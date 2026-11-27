@@ -56,11 +56,24 @@ export type RawWorkRow = {
   pedidoOp: string | null;
   /** production_pedidos.producto (nombre del producto tal como lo pidió el cliente). */
   pedidoProducto: string | null;
+  /** production_pedidos.fecha (YYYY-MM-DD). */
+  pedidoFecha?: string | null;
   /** Decisión de Calidad (solo para derivar «reproceso»; NUNCA sale del servidor). */
   qualityStatus?: string | null;
 };
 /** Renglón de pedido (un producto) SIN trabajos vivos: recién recibido, o con todos sus trabajos cancelados. */
-export type RawPedidoRow = { id: string; op: string | null; producto: string | null; estado: string | null; cancelledWorks: number };
+export type RawPedidoRow = {
+  id: string;
+  op: string | null;
+  producto: string | null;
+  estado: string | null;
+  cancelledWorks: number;
+  /** Estado manual de Producción de un pedido vinculado por ID y todavía SIN trabajos: lo que el cliente ve mientras no haya trabajos. */
+  manualStage?: "ELABORACION" | "ENVASADO" | null;
+  /** Fecha del pedido (YYYY-MM-DD) y cantidad pedida (Q, en unidades): lo que ve el cliente de un pedido sin trabajos. */
+  fecha?: string | null;
+  q?: number | null;
+};
 export type RawMarkRow = { id: string; workItemId: string; quantity: number; at: string; /** Entregado al confirmar (base). */ deliveredBefore?: number; retracted?: boolean };
 export type RawDeliveryRow = { key: string; workItemId: string; at: string; quantity: number | null; unit: string | null };
 export type RawEventRow = { workItemId: string; type: string; at: string };
@@ -99,6 +112,8 @@ export type PortalProductView = {
   commercial: PortalCommercialView;
   product: string;
   orderRef: string | null;
+  /** Fecha del pedido (YYYY-MM-DD) cargada por Producción; null si no tiene. */
+  orderedAt: string | null;
   stage: PortalStageId;
   stageLabel: string;
   substage: PortalSubstage;
@@ -298,6 +313,7 @@ export function buildOverview(input: {
       commercial: { id: cs.id, key: cs.key, label: cs.label },
       product: label,
       orderRef,
+      orderedAt: g.rows.find((r) => r.pedidoFecha)?.pedidoFecha ?? null,
       stage: shownStage,
       stageLabel: STAGE_LABELS[shownStage],
       substage: commercial.reprocessing ? null : stage.substage,
@@ -322,8 +338,11 @@ export function buildOverview(input: {
     seenPedidos.add(key);
     const cancelled = ped.cancelledWorks > 0;
     const received = !cancelled && (ped.estado == null || ped.estado === "" || ped.estado === "INGRESO");
-    if (!cancelled && !received) continue; // estado ajeno al circuito sin trabajos: no se inventa nada
-    const commercial = deriveClientProductStatus({ hasWork: false, cancelled, stage: null, started: false, reprocess: false });
+    const manual = !cancelled && !received ? ped.manualStage ?? null : null;
+    if (!cancelled && !received && !manual) continue; // estado ajeno al circuito sin trabajos: no se inventa nada
+    const commercial = manual
+      ? deriveClientProductStatus({ hasWork: true, cancelled: false, stage: manual, substage: null, started: true, reprocess: false })
+      : deriveClientProductStatus({ hasWork: false, cancelled, stage: null, started: false, reprocess: false });
     const orderRef = ped.op?.trim() || null;
     const orderKey = orderKeyOf(orderRef, key);
     const id = opaque(clientId, "product", key);
@@ -335,18 +354,19 @@ export function buildOverview(input: {
       commercial: cs ? { id: cs.id, key: cs.key, label: cs.label } : CANCELLED_VIEW,
       product: ped.producto?.trim() || "Producto",
       orderRef,
-      stage: "ELABORACION",
-      stageLabel: STAGE_LABELS.ELABORACION,
+      orderedAt: ped.fecha ?? null,
+      stage: manual ?? "ELABORACION",
+      stageLabel: STAGE_LABELS[manual ?? "ELABORACION"],
       substage: null,
-      stageIndex: 0,
-      message: cs ? "Recibimos tu pedido. Pronto lo vamos a programar." : "Este producto fue cancelado.",
-      quantities: { unit: null, requested: null, delivered: 0, pending: null, available: 0, mixedUnits: false },
+      stageIndex: stageIndex(manual ?? "ELABORACION"),
+      message: !cs ? "Este producto fue cancelado." : manual ? messageFor(manual, null, 0) : "Recibimos tu pedido. Pronto lo vamos a programar.",
+      quantities: { unit: ped.q != null ? "un" : null, requested: ped.q ?? null, delivered: 0, pending: ped.q ?? null, available: 0, mixedUnits: false },
       partialDelivery: false,
       countdown: null,
-      progressPct: 0,
+      progressPct: manual ? visualProgress(manual, null, null) : 0,
       lastDeliveryAt: null,
       availableSince: null,
-      timeline: timelineOf("ELABORACION", { elaboracion: null, envasado: null, listo: null, entregado: null }),
+      timeline: timelineOf(manual ?? "ELABORACION", { elaboracion: null, envasado: null, listo: null, entregado: null }),
       deliveries: [],
     });
   }
@@ -423,6 +443,7 @@ const pickProduct = (p: PortalProductView): PortalProductView => ({
   commercial: pickCommercial(p.commercial),
   product: p.product,
   orderRef: p.orderRef,
+  orderedAt: p.orderedAt,
   stage: p.stage,
   stageLabel: p.stageLabel,
   substage: p.substage,

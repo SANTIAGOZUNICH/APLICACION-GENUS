@@ -56,6 +56,8 @@ export type ProductionPedidoRecord = {
   deleteReason: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Cliente del Portal de Clientes (portal_clients.id) al que quedó vinculado el pedido; null/ausente = sin vínculo por ID. */
+  portalClientId?: string | null;
 };
 
 export type ProductionPedidoInput = {
@@ -70,6 +72,11 @@ export type ProductionPedidoInput = {
   /** Ignorado: siempre se recalcula. */
   kg?: number | string | null;
   estado?: string | null;
+  /**
+   * ID del cliente del Portal de Clientes elegido en el formulario. Es el vínculo PRINCIPAL del pedido con el portal: si falta, el
+   * servidor resuelve el texto de `cliente` contra los clientes y alias normalizados y vincula solo si es inequívoco.
+   */
+  portalClientId?: string | null;
 };
 
 /** Alta de un pedido: el input común + la marca de OP automático. */
@@ -234,6 +241,7 @@ export function toPublicRecord(row: {
   deleteReason: string | null;
   createdAt: string;
   updatedAt: string;
+  portalClientId?: string | null;
 }): ProductionPedidoRecord {
   const kg = computeKg(row.q, row.ml);
   return {
