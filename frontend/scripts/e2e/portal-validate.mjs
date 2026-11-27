@@ -213,6 +213,7 @@ check("POST con origen ajeno rechazado", csrf.status() === 403);
 
 // cierre de sesión
 await d.getByTestId("logout").click();
+await d.getByTestId("tab-correo").click();
 await d.getByRole("button", { name: "Enviarme un código" }).waitFor();
 check("cerrar sesión vuelve al login y el panel deja de estar disponible", (await dctx.request.get("/entregas/api/overview")).status() === 401);
 
