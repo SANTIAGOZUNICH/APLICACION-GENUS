@@ -15,6 +15,7 @@ import {
 } from "@/lib/orders/types";
 import type { SectorId } from "@/types/operational/sector";
 import { duplicateKeyFromRecord } from "./excel-paste";
+import { computeNextOp, NUMERIC_OP_RE } from "./next-op";
 import {
   MAX_PEDIDO_CELL_CHANGES,
   isPedidoCellField,
@@ -26,6 +27,7 @@ import {
   canAccessProductionPedidos,
   coercePedidoFields,
   toPublicRecord,
+  type ProductionPedidoCreateInput,
   type ProductionPedidoInput,
   type ProductionPedidoListFilters,
   type ProductionPedidoRecord,
@@ -199,6 +201,18 @@ async function assertWrites(): Promise<"memory" | "db"> {
     : "db";
 }
 
+/** MAX(OP numérico)+1 sobre TODAS las filas (también eliminadas: un N° ya emitido no se reutiliza). Acepta `db` o `tx`. */
+async function queryNextOp(client: { execute: (q: ReturnType<typeof sql>) => Promise<{ rows: unknown[] }> }): Promise<string | null> {
+  const res = await client.execute(sql`
+    select op from production_pedidos
+    where op ~ ${NUMERIC_OP_RE.source}
+    order by op::numeric desc, length(op) desc
+    limit 1
+  `);
+  const top = (res.rows as { op?: string | null }[])[0]?.op;
+  return top ? computeNextOp([top]) : null;
+}
+
 function useMemory(): boolean {
   return isFeatureMemoryAllowed() && (!isDatabaseConfigured() || process.env.VITEST === "true");
 }
@@ -286,16 +300,34 @@ export class ProductionPedidosService {
     return { items: rows, schemaPending: false };
   }
 
-  async create(
+  /**
+   * Siguiente N° de OP correlativo (MAX numérico + 1 sobre todas las filas, eliminadas incluidas) o null si no hay ninguno.
+   * Es una VISTA PREVIA para autocompletar el formulario: la reserva real ocurre en `create` con `opAuto`, bajo lock.
+   */
+  async nextOp(actor: ProductionPedidosActor): Promise<string | null> {
+    assertAccess(actor);
+    const ready = await isProductionPedidosSchemaReady();
+    if (!ready || useMemory()) return computeNextOp(mem().rows.map((r) => r.op));
+    return queryNextOp(getDb());
+  }
+
+  async create(actor: ProductionPedidosActor, input: ProductionPedidoCreateInput): Promise<ProductionPedidoRecord> {
+    return (await this.createWithMeta(actor, input)).record;
+  }
+
+  /** Alta de un pedido. Con `opAuto` el OP se asigna acá (MAX+1 transaccional con advisory lock); si difiere del pedido por el cliente, `opReassigned`. */
+  async createWithMeta(
     actor: ProductionPedidosActor,
-    input: ProductionPedidoInput
-  ): Promise<ProductionPedidoRecord> {
+    input: ProductionPedidoCreateInput
+  ): Promise<{ record: ProductionPedidoRecord; opReassigned: boolean }> {
     const a = assertAccess(actor);
     const mode = await assertWrites();
     const fields = coercePedidoFields(input);
     if (fields.errors.length) {
       throw new OrdersValidationError(fields.errors.join("; "));
     }
+    const requestedOp = fields.op;
+    const auto = input.opAuto === true;
     const now = nowIso();
     const record = toPublicRecord({
       id: randomUUID(),
@@ -311,6 +343,11 @@ export class ProductionPedidosService {
     });
 
     if (mode === "memory" || useMemory()) {
+      // Memoria (demo/tests): sin awaits entre calcular y guardar, así que es atómico en el event loop.
+      if (auto) {
+        const next = computeNextOp(mem().rows.map((r) => r.op));
+        if (next != null) record.op = next;
+      }
       mem().rows.unshift(record);
       recordLifecycleEvent({
         entityKind: "pedido",
@@ -318,11 +355,18 @@ export class ProductionPedidosService {
         action: "crear",
         actor: { email: a.email, sector: a.sector as SectorId },
       });
-      return record;
+      return { record, opReassigned: auto && record.op !== requestedOp };
     }
 
     const db = getDb();
-    await db.execute(sql`
+    await db.transaction(async (tx) => {
+      if (auto) {
+        // Serializa las altas con OP automático: la segunda espera el COMMIT de la primera y recién ahí lee el MAX.
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext('genus-production-pedidos-op'))`);
+        const next = await queryNextOp(tx);
+        if (next != null) record.op = next;
+      }
+      await tx.execute(sql`
       insert into production_pedidos (
         id, op, fecha, nro_oc, cliente, producto, s, q, ml, kg, estado,
         created_by, created_by_sector, updated_by, created_at, updated_at
@@ -345,6 +389,7 @@ export class ProductionPedidosService {
         ${now}::timestamptz
       )
     `);
+    });
     await ensureClientIdentitySafe(record.cliente, "pedido", a.email);
     recordLifecycleEvent({
       entityKind: "pedido",
@@ -353,7 +398,7 @@ export class ProductionPedidosService {
       actor: { email: a.email, sector: a.sector as SectorId },
       impact: { op: record.op, nroOc: record.nroOc },
     });
-    return record;
+    return { record, opReassigned: auto && record.op !== requestedOp };
   }
 
   async update(

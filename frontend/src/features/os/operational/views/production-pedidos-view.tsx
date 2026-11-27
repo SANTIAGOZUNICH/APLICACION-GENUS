@@ -23,13 +23,15 @@ import {
   patchProductionPedidoCellsApi,
   createProductionPedidoApi,
   deleteProductionPedidoApi,
+  fetchNextOpApi,
   fetchProductionPedidosApi,
   importProductionPedidosApi,
   previewProductionPedidosPasteApi,
   updateProductionPedidoApi,
 } from "@/lib/production-pedidos/client";
 import { computeKg, formatKg } from "@/lib/production-pedidos/kg";
-import { coercePedidoFields } from "@/lib/production-pedidos/types";
+import { coercePedidoFields, normalizeFecha } from "@/lib/production-pedidos/types";
+import { todayDdMmAaArgentina } from "@/lib/production-pedidos/next-op";
 import type { ColumnAssociation } from "@/lib/production-pedidos/excel-paste";
 import {
   PRODUCTION_PEDIDO_STATUSES,
@@ -205,6 +207,9 @@ export function ProductionPedidosView() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(emptyDraft());
+  /** OP sugerido por el autocompletado (siguiente correlativo); null si no hay o el usuario no lo usa. */
+  const [autoOp, setAutoOp] = useState<string | null>(null);
+  const openNewSeq = useRef(0);
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
@@ -313,8 +318,17 @@ export function ProductionPedidosView() {
 
   function openNew() {
     setEditingId(null);
-    setDraft(emptyDraft());
+    // FECHA: hoy en Buenos Aires (Intl con timeZone; no la hora del navegador), mostrada DD/MM/AA.
+    setDraft({ ...emptyDraft(), fecha: todayDdMmAaArgentina() });
+    setAutoOp(null);
     setEditorOpen(true);
+    // OP: siguiente correlativo del sistema. Solo se completa si el usuario todavía no escribió nada.
+    const seq = ++openNewSeq.current;
+    void fetchNextOpApi(session).then((next) => {
+      if (!next || seq !== openNewSeq.current) return;
+      setAutoOp(next);
+      setDraft((d) => (d.op.trim() === "" ? { ...d, op: next } : d));
+    });
   }
 
   function openEdit(r: ProductionPedidoRecord) {
@@ -327,8 +341,23 @@ export function ProductionPedidosView() {
     try {
       const input = draftToInput(draft);
       if (editingId) await updateProductionPedidoApi(session, editingId, input);
-      else await createProductionPedidoApi(session, input);
+      else {
+        // El alta guarda la FECHA en ISO (formato del sistema) aunque se muestre DD/MM/AA.
+        const fecha = draft.fecha.trim() ? normalizeFecha(draft.fecha) : null;
+        if (draft.fecha.trim() && !fecha) {
+          setError("FECHA inválida (usá DD/MM/AA)");
+          return;
+        }
+        const opAuto = autoOp != null && draft.op.trim() === autoOp;
+        const created = await createProductionPedidoApi(session, { ...input, fecha, opAuto });
+        if (created.opReassigned) {
+          setImportResult(
+            `El N° de OP ${autoOp} ya había sido tomado por otro pedido: se asignó el siguiente disponible, OP ${created.op}.`
+          );
+        }
+      }
       setEditorOpen(false);
+      setError(null);
       void reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo guardar");
@@ -884,7 +913,9 @@ export function ProductionPedidosView() {
                   <label key={key} className="block text-xs">
                     <span className="mb-1 block text-[var(--os-text-muted)]">{label}</span>
                     <input
-                      type={key === "fecha" ? "date" : "text"}
+                      type={key === "fecha" && editingId ? "date" : "text"}
+                      placeholder={key === "fecha" && !editingId ? "DD/MM/AA" : undefined}
+                      data-testid={key === "op" || key === "fecha" ? `pedido-form-${key}` : undefined}
                       className="min-h-10 w-full rounded border border-[var(--os-border)] bg-transparent px-2 text-sm"
                       value={draft[key]}
                       onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}

@@ -4,6 +4,7 @@ import {
 } from "@/lib/auth/header-names";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import type {
+  ProductionPedidoCreateInput,
   ProductionPedidoInput,
   ProductionPedidoListFilters,
   ProductionPedidoRecord,
@@ -53,17 +54,33 @@ export async function fetchProductionPedidosApi(
 
 export async function createProductionPedidoApi(
   session: OrdersClientSession,
-  input: ProductionPedidoInput
-): Promise<ProductionPedidoRecord> {
+  input: ProductionPedidoCreateInput
+): Promise<ProductionPedidoRecord & { opReassigned?: boolean }> {
   const res = await fetch("/api/v1/production-pedidos", {
     method: "POST",
     credentials: "include",
     headers: headers(session),
     body: JSON.stringify(input),
   });
-  const body = (await res.json()) as { item?: ProductionPedidoRecord; error?: string };
+  const body = (await res.json()) as { item?: ProductionPedidoRecord; opReassigned?: boolean; error?: string };
   if (!res.ok) throw new Error(publicError(body, "No se pudo crear el pedido"));
-  return body.item!;
+  return { ...body.item!, opReassigned: Boolean(body.opReassigned) };
+}
+
+/** Siguiente N° de OP correlativo según el último OP real del sistema (null si no hay o no se pudo consultar). */
+export async function fetchNextOpApi(session: OrdersClientSession): Promise<string | null> {
+  try {
+    const res = await fetch("/api/v1/production-pedidos/next-op", {
+      credentials: "include",
+      cache: "no-store",
+      headers: headers(session),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { nextOp?: string | null };
+    return body.nextOp ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function updateProductionPedidoApi(

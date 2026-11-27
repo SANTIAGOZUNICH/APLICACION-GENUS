@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
 import { getProductionPedidosService } from "@/lib/production-pedidos/service";
-import type { ProductionPedidoInput } from "@/lib/production-pedidos/types";
+import type { ProductionPedidoCreateInput } from "@/lib/production-pedidos/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,12 +37,12 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const actor = await resolveOrdersActor(request);
-    const body = (await request.json()) as ProductionPedidoInput;
-    const item = await getProductionPedidosService().create(
+    const body = (await request.json()) as ProductionPedidoCreateInput;
+    const { record: item, opReassigned } = await getProductionPedidosService().createWithMeta(
       { email: actor.email, sector: actor.sector, roleId: actor.roleId },
       body
     );
-    return NextResponse.json({ item }, { status: 201 });
+    return NextResponse.json({ item, opReassigned }, { status: 201 });
   } catch (err) {
     return ordersErrorResponse(err);
   }
