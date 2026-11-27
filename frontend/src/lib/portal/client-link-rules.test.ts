@@ -105,3 +105,13 @@ describe("estado manual de un pedido sin trabajos", () => {
     expect(ov.orders.find((o) => o.orderRef === "OP-1")!.status.label).toBe("Pedido recibido");
   });
 });
+
+import { pedidoSentToSector } from "./client-link-rules";
+describe("pedidoSentToSector", () => {
+  it("el pedido ya enviado a un sector (estado EN_*) cuenta como iniciado", () => {
+    for (const e of ["EN_ELABORACION", "en_envasado", "EN_CODIFICADO", "LISTO_PARA_ENTREGAR"]) expect(pedidoSentToSector(e)).toBe(true);
+  });
+  it("sin estado o INGRESO no", () => {
+    for (const e of [null, undefined, "", "INGRESO", "ENTREGADO"]) expect(pedidoSentToSector(e)).toBe(false);
+  });
+});

@@ -50,7 +50,7 @@ export function buildPushMessage(type: PushEventType, orderRef: string | null, d
           body: `Estamos en la etapa final de producción. Estimamos que tu pedido estará listo para entregar en aproximadamente ${businessDaysLabel(days.envasadoDays)}.`,
         };
       case "LISTO":
-        return { title: "¡TU PEDIDO ESTÁ LISTO! 🎉", body: "Finalizamos la producción de tu pedido. Ya está disponible para coordinar su entrega. ¡Gracias por confiar en nosotros!" };
+        return { title: "¡TU PEDIDO ESTÁ LISTO PARA ENTREGAR! 🎉", body: "Finalizamos la producción de tu pedido. Ya está disponible para coordinar su entrega. ¡Gracias por confiar en nosotros!" };
       case "ENTREGADO":
         return { title: "¡Pedido entregado!", body: "Tu pedido fue entregado. Gracias por elegir Laboratorio Genus." };
     }

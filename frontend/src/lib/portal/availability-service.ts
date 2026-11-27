@@ -7,6 +7,7 @@
  * (dos confirmaciones simultáneas se serializan), idempotencia por clave (doble clic = una sola marca), cantidades acotadas
  * a lo terminado y no cubierto, y auditoría append-only con valores anteriores y nuevos.
  */
+import { schedulePortalPush } from "./push/push-trigger";
 import { emitBillingNotification } from "@/lib/notifications/billing-notifications";
 import type { BillingEvent } from "@/lib/notifications/billing-notification-builder";
 import "server-only";
@@ -255,6 +256,8 @@ export async function markReadyForDelivery(
   });
   // Aviso a Administración FUERA de la transacción (best-effort, idempotente por marca): «listo» NO es «entregado».
   if (notice) await emitBillingNotification(notice);
+  // Portal de Clientes: aviso inmediato «Listo para entregar» (en segundo plano; nunca afecta esta operación).
+  if (!marked.replayed) schedulePortalPush({ workItemId: input.workItemId });
   return marked;
 }
 

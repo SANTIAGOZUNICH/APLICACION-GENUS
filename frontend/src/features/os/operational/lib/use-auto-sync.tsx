@@ -75,12 +75,15 @@ export function useAutoSync(opts: { enabled?: boolean; intervalMs?: number; run:
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
     window.addEventListener("online", onVisible);
+    // Volver a una página desde la caché de ida/vuelta (iOS/Safari, PWA reabierta): consulta en el acto.
+    window.addEventListener("pageshow", onVisible);
     return () => {
       alive.current = false;
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
       window.removeEventListener("online", onVisible);
+      window.removeEventListener("pageshow", onVisible);
     };
   }, [enabled, intervalMs, syncNow]);
 

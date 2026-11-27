@@ -9,6 +9,8 @@ import { ProductCard } from "./product-card";
 import { ReceiptDialog } from "./receipt-dialog";
 import { PortalHeader } from "./shell";
 import { AppPanel } from "./pwa/app-panel";
+import { PushPrompt } from "./pwa/push-prompt";
+import { usePushState } from "./pwa/use-push-state";
 import { cleanupOnLogout, type PushHistoryItem } from "./pwa/push-client";
 import { usePushInbox } from "./pwa/use-push-inbox";
 
@@ -61,8 +63,8 @@ export async function logout() {
   }
 }
 
-/** Cada cuántos segundos se consulta si hubo novedades (solo con la pestaña visible; al volver a ella se consulta en el acto). */
-export const PORTAL_POLL_MS = 15_000;
+/** Cada cuántos segundos se consulta si hubo novedades (solo con la pestaña visible; al volver a ella se consulta en el acto). 5 s: la consulta es un 304 sin cuerpo si nada cambió. */
+export const PORTAL_POLL_MS = 5_000;
 
 /**
  * Hook compartido: datos del cliente SIN recargar la página. Reutiliza `useAutoSync` de GENUS OS (solo lectura; pausado en segundo
@@ -157,6 +159,7 @@ function DeliveryRow({ d, onConfirm }: { d: PortalDeliveryView; onConfirm: (id: 
 
 export function Dashboard({ initial, contact }: { initial: ClientPayload; contact: Contact }) {
   const { data, refresh, lastSyncAt, syncError } = usePortalData(initial);
+  const push = usePushState();
   const [dialog, setDialog] = useState<string | null>(null);
   const [localRead, setLocalRead] = useState(false);
   const inbox = usePushInbox(!data.demo);
@@ -236,7 +239,8 @@ export function Dashboard({ initial, contact }: { initial: ClientPayload; contac
           </section>
         </div>
 
-        {data.demo ? null : <div className="gp-section"><AppPanel /></div>}
+        {data.demo ? null : <div className="gp-section"><AppPanel push={push} /></div>}
+        {data.demo ? null : <PushPrompt push={push} scope={data.client.code} />}
 
         <footer className="gp-footer" data-testid="disclaimer">{data.disclaimer}</footer>
       </main>

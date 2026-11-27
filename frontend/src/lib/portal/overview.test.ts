@@ -168,6 +168,13 @@ describe("estado comercial y pedidos (vista del cliente)", () => {
     expect(going.products[0]!.commercial.id).toBe(3);
   });
 
+  it("Producción ENVÍA el pedido a Elaboración (estado del pedido EN_ELABORACION) → «En elaboración» aunque el trabajo siga pendiente", () => {
+    const sent = build([mk("w1", "PA", "Crema", { operationalStatus: "pendiente", pedidoEstado: "EN_ELABORACION" })], { events: [assigned("w1")] });
+    expect(sent.products[0]!.commercial).toMatchObject({ id: 3, label: "En elaboración" });
+    const noState = build([mk("w1", "PA", "Crema", { operationalStatus: "pendiente", pedidoEstado: "INGRESO" })], { events: [assigned("w1")] });
+    expect(noState.products[0]!.commercial.id).toBe(2);
+  });
+
   it("renglón de pedido sin trabajos → «Pedido recibido» (sin inventar etapas ni cantidades)", () => {
     const o = buildOverview({ clientId: CLIENT, works: [], deliveries: [], events: [], pedidos: [{ id: "PX", op: "OP-80", producto: "Jabón líquido", estado: "INGRESO", cancelledWorks: 0 }], confirmations: new Map(), now: NOW });
     expect(o.products).toHaveLength(1);

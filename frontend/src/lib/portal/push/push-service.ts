@@ -125,6 +125,12 @@ export type PushClientRow = {
   code: string;
   users: number;
   devices: number;
+  /** Diagnóstico por cliente (Dirección). */
+  lastSubscriptionAt: string | null;
+  lastSentAt: string | null;
+  events: { pendientes: number; simulados: number; enviados: number; fallidos: number; sinDispositivos: number };
+  lastFailure: { reason: string; at: string } | null;
+  deviceErrors: number;
   pilotEnabled: boolean;
   enabledAt: string | null;
   baselineAt: string | null;
@@ -173,7 +179,19 @@ export async function queueIndicators(db: SqlExec = requireDb()): Promise<PushQu
   return { pendientes: n("PENDIENTE", "PROCESANDO"), enviadas: n("ENVIADA"), fallidas: n("FALLIDA"), simuladas: n("SIMULADA"), sinDispositivos: n("SIN_DISPOSITIVOS"), expiradas: n("EXPIRADA") };
 }
 
+export type PushWorkerHeartbeat = { lastStartedAt: string | null; lastFinishedAt: string | null; lastCronAt: string | null; lastOk: boolean | null; lastError: string | null; lastTrigger: string | null; runsTotal: number; lastSummary: Record<string, unknown> | null };
+
+export async function workerHeartbeat(db: SqlExec): Promise<PushWorkerHeartbeat> {
+  const r = ((await db.execute(sql`select last_started_at, last_finished_at, last_cron_at, last_ok, last_error, last_trigger, runs_total, last_summary from portal_push_worker_runs where id = 1`)).rows as Row[])[0];
+  return {
+    lastStartedAt: isoOrNull(r?.last_started_at), lastFinishedAt: isoOrNull(r?.last_finished_at), lastCronAt: isoOrNull(r?.last_cron_at),
+    lastOk: r ? r.last_ok === true : null, lastError: r?.last_error ? String(r.last_error) : null, lastTrigger: r?.last_trigger ? String(r.last_trigger) : null,
+    runsTotal: Number(r?.runs_total ?? 0), lastSummary: (r?.last_summary as Record<string, unknown> | null) ?? null,
+  };
+}
+
 export type PushAdminOverview = {
+  worker: PushWorkerHeartbeat;
   settings: PushSettings;
   vapidConfigured: boolean;
   cronConfigured: boolean;
@@ -187,18 +205,32 @@ export async function pushAdminOverview(staff: PushStaff, db: SqlExec = requireD
     select c.id::text as id, c.display_name, c.public_code,
            (select count(*)::int from portal_users u where u.client_id = c.id and u.removed_at is null and u.status = 'ACTIVO') as users,
            (select count(*)::int from portal_push_subscriptions s where s.client_id = c.id) as devices,
+           (select max(s.created_at) from portal_push_subscriptions s where s.client_id = c.id) as last_sub_at,
+           (select count(*)::int from portal_push_subscriptions s where s.client_id = c.id and s.last_error is not null) as device_errors,
+           (select max(o.processed_at) from portal_push_outbox o where o.client_id = c.id and o.status = 'ENVIADA' and o.event_type <> ${PUSH_TEST_EVENT_TYPE}) as last_sent_at,
+           (select count(*)::int from portal_push_outbox o where o.client_id = c.id and o.status in ('PENDIENTE', 'PROCESANDO') and o.event_type <> ${PUSH_TEST_EVENT_TYPE}) as ev_pend,
+           (select count(*)::int from portal_push_outbox o where o.client_id = c.id and o.status = 'SIMULADA') as ev_sim,
+           (select count(*)::int from portal_push_outbox o where o.client_id = c.id and o.status = 'ENVIADA' and o.event_type <> ${PUSH_TEST_EVENT_TYPE}) as ev_env,
+           (select count(*)::int from portal_push_outbox o where o.client_id = c.id and o.status = 'FALLIDA') as ev_fail,
+           (select count(*)::int from portal_push_outbox o where o.client_id = c.id and o.status = 'SIN_DISPOSITIVOS') as ev_nodev,
+           (select coalesce(o.last_error, 'sin detalle') || '|' || coalesce(o.processed_at, o.created_at)::text from portal_push_outbox o
+             where o.client_id = c.id and (o.status = 'FALLIDA' or o.last_error is not null) order by coalesce(o.processed_at, o.created_at) desc limit 1) as last_failure,
            coalesce(p.enabled, false) as enabled, p.enabled_at, p.baseline_at, coalesce(p.baseline_orders, 0) as baseline_orders
       from portal_clients c left join portal_push_client_pilot p on p.client_id = c.id
      where c.access_enabled and c.status = 'ACTIVO'
        and (exists (select 1 from portal_users u where u.client_id = c.id and u.removed_at is null) or exists (select 1 from portal_authorized_emails e where e.client_id = c.id and e.removed_at is null))
      order by c.display_name`)).rows as Row[];
   return {
+    worker: await workerHeartbeat(db),
     settings: await getPushSettings(db),
     vapidConfigured: vapidConfig() != null,
     cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
     queue: await queueIndicators(db),
     clients: clients.map((r) => ({
       id: String(r.id), name: String(r.display_name), code: String(r.public_code), users: Number(r.users), devices: Number(r.devices),
+      lastSubscriptionAt: isoOrNull(r.last_sub_at), lastSentAt: isoOrNull(r.last_sent_at), deviceErrors: Number(r.device_errors),
+      events: { pendientes: Number(r.ev_pend), simulados: Number(r.ev_sim), enviados: Number(r.ev_env), fallidos: Number(r.ev_fail), sinDispositivos: Number(r.ev_nodev) },
+      lastFailure: r.last_failure ? (([reason, at]) => ({ reason: reason ?? "", at: isoOrNull(at) ?? "" }))(String(r.last_failure).split(/\|([\s\S]*)/)) : null,
       pilotEnabled: r.enabled === true, enabledAt: isoOrNull(r.enabled_at), baselineAt: isoOrNull(r.baseline_at), baselineOrders: Number(r.baseline_orders),
     })),
   };
@@ -208,7 +240,12 @@ export async function pushAdminOverview(staff: PushStaff, db: SqlExec = requireD
 
 export const ownerKeyOf = (s: Pick<PortalSession, "userId" | "email">): string => (s.userId ? OWNER_KEY_USER(s.userId) : OWNER_KEY_EMAIL(s.email ?? "desconocido"));
 
-export type PushClientConfig = { available: boolean; reason: "ok" | "vapid" | "pilot"; publicKey: string | null; devices: number; thisDevice: boolean };
+/**
+ * `available`: el servidor puede registrar dispositivos (hay claves VAPID). Registrar un dispositivo NO depende del piloto: el piloto
+ * (y el interruptor global) solo deciden si se ENVÍA. Así el cliente puede activar las notificaciones antes de que Dirección
+ * habilite el envío, y no queda sin dispositivo registrado cuando se habilite. `pilotEnabled` es informativo.
+ */
+export type PushClientConfig = { available: boolean; reason: "ok" | "vapid"; publicKey: string | null; devices: number; thisDevice: boolean; pilotEnabled: boolean };
 
 export async function pushClientConfig(session: PortalSession, endpoint: string | null, db: SqlExec = requireDb()): Promise<PushClientConfig> {
   const key = vapidPublicKey();
@@ -218,15 +255,14 @@ export async function pushClientConfig(session: PortalSession, endpoint: string 
   if (endpoint) {
     thisDevice = (((await db.execute(sql`select 1 as x from portal_push_subscriptions where endpoint = ${endpoint} and owner_key = ${owner} and client_id = ${session.clientId}::uuid`)).rows) as Row[]).length > 0;
   }
-  if (!key) return { available: false, reason: "vapid", publicKey: null, devices, thisDevice };
-  if (!(await isPilotEnabled(db, session.clientId))) return { available: false, reason: "pilot", publicKey: null, devices, thisDevice };
-  return { available: true, reason: "ok", publicKey: key, devices, thisDevice };
+  const pilotEnabled = await isPilotEnabled(db, session.clientId);
+  if (!key) return { available: false, reason: "vapid", publicKey: null, devices, thisDevice, pilotEnabled };
+  return { available: true, reason: "ok", publicKey: key, devices, thisDevice, pilotEnabled };
 }
 
 /** Alta/actualización de un dispositivo. El endpoint es único: si lo tenía otro usuario (equipo compartido), pasa al actual. */
-export async function savePushSubscription(session: PortalSession, input: unknown, userAgent: string | null, db: SqlExec = requireDb()): Promise<void> {
+export async function savePushSubscription(session: PortalSession, input: unknown, userAgent: string | null, db: SqlExec = requireDb()): Promise<{ registered: true; devices: number }> {
   if (!vapidPublicKey()) throw new PortalError("Las notificaciones no están disponibles por ahora.", 503, "PUSH_UNAVAILABLE");
-  if (!(await isPilotEnabled(db, session.clientId))) throw new PortalError("Las notificaciones todavía no están habilitadas para tu cuenta.", 409, "PUSH_NOT_ENABLED");
   const sub = parseSubscriptionInput(input);
   if (!sub) throw new PortalError("Suscripción inválida.", 400, "VALIDATION");
   await db.execute(sql`
@@ -234,7 +270,12 @@ export async function savePushSubscription(session: PortalSession, input: unknow
     values (${randomUUID()}::uuid, ${session.clientId}::uuid, ${ownerKeyOf(session)}, ${session.userId}::uuid, ${sub.endpoint}, ${sub.p256dh}, ${sub.auth}, ${userAgent?.slice(0, 300) ?? null})
     on conflict (endpoint) do update set client_id = excluded.client_id, owner_key = excluded.owner_key, user_id = excluded.user_id, p256dh = excluded.p256dh,
            auth = excluded.auth, user_agent = excluded.user_agent, failures = 0, last_error = null`);
+  // Confirmación REAL: se vuelve a leer de PostgreSQL. Solo si la fila existe se responde que quedó registrado.
+  const check = (await db.execute(sql`select count(*)::int as n from portal_push_subscriptions where endpoint = ${sub.endpoint} and client_id = ${session.clientId}::uuid and owner_key = ${ownerKeyOf(session)}`)).rows as Row[];
+  if (Number(check[0]?.n ?? 0) !== 1) throw new PortalError("No pudimos registrar este dispositivo. Reintentá.", 500, "PUSH_NOT_SAVED");
   await audit(db, { clientId: session.clientId, type: "PUSH_DISPOSITIVO_ALTA", kind: "CLIENTE", actor: session.actor });
+  const devices = Number((((await db.execute(sql`select count(*)::int as n from portal_push_subscriptions where client_id = ${session.clientId}::uuid and owner_key = ${ownerKeyOf(session)}`)).rows as Row[])[0]?.n) ?? 0);
+  return { registered: true, devices };
 }
 
 export async function removePushSubscription(session: PortalSession, endpoint: unknown, db: SqlExec = requireDb()): Promise<number> {
@@ -298,10 +339,11 @@ export type PushWorkerSummary = {
 export type WorkerDeps = { db?: SqlExec; now?: Date; sender?: PushSender | null; vapid?: VapidConfig | null };
 
 /** Detecta transiciones de los clientes en piloto y las encola (idempotente: se puede ejecutar tantas veces como se quiera). */
-export async function detectAndEnqueue(db: SqlExec, now: Date, summary: PushWorkerSummary, days: PushDays): Promise<void> {
+export async function detectAndEnqueue(db: SqlExec, now: Date, summary: PushWorkerSummary, days: PushDays, onlyClientId: string | null = null): Promise<void> {
   const clients = (await db.execute(sql`
     select c.id::text as id from portal_push_client_pilot p join portal_clients c on c.id = p.client_id
-     where p.enabled and c.status = 'ACTIVO' and c.access_enabled`)).rows as Row[];
+     where p.enabled and c.status = 'ACTIVO' and c.access_enabled
+       and (${onlyClientId}::uuid is null or c.id = ${onlyClientId}::uuid)`)).rows as Row[];
   for (const c of clients) {
     const clientId = String(c.id);
     summary.clients++;
@@ -430,22 +472,65 @@ export async function dispatchPending(db: SqlExec, now: Date, summary: PushWorke
   }
 }
 
-/** Una corrida del worker: detectar + enviar. Idempotente y segura ante ejecuciones repetidas o simultáneas. */
-export async function runPushWorker(deps: WorkerDeps = {}): Promise<PushWorkerSummary> {
+const emptySummary = (vapid: boolean, globalSendEnabled: boolean): PushWorkerSummary => ({
+  vapid, globalSendEnabled, clients: 0, clientErrors: 0, detected: 0, enqueued: 0, claimed: 0,
+  enviadas: 0, simuladas: 0, sinDispositivos: 0, fallidas: 0, expiradas: 0, esperandoVapid: 0, reintentos: 0, dispositivosBaja: 0,
+});
+
+export type WorkerTrigger = "cron" | "inmediato";
+
+/** Latido del worker (diagnóstico de Dirección). Best-effort: jamás propaga un error. */
+export async function recordWorkerRun(db: SqlExec, trigger: WorkerTrigger, startedAt: Date, outcome: { summary?: PushWorkerSummary; error?: string | null }): Promise<void> {
+  try {
+    const ok = !outcome.error;
+    await db.execute(sql`
+      insert into portal_push_worker_runs (id, last_started_at, last_finished_at, last_ok, last_error, last_trigger, last_summary, last_cron_at, runs_total, updated_at)
+      values (1, ${startedAt.toISOString()}::timestamptz, now(), ${ok}, ${outcome.error ?? null}, ${trigger}, ${outcome.summary ? JSON.stringify(outcome.summary) : null}::jsonb,
+              ${trigger === "cron" ? sql`now()` : sql`null`}, 1, now())
+      on conflict (id) do update set last_started_at = excluded.last_started_at, last_finished_at = now(), last_ok = excluded.last_ok, last_error = excluded.last_error,
+             last_trigger = excluded.last_trigger, last_summary = excluded.last_summary,
+             last_cron_at = coalesce(excluded.last_cron_at, portal_push_worker_runs.last_cron_at),
+             runs_total = portal_push_worker_runs.runs_total + 1, updated_at = now()`);
+  } catch (err) {
+    console.error("[portal-push] no se pudo registrar el latido del worker", err);
+  }
+}
+
+/**
+ * Una corrida del worker: detectar + enviar. Idempotente y segura ante ejecuciones repetidas o simultáneas. NO depende de que haya
+ * un portal abierto ni de una sesión: recorre TODOS los clientes del piloto. `onlyClientId` la acota a un cliente (disparo inmediato).
+ */
+export async function runPushWorker(deps: WorkerDeps & { trigger?: WorkerTrigger; onlyClientId?: string | null } = {}): Promise<PushWorkerSummary> {
   const db = deps.db ?? requireDb();
   const now = deps.now ?? new Date();
+  const startedAt = new Date();
+  const trigger = deps.trigger ?? "cron";
   const vapid = deps.vapid === undefined ? vapidConfig() : deps.vapid;
   const sender = deps.sender === undefined ? (vapid ? createWebPushSender(vapid) : null) : deps.sender;
-  const settings = await getPushSettings(db);
-  const summary: PushWorkerSummary = {
-    vapid: vapid != null || deps.sender != null, globalSendEnabled: settings.globalSendEnabled, clients: 0, clientErrors: 0, detected: 0, enqueued: 0, claimed: 0,
-    enviadas: 0, simuladas: 0, sinDispositivos: 0, fallidas: 0, expiradas: 0, esperandoVapid: 0, reintentos: 0, dispositivosBaja: 0,
-  };
-  await detectAndEnqueue(db, now, summary, { elaboracionDays: settings.elaboracionDays, envasadoDays: settings.envasadoDays });
-  await dispatchPending(db, now, summary, { sender }, settings.globalSendEnabled);
+  let summary: PushWorkerSummary = emptySummary(vapid != null || deps.sender != null, false);
+  try {
+    const settings = await getPushSettings(db);
+    summary = emptySummary(vapid != null || deps.sender != null, settings.globalSendEnabled);
+    await detectAndEnqueue(db, now, summary, { elaboracionDays: settings.elaboracionDays, envasadoDays: settings.envasadoDays }, deps.onlyClientId ?? null);
+    await dispatchPending(db, now, summary, { sender }, settings.globalSendEnabled);
+  } catch (err) {
+    await recordWorkerRun(db, trigger, startedAt, { summary, error: String((err as Error)?.message ?? err).slice(0, 300) });
+    throw err;
+  }
+  await recordWorkerRun(db, trigger, startedAt, { summary });
   return summary;
 }
 
+/** Cliente del portal dueño de un pedido (por su ID guardado; los históricos sin ID los recoge el cron por nombre). */
+export async function portalClientOfPedido(db: SqlExec, pedidoId: string): Promise<string | null> {
+  const r = ((await db.execute(sql`select portal_client_id::text as id from production_pedidos where id = ${pedidoId}::uuid`)).rows as Row[])[0];
+  return r?.id ? String(r.id) : null;
+}
+export async function portalClientOfWork(db: SqlExec, workItemId: string): Promise<string | null> {
+  const r = ((await db.execute(sql`
+    select coalesce(p.portal_client_id, w.portal_client_id)::text as id from work_items w left join production_pedidos p on p.id = w.production_pedido_id where w.id = ${workItemId}::uuid`)).rows as Row[])[0];
+  return r?.id ? String(r.id) : null;
+}
 
 // ───────────────────────── Notificación de prueba (manual, solo Dirección) ─────────────────────────
 

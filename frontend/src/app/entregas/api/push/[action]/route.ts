@@ -12,7 +12,7 @@ export async function GET(request: Request, ctx: Ctx) {
   try {
     const { action } = await ctx.params;
     // La demostración no tiene dispositivos ni historial reales.
-    if (await demoSessionFrom(request)) return jsonResponse(action === "history" ? { items: [], unread: 0 } : { available: false, reason: "demo", publicKey: null, devices: 0, thisDevice: false });
+    if (await demoSessionFrom(request)) return jsonResponse(action === "history" ? { items: [], unread: 0 } : { available: false, reason: "demo", publicKey: null, devices: 0, thisDevice: false, pilotEnabled: false });
     const { session } = await requireSession(request);
     if (action === "config") {
       const endpoint = new URL(request.url).searchParams.get("endpoint");
@@ -34,8 +34,8 @@ export async function POST(request: Request, ctx: Ctx) {
     const { session } = await requireSession(request);
     const body = await readJsonLarge(request);
     if (action === "subscribe") {
-      await savePushSubscription(session, body.subscription, request.headers.get("user-agent"));
-      return jsonResponse({ ok: true });
+      const saved = await savePushSubscription(session, body.subscription, request.headers.get("user-agent"));
+      return jsonResponse({ ok: true, ...saved });
     }
     if (action === "unsubscribe") return jsonResponse({ ok: true, removed: await removePushSubscription(session, body.endpoint) });
     if (action === "read") {

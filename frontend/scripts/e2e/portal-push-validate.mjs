@@ -97,6 +97,21 @@ await portalSession(ctxA, USER_A, "Inicial-Temporal-9");
 const a = await ctxA.newPage();
 await a.goto("/entregas");
 await a.getByTestId("welcome").waitFor({ timeout: 30000 });
+// ───────── 0. Aviso de activación al primer ingreso (aunque el piloto de envío todavía no esté habilitado) ─────────
+await a.getByTestId("push-prompt").waitFor({ timeout: 30000 });
+{
+  const t = await a.getByTestId("push-prompt").innerText();
+  check("primer ingreso: modal «¡Enterate del avance de tus pedidos!» con el texto acordado y los botones «Activar notificaciones» / «Ahora no»",
+    t.includes("¡Enterate del avance de tus pedidos!") && t.includes("Activá las notificaciones para recibir novedades sobre tus productos, incluso cuando no estés utilizando la aplicación.") && /Activar notificaciones/.test(t) && /Ahora no/.test(t));
+  check("el permiso nativo NO se pidió al mostrar el modal (solo tras el gesto)", (await a.evaluate(() => window.__pushStubCalls)) === 0);
+  await a.screenshot({ path: `${OUT}/00-modal-activacion.png` });
+  await a.getByTestId("push-prompt-later").click();
+  check("«Ahora no» cierra el modal sin pedir permiso ni registrar nada", (await a.getByTestId("push-prompt").count()) === 0 && (await a.evaluate(() => window.__pushStubCalls)) === 0 && (await q("select count(*)::int as n from portal_push_subscriptions where client_id = $1::uuid", [idA]))[0].n === 0);
+  await a.reload();
+  await a.getByTestId("welcome").waitFor({ timeout: 30000 });
+  await a.getByTestId("push-toggle").waitFor({ timeout: 30000 });
+  check("tras «Ahora no» el modal no vuelve a molestar, y desde «Portal en tu celular» se puede activar (estado: Notificaciones desactivadas)", (await a.getByTestId("push-prompt").count()) === 0 && /Notificaciones desactivadas/.test(await a.getByTestId("push-state").innerText()));
+}
 const manifestHref = await a.locator('link[rel="manifest"]').first().getAttribute("href");
 check("/entregas enlaza el manifest PROPIO del portal (no el de GENUS OS)", manifestHref === "/entregas/manifest.webmanifest" && (await a.locator('link[rel="manifest"]').count()) === 1, String(manifestHref));
 const man = await (await ctxA.request.get("/entregas/manifest.webmanifest")).json();
@@ -154,6 +169,11 @@ const ANDROID = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KH
   const i = await ctxI.newPage();
   await i.goto("/entregas");
   await i.getByTestId("app-panel").waitFor({ timeout: 30000 });
+  await i.getByTestId("push-prompt").waitFor({ timeout: 20000 });
+  const pi = await i.getByTestId("push-prompt").innerText();
+  check("iPhone sin app instalada: el modal explica Safari → Compartir → Agregar a pantalla de inicio (iOS 16.4) y NO ofrece pedir permiso", /Safari/.test(pi) && /Compartir/.test(pi) && /Agregar a pantalla de inicio/.test(pi) && /16\.4/.test(pi) && (await i.getByTestId("push-prompt-activate").count()) === 0);
+  await i.getByTestId("push-prompt-later").click();
+  check("iPhone: estado «Instalación requerida»", /Instalación requerida/.test(await i.getByTestId("push-state").innerText()));
   await i.getByTestId("install-help-toggle").click();
   const t = await i.getByTestId("install-ios").innerText();
   check("iPhone: instrucciones Safari → Compartir → Agregar a pantalla de inicio, push solo desde la app instalada, iOS 16.4", /Safari/.test(t) && /Compartir/.test(t) && /Agregar a pantalla de inicio/.test(t) && /solo funcionan desde la app instalada/.test(t) && /16\.4/.test(t));
@@ -167,6 +187,7 @@ const ANDROID = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KH
   const d = await ctxD.newPage();
   await d.goto("/entregas");
   await d.getByTestId("app-panel").waitFor({ timeout: 30000 });
+  await d.getByTestId("push-prompt").waitFor({ timeout: 20000 }).then(() => d.getByTestId("push-prompt-later").click(), () => undefined);
   check("Android: sin evento de instalación no se muestra el botón «Instalar app»", (await d.getByTestId("install-btn").count()) === 0);
   await d.evaluate(() => {
     const ev = new Event("beforeinstallprompt", { cancelable: true });
@@ -187,8 +208,8 @@ const ANDROID = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KH
 // ───────── 5. Notificaciones: piloto, activar/desactivar con push stub ─────────
 await a.reload();
 await a.getByTestId("app-panel").waitFor();
-await a.waitForFunction(() => { const e = document.querySelector('[data-testid="push-msg"]'); return e && !e.getAttribute("data-loading"); });
-check("sin piloto habilitado para el cliente: «todavía no están habilitadas» y sin botón", /todavía no están habilitadas/.test(await a.getByTestId("push-msg").innerText()) && (await a.getByTestId("push-toggle").count()) === 0);
+await a.getByTestId("push-toggle").waitFor({ timeout: 20000 });
+check("sin piloto de envío: el dispositivo igual se puede registrar (el piloto solo decide el ENVÍO); estado «desactivadas», permiso solo tras el clic", (await a.getByTestId("push-toggle").getAttribute("data-state")) === "off" && (await a.evaluate(() => window.__pushStubCalls)) === 0 && /Notificaciones desactivadas/.test(await a.getByTestId("push-state").innerText()));
 // Permisos: Producción NO puede tocar el piloto (backend); Dirección sí y el baseline queda sin envíos.
 const denied = await post(produccion, "push_pilot", { clientId: idA, enabled: true });
 check("Producción NO puede habilitar el piloto ni ver el panel push (403)", denied.status() === 403 && (await produccion.get("/api/v1/portal-admin?view=push")).status() === 403 && (await post(produccion, "push_settings", { globalSendEnabled: true })).status() === 403);
@@ -197,18 +218,32 @@ const onJ = await on.json();
 check("Dirección habilita el piloto del cliente A: baseline sin enviar nada", on.status() === 200 && onJ.enabled === true && (await q("select count(*)::int as n from portal_push_outbox where client_id = $1::uuid", [idA]))[0].n === 0 && (await q("select count(*)::int as n from portal_push_order_state where client_id = $1::uuid", [idA]))[0].n >= 1, JSON.stringify(onJ));
 await a.reload();
 await a.getByTestId("push-toggle").waitFor({ timeout: 20000 });
-check("con el piloto habilitado aparece «Activar notificaciones» (permiso solo tras el clic)", (await a.getByTestId("push-toggle").getAttribute("data-state")) === "off" && (await a.evaluate(() => window.__pushStubCalls)) === 0 && /Desactivadas/.test(await a.getByTestId("push-state").innerText()));
 await a.getByTestId("push-toggle").click();
 await a.getByTestId("push-feedback").waitFor();
 await a.waitForFunction(() => document.querySelector('[data-testid="push-toggle"]')?.getAttribute("data-state") === "on");
 const rows = await q("select endpoint, owner_key, client_id::text as c from portal_push_subscriptions where client_id = $1::uuid", [idA]);
-check("activar: se guarda la suscripción del dispositivo (por usuario y cliente)", rows.length === 1 && rows[0].owner_key === `u:${uA.id}` && (await a.evaluate(() => window.__pushStubCalls)) === 1, JSON.stringify(rows.map((r) => r.owner_key)));
+check("activar: la suscripción queda en PostgreSQL (por usuario y cliente) y SOLO entonces se muestra «Notificaciones activadas»", rows.length === 1 && rows[0].owner_key === `u:${uA.id}` && (await a.evaluate(() => window.__pushStubCalls)) === 1 && /Notificaciones activadas/.test(await a.getByTestId("push-state").innerText()), JSON.stringify(rows.map((r) => r.owner_key)));
 await a.screenshot({ path: `${OUT}/03-push-activado.png`, fullPage: true });
 await a.getByTestId("push-toggle").click();
 await a.waitForFunction(() => document.querySelector('[data-testid="push-toggle"]')?.getAttribute("data-state") === "off");
 check("desactivar: se elimina la suscripción del dispositivo", (await q("select count(*)::int as n from portal_push_subscriptions where client_id = $1::uuid", [idA]))[0].n === 0);
 await a.getByTestId("push-toggle").click(); // lo deja activado para el paso de logout
 await a.waitForFunction(() => document.querySelector('[data-testid="push-toggle"]')?.getAttribute("data-state") === "on");
+// Servidor que rechaza la suscripción → «Error de suscripción» y NUNCA «activadas».
+{
+  const ctxE = await browser.newContext({ baseURL: BASE, viewport: { width: 1280, height: 900 }, permissions: ["notifications"] });
+  await ctxE.addInitScript(PUSH_STUB);
+  await ctxE.request.post("/entregas/api/auth/login", { data: { username: USER_A, password: PASS }, headers: { origin: BASE } });
+  const e = await ctxE.newPage();
+  await e.route("**/entregas/api/push/subscribe", (r) => r.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "falla simulada" }) }));
+  await e.goto("/entregas");
+  await e.getByTestId("push-prompt").waitFor({ timeout: 30000 });
+  await e.getByTestId("push-prompt-activate").click();
+  await e.getByTestId("push-prompt-error").waitFor({ timeout: 20000 });
+  await e.getByTestId("push-prompt-later").click();
+  check("si el servidor no confirma el registro NO se muestra «activadas»: queda «Error de suscripción»", /Error de suscripción/.test(await e.getByTestId("push-state").innerText()) && (await e.getByTestId("push-toggle").getAttribute("data-state")) === "off");
+  await ctxE.close();
+}
 
 // ───────── 6. Historial leídas / no leídas + abrir el pedido ─────────
 const ov = await (await ctxA.request.get("/entregas/api/overview")).json();
@@ -303,6 +338,9 @@ await portalSession(ctxB, USER_B, "Inicial-Temporal-9");
 const b = await ctxB.newPage();
 await b.goto("/entregas");
 await b.getByTestId("bell-count").waitFor({ timeout: 20000 });
+// Primer ingreso de este dispositivo: el aviso de activación aparece por diseño; se descarta para seguir.
+await b.getByTestId("push-prompt").waitFor({ timeout: 20000 });
+await b.getByTestId("push-prompt-later").click();
 await b.getByTestId("bell").click();
 const bodyB = await b.locator("body").innerText();
 check("cliente B: ve SOLO su aviso y su pedido (nada de A)", /Aviso exclusivo de B/.test(bodyB) && !bodyB.includes(OP_A) && !bodyB.includes("SHAMPOO PUSH"));

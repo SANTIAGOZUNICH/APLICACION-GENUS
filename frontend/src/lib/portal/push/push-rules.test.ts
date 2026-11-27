@@ -19,7 +19,7 @@ describe("textos exactos", () => {
     expect(buildPushMessage("ENVASADO", null, days)).toEqual({ title: "¡Tu pedido está en envasado!", body: "Estamos en la etapa final de producción. Estimamos que tu pedido estará listo para entregar en aproximadamente 3 días hábiles." });
   });
   it("listo y entregado", () => {
-    expect(buildPushMessage("LISTO", null, days)).toEqual({ title: "¡TU PEDIDO ESTÁ LISTO! 🎉", body: "Finalizamos la producción de tu pedido. Ya está disponible para coordinar su entrega. ¡Gracias por confiar en nosotros!" });
+    expect(buildPushMessage("LISTO", null, days)).toEqual({ title: "¡TU PEDIDO ESTÁ LISTO PARA ENTREGAR! 🎉", body: "Finalizamos la producción de tu pedido. Ya está disponible para coordinar su entrega. ¡Gracias por confiar en nosotros!" });
     expect(buildPushMessage("ENTREGADO", null, days)).toEqual({ title: "¡Pedido entregado!", body: "Tu pedido fue entregado. Gracias por elegir Laboratorio Genus." });
   });
   it("identifica el pedido en una línea aparte sin alterar el texto", () => {

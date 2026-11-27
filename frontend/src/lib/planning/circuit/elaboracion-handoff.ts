@@ -1,5 +1,6 @@
 import "server-only";
 
+import { schedulePortalPush } from "@/lib/portal/push/push-trigger";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
@@ -410,6 +411,7 @@ export async function sendElaboracionToEnvasadoDurable(
     };
   });
 
+  schedulePortalPush({ workItemId: id });
   await emitCircuitNotification(result.movement);
   // Observación de Elaboración al enviar a Envasado (best-effort, id determinístico por trabajo: un reintento no duplica).
   if (input.observation?.trim()) {

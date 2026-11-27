@@ -666,6 +666,13 @@
       "when": 1793900027000,
       "tag": "0098_portal_vinculo_id",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1793900028000,
+      "tag": "0099_portal_push_heartbeat",
+      "breakpoints": true
     }
   ]
 }
