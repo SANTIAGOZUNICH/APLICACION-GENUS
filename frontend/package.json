@@ -64,7 +64,9 @@
     "test:e2e:insumos-db": "bash scripts/e2e/run-insumos-db-local.sh",
     "test:e2e:insumos": "bash scripts/e2e/run-insumos-local.sh",
     "test:e2e:ubicaciones-db": "bash scripts/e2e/run-ubicaciones-db-local.sh",
-    "test:e2e:ubicaciones": "bash scripts/e2e/run-ubicaciones-local.sh"
+    "test:e2e:ubicaciones": "bash scripts/e2e/run-ubicaciones-local.sh",
+    "test:e2e:pedidos-op-db": "bash scripts/e2e/run-pedidos-op-db-local.sh",
+    "test:e2e:pedidos-op": "bash scripts/e2e/run-pedidos-op-local.sh"
   },
   "engines": {
     "node": ">=20"

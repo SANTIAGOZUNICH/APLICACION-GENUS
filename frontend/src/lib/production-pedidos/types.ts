@@ -72,6 +72,16 @@ export type ProductionPedidoInput = {
   estado?: string | null;
 };
 
+/** Alta de un pedido: el input común + la marca de OP automático. */
+export type ProductionPedidoCreateInput = ProductionPedidoInput & {
+  /**
+   * Solo en el alta: el N° de OP lo eligió el autocompletado (siguiente correlativo). El backend lo (re)asigna dentro de la
+   * transacción de creación con un lock, así que dos altas simultáneas nunca repiten OP. Un OP tipeado a mano (false/ausente)
+   * se respeta tal cual: un mismo pedido (OP) puede tener varias líneas de producto.
+   */
+  opAuto?: boolean;
+};
+
 export type ProductionPedidoListFilters = {
   op?: string;
   nroOc?: string;
