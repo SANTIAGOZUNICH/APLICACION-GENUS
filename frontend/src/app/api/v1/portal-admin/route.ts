@@ -9,7 +9,7 @@ import {
 import { createDemoToken } from "@/lib/portal/demo-service";
 import { createPortalUser, listPortalUsers, suggestPortalUsername, removePortalUser, resetPortalUserPassword, setPortalUserStatus, updatePortalUser } from "@/lib/portal/user-admin-service";
 import { PortalError } from "@/lib/portal/store";
-import { pushAdminOverview, sendTestPush, setClientPilot, updatePushSettings } from "@/lib/portal/push/push-service";
+import { getTestPushStatus, pushAdminOverview, sendTestPush, setClientPilot, setClientRealSend, updatePushSettings } from "@/lib/portal/push/push-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,6 +36,7 @@ export async function GET(request: Request) {
     // Usuarios con contraseña: Dirección y Administración (cada función valida el rol de nuevo).
     // Notificaciones push: SOLO Dirección (el servicio lo vuelve a validar).
     if (view === "push") return NextResponse.json(await pushAdminOverview(staff));
+    if (view === "push_test_status") return NextResponse.json(await getTestPushStatus(staff, String(url.searchParams.get("testId") ?? "")));
     if (view === "suggest_username") return NextResponse.json(await suggestPortalUsername(staff, clientId));
     if (view === "users") return NextResponse.json(await listPortalUsers(staff));
     if (view === "clients") return NextResponse.json({ clients: await listClients(staff), holidays: await listHolidayOverrides(staff) });
@@ -60,6 +61,7 @@ export async function POST(request: Request) {
     switch (b.action) {
       case "push_settings": return NextResponse.json({ settings: await updatePushSettings(staff, { globalSendEnabled: b.globalSendEnabled, elaboracionDays: b.elaboracionDays, envasadoDays: b.envasadoDays }) });
       case "push_test": return NextResponse.json(await sendTestPush(staff, clientId));
+      case "push_real_send": return NextResponse.json(await setClientRealSend(staff, clientId, b.enabled === true, { confirm: b.confirm }));
       case "push_pilot": return NextResponse.json(await setClientPilot(staff, clientId, b.enabled === true));
       case "create_user": return NextResponse.json(await createPortalUser(staff, { clientId: b.clientId, username: b.username, password: b.password, email: b.email, displayName: b.displayName, autoSuffix: b.autoSuffix }), { status: 201 });
       case "activate_user": return NextResponse.json(await setPortalUserStatus(staff, String(b.userId ?? ""), true));

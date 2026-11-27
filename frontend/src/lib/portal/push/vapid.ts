@@ -6,6 +6,7 @@
  */
 import "server-only";
 
+import { createHash } from "node:crypto";
 import webpush from "web-push";
 import type { PushSender } from "./push-send";
 
@@ -28,14 +29,21 @@ export function vapidConfig(env: NodeJS.ProcessEnv = process.env): VapidConfig |
 export const vapidPublicKey = (): string | null => vapidConfig()?.publicKey ?? null;
 
 /** Sender real (web-push). Solo se usa con el envío REAL encendido. */
+/** Huella corta de la clave pública VAPID (para detectar suscripciones creadas con otra clave sin exponerla). */
+export function vapidFingerprint(publicKey: string): string {
+  return createHash("sha256").update(publicKey).digest("hex").slice(0, 16);
+}
+
 export function createWebPushSender(cfg: VapidConfig): PushSender {
   const details = { subject: cfg.subject, publicKey: cfg.publicKey, privateKey: cfg.privateKey };
   return async (sub, payload) => {
-    await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, {
+    const res = await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, {
       vapidDetails: details,
       TTL: 24 * 3600,
-      urgency: "normal",
+      // «high»: el servicio entrega de inmediato aunque el celular esté bloqueado o en ahorro de batería (Android/Doze).
+      urgency: "high",
       timeout: 10_000,
     });
+    return { status: res.statusCode };
   };
 }

@@ -205,7 +205,7 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: GENUS TEST con el flujo operativo rea
     expect(rows.map((x) => x.event_type)).toEqual(["RECIBIDO", "ELABORACION"]);
     expect(rows[1]).toMatchObject({ status: "ENVIADA", mode: "REAL", title: "¡Tu pedido se está elaborando!", body: expect.stringContaining("aproximadamente 8 días hábiles") });
     const last = pushSvc.received.filter((x) => x.path.endsWith("/dev1")).at(-1)!;
-    expect(last.message).toMatchObject({ title: "¡Tu pedido se está elaborando!", body: expect.stringContaining("Comenzamos la elaboración de tus productos.") });
+    expect(last.message).toMatchObject({ title: "¡Tu pedido se está elaborando!", body: "Estimamos que estará listo para entregar en aproximadamente 8 días hábiles." });
   });
 
   it("5 · Elaboración → Envasado (flujo real): «En envasado» y push ENVASADO", async () => {
@@ -229,8 +229,8 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: GENUS TEST con el flujo operativo rea
     await flush();
     expect(await statusOf()).toBe("Listo para entregar");
     const listo = (await outbox()).find((x) => x.event_type === "LISTO")!;
-    expect(listo).toMatchObject({ status: "ENVIADA", title: "¡TU PEDIDO ESTÁ LISTO PARA ENTREGAR! 🎉", body: expect.stringContaining("Finalizamos la producción de tu pedido.") });
-    expect(pushSvc.received.filter((x) => x.path.endsWith("/dev1")).at(-1)!.message?.title).toBe("¡TU PEDIDO ESTÁ LISTO PARA ENTREGAR! 🎉");
+    expect(listo).toMatchObject({ status: "ENVIADA", title: "¡TU PEDIDO ESTÁ LISTO! 🎉", body: expect.stringContaining("Finalizamos la producción de tu pedido.") });
+    expect(pushSvc.received.filter((x) => x.path.endsWith("/dev1")).at(-1)!.message?.title).toBe("¡TU PEDIDO ESTÁ LISTO! 🎉");
     // Entrega real: la detecta el cron (sin sesión ni portal abierto).
     const { getDb } = await import("@/lib/db/client");
     const { recordDeliveryInTx } = await import("@/lib/planning/circuit/delivery-core");

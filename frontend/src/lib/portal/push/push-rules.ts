@@ -33,31 +33,23 @@ export function businessDaysLabel(n: number): string {
 
 export type PushMessage = { title: string; body: string };
 
-/** Textos EXACTOS definidos por Laboratorio Genus. Los plazos son estimaciones configurables por Dirección. */
-export function buildPushMessage(type: PushEventType, orderRef: string | null, days: PushDays): PushMessage {
-  const base = ((): PushMessage => {
-    switch (type) {
-      case "RECIBIDO":
-        return { title: "¡Recibimos tu pedido!", body: "Tu pedido fue registrado correctamente. Te mantendremos informado sobre su avance." };
-      case "ELABORACION":
-        return {
-          title: "¡Tu pedido se está elaborando!",
-          body: `Comenzamos la elaboración de tus productos. Estimamos que estarán listos para entregar en aproximadamente ${businessDaysLabel(days.elaboracionDays)}.`,
-        };
-      case "ENVASADO":
-        return {
-          title: "¡Tu pedido está en envasado!",
-          body: `Estamos en la etapa final de producción. Estimamos que tu pedido estará listo para entregar en aproximadamente ${businessDaysLabel(days.envasadoDays)}.`,
-        };
-      case "LISTO":
-        return { title: "¡TU PEDIDO ESTÁ LISTO PARA ENTREGAR! 🎉", body: "Finalizamos la producción de tu pedido. Ya está disponible para coordinar su entrega. ¡Gracias por confiar en nosotros!" };
-      case "ENTREGADO":
-        return { title: "¡Pedido entregado!", body: "Tu pedido fue entregado. Gracias por elegir Laboratorio Genus." };
-    }
-  })();
-  const ref = orderRef?.trim();
-  // La identificación del pedido va en una línea aparte para no alterar el texto definido.
-  return ref ? { title: base.title, body: `${base.body}\nPedido ${ref}` } : base;
+/**
+ * Textos EXACTOS definidos por Laboratorio Genus (no se agrega nada: la notificación abre el pedido). Los plazos son estimaciones
+ * configurables por Dirección. `orderRef` ya no se agrega al cuerpo: viaja en la URL de destino.
+ */
+export function buildPushMessage(type: PushEventType, _orderRef: string | null, days: PushDays): PushMessage {
+  switch (type) {
+    case "RECIBIDO":
+      return { title: "¡Recibimos tu pedido!", body: "Tu pedido fue registrado correctamente. Te mantendremos informado sobre su avance." };
+    case "ELABORACION":
+      return { title: "¡Tu pedido se está elaborando!", body: `Estimamos que estará listo para entregar en aproximadamente ${businessDaysLabel(days.elaboracionDays)}.` };
+    case "ENVASADO":
+      return { title: "¡Tu pedido está en envasado!", body: `Estimamos que estará listo para entregar en aproximadamente ${businessDaysLabel(days.envasadoDays)}.` };
+    case "LISTO":
+      return { title: "¡TU PEDIDO ESTÁ LISTO! 🎉", body: "Finalizamos la producción de tu pedido. Ya podemos coordinar su entrega." };
+    case "ENTREGADO":
+      return { title: "¡Tu pedido fue entregado!", body: "Gracias por confiar en Laboratorio Genus." };
+  }
 }
 
 /** Destino al tocar la notificación: el pedido dentro del portal (el id es opaco, nunca un identificador interno). */

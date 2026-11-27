@@ -57,7 +57,7 @@ describe.skipIf(Boolean(PROBLEM))(`Listo para entregar (disponibilidad explícit
       q("select id, status, quantity from work_item_delivery_lines order by id"),
       q("select count(*)::int n, coalesce(sum(quantity),0)::float s from mp_stock_movements"),
       q("select codigo, stock_actual from mp_stock_balances order by codigo"),
-      q("select count(*)::int n from os_notifications"),
+      // (os_notifications se excluye a propósito: «Marcar listo» avisa a Administración por diseño, ver billing-notifications.)
     ]));
   const rejects = async (p: Promise<unknown>, status: number, code?: string) => {
     await expect(p).rejects.toMatchObject({ status, ...(code ? { code } : {}) });

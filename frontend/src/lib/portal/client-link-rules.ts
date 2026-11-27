@@ -57,12 +57,25 @@ export function belongsToClient(owner: RowOwner, rawName: unknown, clientId: str
   return r.status === "unique" && r.clientId === clientId;
 }
 
-/** Estado manual de un pedido SIN trabajos → etapa que ve el cliente (nunca «Listo» ni «Entregado»: eso exige evidencia operativa). */
-export function manualStageOf(estado: string | null | undefined): "ELABORACION" | "ENVASADO" | null {
-  const e = String(estado ?? "").trim().toUpperCase();
+/**
+ * Estado manual del PEDIDO (production_pedidos.estado, lo que edita Producción o setean los servicios del circuito) → etapa que ve el
+ * cliente. Es UNA de las vías reales de «Listo para entregar» y «Entregado» (junto con la marca de disponibilidad y las entregas
+ * registradas): LISTO_PARA_ENTREGAR → LISTO y ENTREGADO → ENTREGADO. «TERMINADO» es alias legacy de LISTO_PARA_ENTREGAR.
+ */
+export type ManualStage = "ELABORACION" | "ENVASADO" | "LISTO" | "ENTREGADO";
+export function manualStageOf(estado: string | null | undefined): ManualStage | null {
+  const e = String(estado ?? "").trim().toUpperCase().replace(/\s+/g, "_");
   if (e === "EN_ELABORACION") return "ELABORACION";
-  if (e === "EN_ENVASADO" || e === "EN_CODIFICADO" || e === "LISTO_PARA_ENTREGAR") return "ENVASADO";
+  if (e === "EN_ENVASADO" || e === "EN_CODIFICADO") return "ENVASADO";
+  if (e === "LISTO_PARA_ENTREGAR" || e === "TERMINADO") return "LISTO";
+  if (e === "ENTREGADO") return "ENTREGADO";
   return null;
+}
+
+/** Override del estado de un producto CON trabajos según el estado del pedido: solo «Listo» y «Entregado» (el resto lo deciden los trabajos). */
+export function pedidoEstadoOverride(estado: string | null | undefined): "LISTO" | "ENTREGADO" | null {
+  const m = manualStageOf(estado);
+  return m === "LISTO" || m === "ENTREGADO" ? m : null;
 }
 
 /** Los id válidos de cliente viajan como uuid: cualquier otra cosa se descarta (nunca se interpola en SQL). */

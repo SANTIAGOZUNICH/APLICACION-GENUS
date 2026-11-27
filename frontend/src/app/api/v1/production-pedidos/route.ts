@@ -1,3 +1,4 @@
+import { withPortalPush } from "@/lib/portal/push/push-trigger";
 import { NextResponse } from "next/server";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
@@ -34,7 +35,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   try {
     const actor = await resolveOrdersActor(request);
     const body = (await request.json()) as ProductionPedidoCreateInput;
@@ -47,3 +48,6 @@ export async function POST(request: Request) {
     return ordersErrorResponse(err);
   }
 }
+
+/** Tras confirmar la operación se dispara (en segundo plano, sin afectarla) la detección de avisos del Portal de Clientes. */
+export const POST = withPortalPush(handlePost);

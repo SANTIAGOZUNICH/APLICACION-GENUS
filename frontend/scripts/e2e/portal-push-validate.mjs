@@ -317,7 +317,7 @@ check("el cliente NO ve en su historial los eventos simulados", (await a.getByTe
   await p.waitForFunction(() => /no tiene dispositivos suscriptos/.test(document.body.innerText));
   check("cliente habilitado SIN dispositivos: rechazo con mensaje claro y nada enviado ni registrado", (await q("select count(*)::int as n from portal_push_outbox where client_id = $1::uuid and event_type = 'prueba'", [idB]))[0].n === 0);
   await rowA.getByTestId("push-test-send").click();
-  await p.waitForFunction(() => /Notificación de prueba enviada a .*dispositivo\(s\) enviados, \d+ fallidos/.test(document.body.innerText));
+  await p.waitForFunction(() => /Notificación de prueba para .*aceptada por el servicio push en \d+ de \d+ dispositivo/.test(document.body.innerText));
   check("la prueba responde con cantidad de dispositivos enviados/fallidos y se audita con el usuario de Dirección", (await q("select count(*)::int as n from portal_audit_events where client_id = $1::uuid and event_type = 'PUSH_PRUEBA_ENVIADA' and actor = $2", [idA, E2E_USERS.direccion.email]))[0].n === 1);
   await rowA.getByTestId("push-test-send").click();
   await p.waitForFunction(() => /hace instantes/.test(document.body.innerText));

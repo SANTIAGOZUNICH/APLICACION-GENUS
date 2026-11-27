@@ -45,6 +45,7 @@ export function OrderBlock({ order: o, products }: { order: PortalOrderView; pro
         <div>
           <h3>{o.orderRef ? `Pedido ${o.orderRef}` : "Pedido sin número asignado"}</h3>
           <div className="gp-meta" data-testid="order-progress">{o.progress.total > 1 || o.partial ? o.progressText : `${products.length} ${products.length === 1 ? "producto" : "productos"}`}</div>
+          {o.deliveredAt ? <div className="gp-meta" data-testid="order-delivered-at">Entregado el {fmtDate(o.deliveredAt)}</div> : null}
         </div>
         <span className={`gp-pill s-${o.status.key}`} data-testid="order-status">{o.status.label}</span>
       </header>
@@ -181,6 +182,9 @@ export function Dashboard({ initial, contact }: { initial: ClientPayload; contac
   }, [data.orders.length]);
   const notifications = localRead ? data.notifications.map((n) => ({ ...n, read: true })) : data.notifications;
   const products: PortalProductView[] = data.products;
+  // Los pedidos ENTREGADOS no desaparecen: quedan en su propia sección «Entregados» (con la fecha de entrega) como historial.
+  const activeOrders = data.orders.filter((o) => o.status.id !== 6);
+  const deliveredOrders = data.orders.filter((o) => o.status.id === 6);
 
   return (
     <>
@@ -215,12 +219,23 @@ export function Dashboard({ initial, contact }: { initial: ClientPayload; contac
           <h2 id="gp-prod">Tus pedidos</h2>
           {products.length === 0 ? (
             <div className="gp-empty" data-testid="no-products">Por ahora no tenés producciones en curso. Cuando haya novedades, las vas a ver acá.</div>
+          ) : activeOrders.length === 0 ? (
+            <div className="gp-empty" data-testid="no-active-orders">No tenés pedidos en curso. Tus pedidos entregados están más abajo.</div>
           ) : (
             <div className="gp-orders">
-              {data.orders.map((o) => <OrderBlock key={o.id} order={o} products={products.filter((p) => o.productIds.includes(p.id))} />)}
+              {activeOrders.map((o) => <OrderBlock key={o.id} order={o} products={products.filter((p) => o.productIds.includes(p.id))} />)}
             </div>
           )}
         </section>
+
+        {deliveredOrders.length > 0 ? (
+          <section className="gp-section" aria-labelledby="gp-delivered" data-testid="delivered-section">
+            <h2 id="gp-delivered">Entregados</h2>
+            <div className="gp-orders">
+              {deliveredOrders.map((o) => <OrderBlock key={o.id} order={o} products={products.filter((p) => o.productIds.includes(p.id))} />)}
+            </div>
+          </section>
+        ) : null}
 
         <div className="gp-section gp-two">
           <section aria-labelledby="gp-hist">

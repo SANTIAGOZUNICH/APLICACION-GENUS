@@ -124,7 +124,7 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: vínculo por ID en Postgres real${PRO
     expect(autos.map((a) => a.display_name)).toEqual(expect.arrayContaining([`GENUS-TEST ${RUN}`, `${N_TEST} S.A.`, `GENUSTEST ${RUN}`]));
   });
 
-  it("pedido SIN trabajos con estado distinto de INGRESO (elegido en el formulario) NO se veía; ahora sí, por ID", async () => {
+  it("pedido SIN trabajos con estado distinto de INGRESO (elegido en el formulario) se ve (incluidos Listo y Entregado), por ID", async () => {
     const svc = await pedidos();
     const rows: Array<[string, string | null]> = [["ingreso", "INGRESO"], ["elab", "EN_ELABORACION"], ["env", "EN_ENVASADO"], ["listo", "LISTO_PARA_ENTREGAR"], ["entregado", "ENTREGADO"]];
     for (const [tag, estado] of rows) {
@@ -134,8 +134,8 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: vínculo por ID en Postgres real${PRO
     expect(s[`OP-EST-ingreso-${RUN}`]).toBe("Pedido recibido");
     expect(s[`OP-EST-elab-${RUN}`]).toBe("En elaboración");
     expect(s[`OP-EST-env-${RUN}`]).toBe("En envasado");
-    expect(s[`OP-EST-listo-${RUN}`]).toBe("En envasado"); // «Listo» exige la confirmación explícita del último sector
-    expect(s[`OP-EST-entregado-${RUN}`]).toBeUndefined(); // «Entregado» exige entregas registradas: no se inventa
+    expect(s[`OP-EST-listo-${RUN}`]).toBe("Listo para entregar"); // el estado del pedido es una vía real de «Listo»
+    expect(s[`OP-EST-entregado-${RUN}`]).toBe("Entregado"); // y de «Entregado»: queda en el historial del cliente
   });
 
   // ───────────────────────── 2. Vínculo por ID ─────────────────────────

@@ -1,3 +1,4 @@
+import { withPortalPush } from "@/lib/portal/push/push-trigger";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { resolvePlanningActor } from "@/lib/planning/actor";
@@ -31,7 +32,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
  * Elaboración → Envasado Masivo/Premium, directo (sin Calidad). Idempotente por `idempotencyKey`.
  * Body: { destination?, line?, producedQuantity?, unitsToPackage?, observation?, plannedDate?, idempotencyKey }
  */
-export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+async function handlePost(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const blocked = ensureNativePlanningReady();
   if (blocked) return blocked;
   try {
@@ -69,3 +70,6 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     return planningErrorResponse(err);
   }
 }
+
+/** Tras confirmar la operación se dispara (en segundo plano, sin afectarla) la detección de avisos del Portal de Clientes. */
+export const POST = withPortalPush(handlePost, { idParam: "work" });

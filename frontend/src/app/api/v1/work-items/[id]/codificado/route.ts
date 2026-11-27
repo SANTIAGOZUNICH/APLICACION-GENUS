@@ -1,3 +1,4 @@
+import { withPortalPush } from "@/lib/portal/push/push-trigger";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { resolvePlanningActor } from "@/lib/planning/actor";
@@ -20,7 +21,7 @@ export const dynamic = "force-dynamic";
 
 type Action = "send" | "cancel" | "deliver" | "resend" | "reopen_delivery" | "transfer" | "progress";
 
-export async function POST(
+async function handlePost(
   request: Request,
   ctx: { params: Promise<{ id: string }> }
 ) {
@@ -211,3 +212,6 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
     return planningErrorResponse(err);
   }
 }
+
+/** Tras confirmar la operación se dispara (en segundo plano, sin afectarla) la detección de avisos del Portal de Clientes. */
+export const POST = withPortalPush(handlePost, { idParam: "work" });

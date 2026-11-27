@@ -79,7 +79,7 @@ const CANCELLED_WORK = sql`(w2.operational_cancelled_at is not null or w2.operat
 export async function loadClientPedidos(db: SqlExec, clientId: string): Promise<RawPedidoRow[]> {
   const index = await loadNameIndex(db);
   const rows = (await db.execute(sql`
-    select p.id::text as id, p.op, p.producto, p.estado, p.cliente, p.portal_client_id::text as pid, to_char(p.fecha, 'YYYY-MM-DD') as fecha, p.q,
+    select p.id::text as id, p.op, p.producto, p.estado, p.cliente, p.portal_client_id::text as pid, to_char(p.fecha, 'YYYY-MM-DD') as fecha, p.q, coalesce((select max(e.created_at) from production_pedido_status_events e where e.pedido_id = p.id and e.to_estado = p.estado), p.updated_at) as estado_at,
            (select count(*)::int from work_items w2 where w2.production_pedido_id = p.id and w2.deleted_at is null and ${CANCELLED_WORK}) as cancelled_works
       from production_pedidos p
      where p.deleted_at is null
@@ -92,7 +92,7 @@ export async function loadClientPedidos(db: SqlExec, clientId: string): Promise<
     .filter((r) => (r.pid ? String(r.pid) === clientId : belongsToClient({ kind: "name" }, r.cliente, clientId, index)))
     .map((r): RawPedidoRow => ({
       id: String(r.id), op: str(r.op), producto: str(r.producto), estado: str(r.estado), cancelledWorks: Number(r.cancelled_works ?? 0),
-      fecha: str(r.fecha), q: r.q == null || !Number.isFinite(Number(r.q)) ? null : Number(r.q),
+      fecha: str(r.fecha), estadoAt: isoOrNull(r.estado_at), q: r.q == null || !Number.isFinite(Number(r.q)) ? null : Number(r.q),
       // Estado manual: solo para pedidos vinculados por ID (asignación explícita); los históricos conservan la regla anterior.
       manualStage: r.pid ? manualStageOf(str(r.estado)) : null,
     }));
@@ -106,7 +106,7 @@ export async function loadFacts(db: SqlExec, workIds: string[]): Promise<ClientF
     select w.id::text as id, w.client, w.product, w.sector::text as sector, w.operational_status, w.source, w.created_at, w.completed_at,
            w.progress_updated_at, w.sent_to_codificado_at, coalesce(w.via_codificado, false) as via_codificado, w.planned_quantity, w.unit,
            w.finished_qty, w.deliverable_units, w.packaging_total_units, w.production_pedido_id::text as pedido_id,
-           p.op as pedido_op, p.estado as pedido_estado, p.producto as pedido_producto, to_char(p.fecha, 'YYYY-MM-DD') as pedido_fecha, w.quality_status
+           p.op as pedido_op, p.estado as pedido_estado, coalesce((select max(e.created_at) from production_pedido_status_events e where e.pedido_id = p.id and e.to_estado = p.estado), p.updated_at) as pedido_estado_at, p.producto as pedido_producto, to_char(p.fecha, 'YYYY-MM-DD') as pedido_fecha, w.quality_status, (w.rework_requested_at is not null) as rework_open
       from work_items w
       left join production_pedidos p on p.id = w.production_pedido_id and p.deleted_at is null
      where w.id in (${list}) and ${LIVE}`)).rows as Row[];
@@ -154,9 +154,11 @@ export async function loadFacts(db: SqlExec, workIds: string[]): Promise<ClientF
         productionPedidoId: str(r.pedido_id),
         pedidoOp: str(r.pedido_op),
         pedidoEstado: str(r.pedido_estado),
+        pedidoEstadoAt: isoOrNull(r.pedido_estado_at),
         pedidoProducto: str(r.pedido_producto),
         pedidoFecha: str(r.pedido_fecha),
         qualityStatus: str(r.quality_status),
+        reworkOpen: r.rework_open === true,
       })
     ),
     events: events.map((r): RawEventRow => ({ workItemId: String(r.work_item_id), type: String(r.type), at: isoOrNull(r.created_at)! })),

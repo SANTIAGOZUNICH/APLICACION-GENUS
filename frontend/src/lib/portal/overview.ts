@@ -16,7 +16,7 @@ import {
 } from "./order-status";
 import { stageCountdown, type BusinessCalendarOptions, type Countdown } from "./business-days";
 import { hmac } from "./security";
-import { pedidoSentToSector } from "./client-link-rules";
+import { pedidoEstadoOverride, pedidoSentToSector, type ManualStage } from "./client-link-rules";
 import {
   ESTIMATE_DISCLAIMER,
   FINALIZATION_MESSAGE,
@@ -61,8 +61,12 @@ export type RawWorkRow = {
   pedidoFecha?: string | null;
   /** Decisión de Calidad (solo para derivar «reproceso»; NUNCA sale del servidor). */
   qualityStatus?: string | null;
+  /** «Rehacer» pedido por Producción y todavía sin volver a terminar (work_items.rework_requested_at): reproceso abierto. NUNCA sale del servidor. */
+  reworkOpen?: boolean;
   /** production_pedidos.estado: el pedido ya fue ENVIADO a un sector por Producción (NUNCA sale del servidor). */
   pedidoEstado?: string | null;
+  /** production_pedidos.updated_at: cuándo se registró el último estado del pedido (fecha de «Listo»/«Entregado» manual). */
+  pedidoEstadoAt?: string | null;
 };
 /** Renglón de pedido (un producto) SIN trabajos vivos: recién recibido, o con todos sus trabajos cancelados. */
 export type RawPedidoRow = {
@@ -72,7 +76,9 @@ export type RawPedidoRow = {
   estado: string | null;
   cancelledWorks: number;
   /** Estado manual de Producción de un pedido vinculado por ID y todavía SIN trabajos: lo que el cliente ve mientras no haya trabajos. */
-  manualStage?: "ELABORACION" | "ENVASADO" | null;
+  manualStage?: ManualStage | null;
+  /** Fecha y hora del último cambio del pedido (para fechar un «Listo»/«Entregado» manual). */
+  estadoAt?: string | null;
   /** Fecha del pedido (YYYY-MM-DD) y cantidad pedida (Q, en unidades): lo que ve el cliente de un pedido sin trabajos. */
   fecha?: string | null;
   q?: number | null;
@@ -128,6 +134,8 @@ export type PortalProductView = {
   /** Avance visual de 0 a 100. */
   progressPct: number;
   lastDeliveryAt: string | null;
+  /** Fecha en que quedó ENTREGADO (última entrega registrada o, si lo cerró Producción a mano, la fecha del estado). null si no está entregado. */
+  deliveredAt: string | null;
   /** Fecha y hora en que un usuario autorizado confirmó la primera disponibilidad vigente (null = nada confirmado). */
   availableSince: string | null;
   timeline: PortalTimelineStep[];
@@ -149,6 +157,8 @@ export type PortalOrderView = {
   progress: OrderStatus["progress"];
   progressText: string;
   productIds: string[];
+  /** Fecha de entrega del pedido completo (la más reciente de sus productos); null si todavía no está entregado. */
+  deliveredAt: string | null;
 };
 
 export type PortalSummary = {
@@ -275,8 +285,8 @@ export function buildOverview(input: {
   const ready: PortalOverviewData["ready"] = [];
 
   for (const g of groups.values()) {
-    const stage = deriveProductStage(g.facts);
-    if (!stage) continue;
+    const derived = deriveProductStage(g.facts);
+    if (!derived) continue;
     const down = g.rows.filter((r) => r.sector !== "ELABORACION");
     const label = g.rows.find((r) => r.pedidoProducto)?.pedidoProducto ?? (down[0] ?? g.rows[0]!).product;
     const orderRef = g.rows.find((r) => r.pedidoOp)?.pedidoOp?.trim() || null;
@@ -284,7 +294,21 @@ export function buildOverview(input: {
     const orderKey = orderKeyOf(orderRef, g.key);
     // «En elaboración» desde que Producción envía el pedido a Elaboración (estado del pedido), no recién cuando hay avance.
     const started = g.rows.some((r) => r.sector !== "ELABORACION" || r.operationalStatus !== "pendiente" || r.progressUpdatedAt != null || pedidoSentToSector(r.pedidoEstado));
-    const reprocess = g.rows.some((r) => r.qualityStatus === "rechazado" && r.operationalStatus !== "entregado");
+    const reprocess = g.rows.some((r) => (r.qualityStatus === "rechazado" || r.reworkOpen === true) && r.operationalStatus !== "entregado");
+    // UNA sola resolución del estado: trabajos + marcas de disponibilidad + entregas + ESTADO DEL PEDIDO (Producción puede pasar el
+    // pedido a «Listo para entregar» o «Entregado» a mano). Sin reproceso abierto, el estado del pedido nunca deja al cliente por debajo.
+    const estadoOverride = reprocess ? null : pedidoEstadoOverride(g.rows.find((r) => r.pedidoEstado)?.pedidoEstado);
+    const estadoAt = g.rows.find((r) => r.pedidoEstadoAt)?.pedidoEstadoAt ?? null;
+    const forced: PortalStageId | null = estadoOverride && stageIndex(estadoOverride) > stageIndex(derived.stage) ? estadoOverride : null;
+    const stage: ProductStage = forced
+      ? {
+          ...derived,
+          stage: forced,
+          substage: null,
+          quantities: forced === "ENTREGADO" ? { ...derived.quantities, pending: 0 } : derived.quantities,
+          milestones: { ...derived.milestones, listo: derived.milestones.listo ?? estadoAt, entregado: forced === "ENTREGADO" ? (derived.milestones.entregado ?? derived.lastDeliveryAt ?? estadoAt) : derived.milestones.entregado },
+        }
+      : derived;
     const commercial = deriveClientProductStatus({ hasWork: true, cancelled: false, stage: stage.stage, substage: stage.substage, started, reprocess });
     const cs = commercial.status!;
 
@@ -328,6 +352,7 @@ export function buildOverview(input: {
       countdown,
       progressPct: visualProgress(stage.stage, stage.substage, countdown),
       lastDeliveryAt: stage.lastDeliveryAt,
+      deliveredAt: cs.id === 6 ? (stage.lastDeliveryAt ?? stage.milestones.entregado ?? estadoAt) : null,
       availableSince: stage.availableSince,
       timeline: timelineOf(stage.stage, stage.milestones),
       deliveries: dels,
@@ -364,13 +389,14 @@ export function buildOverview(input: {
       substage: null,
       stageIndex: stageIndex(manual ?? "ELABORACION"),
       message: !cs ? "Este producto fue cancelado." : manual ? messageFor(manual, null, 0) : "Recibimos tu pedido. Pronto lo vamos a programar.",
-      quantities: { unit: ped.q != null ? "un" : null, requested: ped.q ?? null, delivered: 0, pending: ped.q ?? null, available: 0, mixedUnits: false },
+      quantities: { unit: ped.q != null ? "un" : null, requested: ped.q ?? null, delivered: manual === "ENTREGADO" ? (ped.q ?? 0) : 0, pending: manual === "ENTREGADO" ? 0 : (ped.q ?? null), available: manual === "LISTO" ? (ped.q ?? 0) : 0, mixedUnits: false },
       partialDelivery: false,
       countdown: null,
       progressPct: manual ? visualProgress(manual, null, null) : 0,
       lastDeliveryAt: null,
+      deliveredAt: cs?.id === 6 ? (ped.estadoAt ?? null) : null,
       availableSince: null,
-      timeline: timelineOf(manual ?? "ELABORACION", { elaboracion: null, envasado: null, listo: null, entregado: null }),
+      timeline: timelineOf(manual ?? "ELABORACION", { elaboracion: null, envasado: null, listo: manual === "LISTO" || manual === "ENTREGADO" ? (ped.estadoAt ?? null) : null, entregado: manual === "ENTREGADO" ? (ped.estadoAt ?? null) : null }),
       deliveries: [],
     });
   }
@@ -396,6 +422,7 @@ export function buildOverview(input: {
       progress: st.progress,
       progressText: orderProgressText(st.progress),
       productIds: ps.map((p) => p.id),
+      deliveredAt: st.status?.id === 6 ? ps.map((p) => p.deliveredAt).filter((x): x is string => Boolean(x)).sort().at(-1) ?? null : null,
     };
   });
   const orderRank = (o: PortalOrderView) => (o.cancelled ? 9 : o.status.id === 6 ? 8 : o.status.id === 5 ? 0 : 6 - o.status.id);
@@ -461,6 +488,7 @@ const pickProduct = (p: PortalProductView): PortalProductView => ({
   progressPct: p.progressPct,
   lastDeliveryAt: p.lastDeliveryAt,
   availableSince: p.availableSince,
+  deliveredAt: p.deliveredAt,
   timeline: p.timeline.map((t) => ({ stage: t.stage, label: t.label, state: t.state, date: t.date })),
   deliveries: p.deliveries.map(pickDelivery),
 });
@@ -475,6 +503,7 @@ const pickOrder = (o: PortalOrderView): PortalOrderView => ({
   progress: { total: o.progress.total, cancelados: o.progress.cancelados, listos: o.progress.listos, entregados: o.progress.entregados, enProceso: o.progress.enProceso },
   progressText: o.progressText,
   productIds: [...o.productIds],
+  deliveredAt: o.deliveredAt,
 });
 
 export function toClientPayload(o: PortalOverviewData): Omit<PortalOverviewData, "ready"> {

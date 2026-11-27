@@ -1,3 +1,4 @@
+import { withPortalPush } from "@/lib/portal/push/push-trigger";
 import { NextResponse } from "next/server";
 import { resolvePlanningActor } from "@/lib/planning/actor";
 import { ensureNativePlanningReady, planningErrorResponse } from "@/lib/planning/http";
@@ -71,7 +72,7 @@ export async function GET(request: Request) {
  * Los permisos se validan acá (servidor): cada sector solo modifica las entregas de su sector; Producción/Dirección, todas.
  * Solo toca la entrega y los totales derivados del trabajo: nunca entregas a clientes, remitos ni stock.
  */
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   const blocked = ensureNativePlanningReady();
   if (blocked) return blocked;
   try {
@@ -131,3 +132,6 @@ export async function POST(request: Request) {
     return fail(err);
   }
 }
+
+/** Tras confirmar la operación se dispara (en segundo plano, sin afectarla) la detección de avisos del Portal de Clientes. */
+export const POST = withPortalPush(handlePost);
