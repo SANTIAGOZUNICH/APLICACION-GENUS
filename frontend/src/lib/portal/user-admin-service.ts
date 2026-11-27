@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { hashPassword } from "@/lib/auth/password";
 import { revokeSessions } from "./auth-service";
+import { pickAvailableUsername, slugifyUsername } from "./access-credentials";
 import { normalizeEmail } from "./security";
 import { audit, isoOrNull, requireDb, PortalError, type Row, type SqlExec } from "./store";
 import { PASSWORD_PROBLEM_MESSAGES, generateTemporaryPassword, isLocked, normalizeUsername, passwordProblem } from "./user-rules";
@@ -79,33 +80,57 @@ function optionalEmail(v: unknown): string | null {
   return e;
 }
 
+async function takenUsernames(db: SqlExec, base: string): Promise<Set<string>> {
+  const rows = (await db.execute(sql`select username from portal_users where removed_at is null and username like ${base + "%"}`)).rows as Row[];
+  return new Set(rows.map((r) => String(r.username)));
+}
+
+/** Nombre de usuario libre derivado del nombre del cliente («The Minimal Co.» → theminimalco, theminimalco2…). */
+export async function suggestPortalUsername(staff: UserStaff, clientId: string, db: SqlExec = requireDb()): Promise<{ username: string }> {
+  need(staff);
+  const rows = (await db.execute(sql`select display_name from portal_clients where id = ${/^[0-9a-f-]{36}$/i.test(clientId) ? clientId : randomUUID()}::uuid`)).rows as Row[];
+  if (!rows[0]) throw new PortalError("Cliente no encontrado.", 404, "NOT_FOUND");
+  const base = slugifyUsername(rows[0].display_name);
+  return { username: pickAvailableUsername(base, await takenUsernames(db, base)) };
+}
+
 export async function createPortalUser(
   staff: UserStaff,
-  input: { clientId: unknown; username: unknown; password?: unknown; email?: unknown; displayName?: unknown },
+  input: { clientId: unknown; username: unknown; password?: unknown; email?: unknown; displayName?: unknown; autoSuffix?: unknown },
   db: SqlExec = requireDb()
 ): Promise<{ id: string; username: string; temporaryPassword: string | null }> {
   need(staff);
   const clientId = typeof input.clientId === "string" && /^[0-9a-f-]{36}$/i.test(input.clientId) ? input.clientId : "";
-  const username = normalizeUsername(input.username);
-  if (!username) throw new PortalError("Usuario inválido: 3 a 40 caracteres (letras, números, punto, guion o guion bajo), sin espacios.", 400, "VALIDATION");
+  const base = normalizeUsername(input.username);
+  if (!base) throw new PortalError("Usuario inválido: 3 a 40 caracteres (letras, números, punto, guion o guion bajo), sin espacios.", 400, "VALIDATION");
   const client = (await db.execute(sql`select 1 from portal_clients where id = ${clientId || randomUUID()}::uuid`)).rows;
   if (!client.length) throw new PortalError("Cliente no encontrado.", 404, "NOT_FOUND");
   const email = optionalEmail(input.email);
   const given = typeof input.password === "string" && input.password.length > 0 ? input.password : null;
   if (given) {
-    const problem = passwordProblem(given, username);
+    const problem = passwordProblem(given, base);
     if (problem) throw new PortalError(PASSWORD_PROBLEM_MESSAGES[problem], 400, "WEAK_PASSWORD");
   }
   const password = given ?? generateTemporaryPassword();
   const id = randomUUID();
-  try {
-    await db.execute(sql`
-      insert into portal_users (id, client_id, username, display_name, email, password_hash, must_change_password, created_by)
-      values (${id}::uuid, ${clientId}::uuid, ${username}, ${cleanLabel(input.displayName)}, ${email}, ${await hashPassword(password)}, true, ${staff.email})`);
-  } catch (err) {
-    const e = err as { code?: string; cause?: { code?: string; message?: string }; message?: string };
-    if (e?.code === "23505" || e?.cause?.code === "23505" || /portal_users_username_active_uidx|duplicate key/i.test(`${e?.message ?? ""} ${e?.cause?.message ?? ""}`)) throw new PortalError("Ese nombre de usuario ya existe.", 409, "USERNAME_TAKEN");
-    throw err;
+  const passwordHash = await hashPassword(password);
+  // autoSuffix: si el usuario ya existe (o aparece uno igual en una carrera) se prueba base2, base3… sobre la constraint unique.
+  const auto = input.autoSuffix === true;
+  let username = base;
+  for (let n = 1; ; n++) {
+    if (n > 1) username = pickAvailableUsername(base, await takenUsernames(db, base), n);
+    try {
+      await db.execute(sql`
+        insert into portal_users (id, client_id, username, display_name, email, password_hash, must_change_password, created_by)
+        values (${id}::uuid, ${clientId}::uuid, ${username}, ${cleanLabel(input.displayName)}, ${email}, ${passwordHash}, true, ${staff.email})`);
+      break;
+    } catch (err) {
+      const e = err as { code?: string; cause?: { code?: string; message?: string }; message?: string };
+      const dup = e?.code === "23505" || e?.cause?.code === "23505" || /portal_users_username_active_uidx|duplicate key/i.test(`${e?.message ?? ""} ${e?.cause?.message ?? ""}`);
+      if (dup && auto && n < 50) continue;
+      if (dup) throw new PortalError("Ese nombre de usuario ya existe.", 409, "USERNAME_TAKEN");
+      throw err;
+    }
   }
   await audit(db, { clientId, type: "USUARIO_CREADO", kind: "STAFF", actor: staff.email, detail: { username, hasEmail: Boolean(email), generated: !given } });
   // El usuario siempre debe cambiar la contraseña que le entrega el personal en su primer ingreso.

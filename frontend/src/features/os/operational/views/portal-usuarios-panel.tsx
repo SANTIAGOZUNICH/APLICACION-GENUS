@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { buildPortalAccessMessage, buildWhatsappShareUrl, generateAccessPassword } from "@/lib/portal/access-credentials";
 import type { AdminPortalUser } from "@/lib/portal/user-admin-service";
 
 type Json = Record<string, unknown>;
@@ -10,8 +11,8 @@ type ClientOpt = { id: string; name: string; code: string; status: string };
 const input = "rounded-lg border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm";
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" }) : "nunca");
 
-async function api(body?: Json): Promise<{ ok: boolean; data: Json }> {
-  const res = await fetch("/api/v1/portal-admin" + (body ? "" : "?view=users"), body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : { cache: "no-store" });
+async function api(body?: Json, query = "?view=users"): Promise<{ ok: boolean; data: Json }> {
+  const res = await fetch("/api/v1/portal-admin" + (body ? "" : query), body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : { cache: "no-store" });
   return { ok: res.ok, data: (await res.json().catch(() => ({}))) as Json };
 }
 
@@ -57,10 +58,18 @@ export function PortalUsuariosPanel({ onForbidden }: { onForbidden?: () => void 
     }
   }
 
+  async function pickClient(clientId: string) {
+    if (!clientId) return setForm({ ...form, clientId, username: "", password: "" });
+    const r = await api(undefined, `?view=suggest_username&clientId=${encodeURIComponent(clientId)}`);
+    const username = r.ok ? String(r.data.username ?? "") : "";
+    setForm({ ...form, clientId, username, password: generateAccessPassword(12, username) });
+  }
+
   async function create() {
-    const r = await act({ action: "create_user", ...form, password: form.password || undefined }, "Usuario creado.");
+    const password = form.password || generateAccessPassword(12, form.username);
+    const r = await act({ action: "create_user", ...form, password, autoSuffix: true }, "Acceso creado.");
     if (r.ok) {
-      if (r.data.temporaryPassword) setSecret({ username: String(r.data.username), password: String(r.data.temporaryPassword) });
+      setSecret({ username: String(r.data.username), password });
       setForm({ clientId: form.clientId, username: "", displayName: "", email: "", password: "" });
     }
   }
@@ -83,26 +92,33 @@ export function PortalUsuariosPanel({ onForbidden }: { onForbidden?: () => void 
       {msg ? <div role="status" className={`rounded-lg px-3 py-2 text-sm ${msg.kind === "ok" ? "bg-emerald-500/10 text-emerald-700" : "bg-red-500/10 text-red-700"}`}>{msg.text}</div> : null}
       {secret ? (
         <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm" data-testid="user-secret">
-          <div>Contraseña temporal de <b>{secret.username}</b> (se muestra una sola vez; en su primer ingreso va a tener que elegir una propia):</div>
-          <code className="block select-all rounded bg-[var(--os-surface)] px-3 py-2 font-mono text-base" data-testid="user-secret-value">{secret.password}</code>
-          <div className="flex gap-2">
-            <Button onClick={() => void navigator.clipboard?.writeText(secret.password).then(() => setMsg({ kind: "ok", text: "Copiada al portapapeles." })).catch(() => setMsg({ kind: "err", text: "No se pudo copiar: seleccionala y copiala a mano." }))}>Copiar</Button>
-            <Button onClick={() => setSecret(null)}>Ya la anoté</Button>
+          <div>Credenciales de <b>{secret.username}</b> (se muestran una sola vez; en su primer ingreso el cliente va a poder elegir una contraseña propia):</div>
+          <div className="grid gap-1 sm:grid-cols-2">
+            <code className="block select-all rounded bg-[var(--os-surface)] px-3 py-2 font-mono text-base" data-testid="user-secret-username">{secret.username}</code>
+            <code className="block select-all rounded bg-[var(--os-surface)] px-3 py-2 font-mono text-base" data-testid="user-secret-value">{secret.password}</code>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button data-testid="copy-credentials" onClick={() => void navigator.clipboard?.writeText(buildPortalAccessMessage(secret.username, secret.password)).then(() => setMsg({ kind: "ok", text: "Credenciales copiadas al portapapeles." })).catch(() => setMsg({ kind: "err", text: "No se pudo copiar: seleccionalas y copialas a mano." }))}>Copiar credenciales</Button>
+            <a className="inline-flex items-center rounded-lg border border-[var(--os-border)] px-3 py-2 text-sm font-medium" data-testid="share-whatsapp" href={buildWhatsappShareUrl(secret.username, secret.password)} target="_blank" rel="noopener noreferrer">Compartir por WhatsApp</a>
+            <Button onClick={() => setSecret(null)}>Ya las anoté</Button>
           </div>
         </div>
       ) : null}
 
       <div className="grid gap-3 md:grid-cols-5" data-testid="user-form">
-        <select className={input} value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })} aria-label="Cliente">
+        <select className={input} value={form.clientId} onChange={(e) => void pickClient(e.target.value)} aria-label="Cliente">
           <option value="">Cliente…</option>
           {clients.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
         </select>
         <input className={input} placeholder="Usuario (ej. compras.acme)" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} aria-label="Usuario" autoCapitalize="none" />
         <input className={input} placeholder="Nombre (opcional)" value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} aria-label="Nombre" />
         <input className={input} placeholder="Correo (opcional)" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} aria-label="Correo opcional" />
-        <input className={input} placeholder="Contraseña (vacío = generar)" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} aria-label="Contraseña inicial" autoComplete="off" />
+        <input className={input} placeholder="Contraseña" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} aria-label="Contraseña inicial" autoComplete="off" />
       </div>
-      <Button onClick={() => void create()} disabled={busy || !form.clientId || form.username.trim().length < 3} data-testid="create-user">Crear usuario</Button>
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={() => setForm({ ...form, password: generateAccessPassword(12, form.username) })} disabled={busy || !form.clientId} data-testid="regen-password">Regenerar</Button>
+        <Button onClick={() => void create()} disabled={busy || !form.clientId || form.username.trim().length < 3} data-testid="create-user">Crear acceso</Button>
+      </div>
 
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm" data-testid="user-table">

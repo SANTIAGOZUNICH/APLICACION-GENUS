@@ -195,6 +195,7 @@ check("el cliente B ve SOLO lo suyo", bodyB.includes("GEL SOLO DE B") && !bodyB.
 
 // ───────── Panel de GENUS OS (Dirección) ─────────
 const osCtx = await browser.newContext({ baseURL: BASE, viewport: { width: 1440, height: 900 } });
+await osCtx.grantPermissions(["clipboard-read", "clipboard-write"], { origin: BASE }).catch(() => {});
 const os = await osCtx.newPage();
 await os.goto("/login");
 await os.locator('input[type="email"]').fill(E2E_USERS.direccion.email);
@@ -205,12 +206,68 @@ await os.getByText("Portal de Clientes").first().click();
 await os.getByTestId("portal-users").waitFor({ timeout: 30000 });
 await os.getByTestId("user-row").filter({ hasText: USER_A }).waitFor({ timeout: 30000 }); // el listado carga aparte del panel
 check("GENUS OS: Dirección ve «Usuarios del portal» con el último acceso", (await os.getByTestId("user-row").filter({ hasText: USER_A }).count()) === 1 && !/nunca/.test(await os.getByTestId("user-row").filter({ hasText: USER_A }).innerText()));
-await os.getByTestId("user-form").getByLabel("Cliente").selectOption(idB);
-await os.getByTestId("user-form").getByLabel("Usuario", { exact: true }).fill(`panel-${RUN.toLowerCase()}`);
+// Alta: al elegir el cliente se autogeneran usuario (desde su nombre) y contraseña segura.
+const form = os.getByTestId("user-form");
+const userInput = form.getByLabel("Usuario", { exact: true });
+const passInput = form.getByLabel("Contraseña inicial");
+await form.getByLabel("Cliente").selectOption(idB);
+await os.waitForFunction(() => document.querySelector('[aria-label="Contraseña inicial"]')?.value?.length >= 12);
+const autoUser = await userInput.inputValue();
+const autoPass1 = await passInput.inputValue();
+check("al elegir el cliente se autogenera el usuario a partir de su nombre (minúsculas, sin espacios)", autoUser === `clienteb${RUN.toLowerCase()}`, autoUser);
+check("se autogenera una contraseña segura (≥12, sin caracteres ambiguos)", /^[A-HJ-NP-Za-km-np-z2-9]{12,}$/.test(autoPass1) && !/[01OIlo]/.test(autoPass1), autoPass1);
+await os.getByTestId("regen-password").click();
+const autoPass2 = await passInput.inputValue();
+check("«Regenerar» genera otra contraseña distinta", autoPass2 !== autoPass1 && autoPass2.length >= 12);
+const PANEL_USER = `panel-${RUN.toLowerCase()}`;
+await userInput.fill(PANEL_USER);
+check("usuario editable y correo opcional (queda vacío)", (await userInput.inputValue()) === PANEL_USER && (await form.getByLabel("Correo opcional").inputValue()) === "");
 await os.getByTestId("create-user").click();
 await os.getByTestId("user-secret-value").waitFor({ timeout: 20000 });
-check("GENUS OS: crear usuario desde el panel muestra la contraseña temporal una sola vez", /^[A-Za-z0-9]{12}$/.test((await os.getByTestId("user-secret-value").innerText()).trim()));
+const shownUser = (await os.getByTestId("user-secret-username").innerText()).trim();
+const shownPass = (await os.getByTestId("user-secret-value").innerText()).trim();
+check("tras crear: se muestran usuario y contraseña (la editada, no la regenerada anterior)", shownUser === PANEL_USER && shownPass === autoPass2);
+const message = `¡Hola! Ya tenés acceso al Portal de Clientes de Laboratorio Genus.\n\nDesde acá vas a poder seguir el estado de tus pedidos en tiempo real y recibir notificaciones sobre su avance.\n\nUsuario: ${shownUser}\nContraseña: ${shownPass}\n\nIngresá en:\nhttps://appgenus.vercel.app/entregas\n\n¡También podés instalar la aplicación en tu celular!`;
+const wa = await os.getByTestId("share-whatsapp").getAttribute("href");
+check("«Compartir por WhatsApp»: enlace wa.me (sin número) con el mensaje exacto url-encoded", wa === `https://wa.me/?text=${encodeURIComponent(message)}`);
+await os.getByTestId("copy-credentials").click();
+const clip = await os.evaluate(() => navigator.clipboard.readText()).catch(() => null);
+check("«Copiar credenciales» copia el mensaje con usuario y contraseña", clip === message || (clip === null && (await os.getByRole("status").innerText()).length > 0), String(clip).slice(0, 40));
 await os.screenshot({ path: `${OUT}/05-panel-usuarios.png`, fullPage: true });
+// El cliente ingresa al portal con esas credenciales.
+const ctxP = await browser.newContext({ baseURL: BASE, viewport: { width: 1280, height: 800 } });
+const pp = await ctxP.newPage();
+await pp.goto("/entregas");
+await pp.getByLabel("Usuario").fill(shownUser);
+await pp.getByLabel("Contraseña").fill(shownPass);
+await pp.getByRole("button", { name: "Ingresar" }).click();
+await pp.getByTestId("change-password").waitFor({ timeout: 20000 });
+const PANEL_FINAL = "Clave-Panel-Final-2026";
+await pp.getByLabel("Contraseña actual (temporal)").fill(shownPass);
+await pp.getByLabel("Contraseña nueva", { exact: true }).fill(PANEL_FINAL);
+await pp.getByLabel("Repetí la contraseña nueva").fill(PANEL_FINAL);
+await pp.getByRole("button", { name: "Guardar y continuar" }).click();
+await pp.getByTestId("welcome").waitFor({ timeout: 20000 });
+check("el cliente ingresa al portal con las credenciales generadas en el panel", true);
+// Restablecer desde el panel: nueva clave, sesión vieja cae, se muestran las mismas credenciales con Copiar/WhatsApp.
+await os.getByTestId("user-secret").getByRole("button", { name: "Ya las anoté" }).click();
+os.once("dialog", (d) => void d.accept());
+await os.getByTestId("user-row").filter({ hasText: PANEL_USER }).getByTestId("reset-user").click();
+await os.getByTestId("user-secret-value").waitFor({ timeout: 20000 });
+const resetPass = (await os.getByTestId("user-secret-value").innerText()).trim();
+const waReset = await os.getByTestId("share-whatsapp").getAttribute("href");
+check("restablecer muestra usuario + contraseña nueva con Copiar y WhatsApp", resetPass !== shownPass && /^[A-Za-z0-9]{12}$/.test(resetPass) && decodeURIComponent(waReset.split("text=")[1]).includes(`Usuario: ${PANEL_USER}\nContraseña: ${resetPass}`) && (await os.getByTestId("copy-credentials").isVisible()));
+await pp.getByTestId("form-usuario").waitFor({ timeout: 60000 });
+check("al restablecer, la sesión abierta anterior del cliente cae sola", (await pp.getByTestId("welcome").count()) === 0);
+await pp.getByLabel("Usuario").fill(shownUser);
+await pp.getByLabel("Contraseña").fill(PANEL_FINAL);
+await pp.getByRole("button", { name: "Ingresar" }).click();
+await pp.getByTestId("login-msg").waitFor();
+check("la contraseña anterior ya no sirve y la nueva sí ingresa", (await pp.getByTestId("login-msg").innerText()) === "Usuario o contraseña incorrectos.");
+await pp.getByLabel("Contraseña").fill(resetPass);
+await pp.getByRole("button", { name: "Ingresar" }).click();
+await pp.getByTestId("change-password").waitFor({ timeout: 20000 });
+await ctxP.close();
 await osCtx.close();
 
 // Desactivar al usuario A desde GENUS OS: su portal abierto lo saca solo, sin recargar.
