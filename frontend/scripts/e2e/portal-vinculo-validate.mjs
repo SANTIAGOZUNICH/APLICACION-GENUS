@@ -195,24 +195,29 @@ try {
   let weekId = (await (await production.get(`/api/v1/planning/weeks?weekStart=${weekStart}`)).json()).weeks?.[0]?.id;
   if (!weekId) weekId = (await (await production.post("/api/v1/planning/weeks", { data: { weekStart, label: "E2E portal vínculo" } })).json()).week.id;
   const plannedDate = today.getUTCDay() === 0 || today.getUTCDay() === 6 ? weekStart : today.toISOString().slice(0, 10);
-  const mkItem = await production.post(`/api/v1/planning/weeks/${weekId}/items`, { data: { plannedDate, unit: "un", client: NAME, product: "SHAMPOO GENUS TEST", plannedQuantity: "250", sector: "ELABORACION", branchOwner: "Cristian" } });
-  if (mkItem.status() !== 201) throw new Error(`crear trabajo: ${await mkItem.text()}`);
-  const workId = (await mkItem.json()).item.id;
-  await q("update work_items set production_pedido_id = $2::uuid where id = $1", [workId, ped1.id]);
-  await card.getByTestId("stage-pill").filter({ hasText: "Pedido programado" }).waitFor({ timeout: 60_000 });
-  check("al asignarse el trabajo el portal pasa solo a «Pedido programado»", true);
-  await q("update work_items set operational_status = 'en_curso' where id = $1", [workId]);
+  // Flujo REAL de Producción: «asignar» el pedido a Elaboración (work-assignments) y «enviar a Envasado» desde Elaboración (envasado).
+  const asg = await production.post("/api/v1/work-assignments", { data: { sector: "ELABORACION", client: NAME, product: "SHAMPOO GENUS TEST", plannedQuantity: "250", unit: "un", plannedDate, branchOwner: "Cristian", productionPedidoId: ped1.id, idempotencyKey: `e2e-pv-assign-${RUN}` } });
+  if (asg.status() >= 300) throw new Error(`asignar a Elaboración: ${asg.status()} ${await asg.text()}`);
+  const asgJ = await asg.json();
+  const workId = asgJ.item?.id ?? asgJ.workItem?.id;
+  if (!workId) throw new Error(`asignar: sin id de trabajo en la respuesta ${JSON.stringify(asgJ).slice(0, 200)}`);
+  const t0 = Date.now();
   await card.getByTestId("stage-pill").filter({ hasText: "En elaboración" }).waitFor({ timeout: 60_000 });
-  check("elaboración en curso → «En elaboración» sin recargar", true);
+  const secs = (Date.now() - t0) / 1000;
+  check(`al ENVIAR el pedido a Elaboración desde Producción (asignación real) el portal abierto pasa solo a «En elaboración» en ${secs.toFixed(1)} s (<10 s, sin recargar)`, secs < 10, `${secs.toFixed(1)} s`);
+  const elabApi = await apiCtx(E2E_USERS.elaboracion);
   sends += (await cron()).push.enviadas;
-  await q("update work_items set sector = 'ENVASADO_MASIVO', branch_owner = null, line = 'Línea 1', progress_updated_at = now() where id = $1", [workId]);
+  const toEnv = await elabApi.post(`/api/v1/work-items/${workId}/envasado`, { data: { destination: "ENVASADO_MASIVO", producedQuantity: "250", idempotencyKey: `e2e-pv-env-${RUN}-00001` } });
+  if (toEnv.status() >= 300) throw new Error(`enviar a Envasado: ${toEnv.status()} ${await toEnv.text()}`);
+  const destId = (await toEnv.json()).destinationWorkItem.id;
+  const destDbId = String(destId).replace(/^native:/, "");
   await card.getByTestId("stage-pill").filter({ hasText: "En envasado" }).waitFor({ timeout: 60_000 });
   check("pasa a Envasado → «En envasado» sin recargar", true);
   sends += (await cron()).push.enviadas;
-  await q("update work_items set operational_status = 'revision', completed_at = now() where id = $1", [workId]);
-  const mk = await envasadoApi.post("/api/v1/disponibilidad", { data: { action: "mark", workItemId: workId, idempotencyKey: `e2e-pv-${RUN}` } });
+  await q("update work_items set operational_status = 'revision', completed_at = now() where id = $1", [destDbId]);
+  const mk = await envasadoApi.post("/api/v1/disponibilidad", { data: { action: "mark", workItemId: destId, idempotencyKey: `e2e-pv-${RUN}` } });
   if (mk.status() >= 300) {
-    await q("insert into portal_availability_marks (work_item_id, quantity, unit, delivered_before, client_name, product, sector, marked_by, idempotency_key) values ($1, 250, 'un', 0, $2, 'SHAMPOO GENUS TEST', 'ENVASADO_MASIVO', 'e2e-envasado@genus.test', $3)", [workId, NAME, `e2e-pv-${RUN}`]);
+    await q("insert into portal_availability_marks (work_item_id, quantity, unit, delivered_before, client_name, product, sector, marked_by, idempotency_key) values ($1, 250, 'un', 0, $2, 'SHAMPOO GENUS TEST', 'ENVASADO_MASIVO', 'e2e-envasado@genus.test', $3)", [destDbId, NAME, `e2e-pv-${RUN}`]);
   }
   await card.getByTestId("stage-pill").filter({ hasText: "Listo para entregar" }).waitFor({ timeout: 60_000 });
   check("Envasado confirma «Listo para entregar» → el portal lo refleja sin recargar ni cerrar sesión", (await portal.evaluate(() => window.__marker)) === "vivo" && (await portal.evaluate(() => performance.getEntriesByType("navigation").length)) === 1);

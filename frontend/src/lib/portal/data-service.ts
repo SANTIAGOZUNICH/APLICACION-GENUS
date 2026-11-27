@@ -106,7 +106,7 @@ export async function loadFacts(db: SqlExec, workIds: string[]): Promise<ClientF
     select w.id::text as id, w.client, w.product, w.sector::text as sector, w.operational_status, w.source, w.created_at, w.completed_at,
            w.progress_updated_at, w.sent_to_codificado_at, coalesce(w.via_codificado, false) as via_codificado, w.planned_quantity, w.unit,
            w.finished_qty, w.deliverable_units, w.packaging_total_units, w.production_pedido_id::text as pedido_id,
-           p.op as pedido_op, p.producto as pedido_producto, to_char(p.fecha, 'YYYY-MM-DD') as pedido_fecha, w.quality_status
+           p.op as pedido_op, p.estado as pedido_estado, p.producto as pedido_producto, to_char(p.fecha, 'YYYY-MM-DD') as pedido_fecha, w.quality_status
       from work_items w
       left join production_pedidos p on p.id = w.production_pedido_id and p.deleted_at is null
      where w.id in (${list}) and ${LIVE}`)).rows as Row[];
@@ -153,6 +153,7 @@ export async function loadFacts(db: SqlExec, workIds: string[]): Promise<ClientF
         packagingTotalUnits: r.packaging_total_units == null ? null : Number(r.packaging_total_units),
         productionPedidoId: str(r.pedido_id),
         pedidoOp: str(r.pedido_op),
+        pedidoEstado: str(r.pedido_estado),
         pedidoProducto: str(r.pedido_producto),
         pedidoFecha: str(r.pedido_fecha),
         qualityStatus: str(r.quality_status),

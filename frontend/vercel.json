@@ -23,7 +23,7 @@
     },
     {
       "path": "/api/cron/portal-push",
-      "schedule": "*/5 * * * *"
+      "schedule": "*/2 * * * *"
     }
   ]
 }

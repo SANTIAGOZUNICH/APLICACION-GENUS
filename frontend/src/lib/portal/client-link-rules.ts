@@ -74,3 +74,13 @@ export function choicesMatching(text: unknown, choices: ReadonlyArray<{ id: stri
   if (!key) return [];
   return choices.filter((c) => c.labels.some((l) => normalizeClientName(l)?.key === key)).map((c) => c.id);
 }
+
+/**
+ * ¿Producción ya ENVIÓ el pedido a un sector? Al asignar el trabajo (p. ej. a Elaboración) el pedido pasa a EN_ELABORACION
+ * (production_pedidos.estado, monótono). Para el cliente eso es «En elaboración» desde ese momento, aunque el operario todavía
+ * no haya registrado avance en el trabajo. Antes solo se miraba el avance del trabajo y el envío quedaba como «Pedido programado».
+ */
+export function pedidoSentToSector(estado: string | null | undefined): boolean {
+  const e = String(estado ?? "").trim().toUpperCase();
+  return e === "EN_ELABORACION" || e === "EN_PROCESO" || e === "EN_ENVASADO" || e === "EN_CODIFICADO" || e === "LISTO_PARA_ENTREGAR" || e === "TERMINADO";
+}

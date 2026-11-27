@@ -40,6 +40,7 @@ import {
   isPackagingOaSector,
   normalizeOaOrderNumber,
 } from "@/lib/planning/oa-assign-helpers";
+import { schedulePortalPush } from "@/lib/portal/push/push-trigger";
 import { linkWorkInTx, readDeliveryItemForAssignment } from "@/lib/entregas/service";
 
 export type WorkAssignmentInput = {
@@ -855,6 +856,8 @@ async function assignWorkItemDurableImpl(
     const done = await getDb().transaction(run);
     // Fuera de una transacción ajena: la identidad (código) del cliente se asigna ya confirmado el alta.
     await linkWorkSafe(done.item?.id, done.item?.client, "asignacion", null);
+    // Portal de Clientes: aviso inmediato (en segundo plano, jamás afecta esta operación).
+    if (!opts?.tx) schedulePortalPush({ workItemId: done.item?.id ?? null });
     return done;
   } catch (err) {
     logSanitizedError(operationId, "work-assignment", err);

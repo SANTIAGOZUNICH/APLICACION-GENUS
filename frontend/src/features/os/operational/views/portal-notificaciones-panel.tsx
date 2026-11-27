@@ -10,6 +10,7 @@ async function api(body?: Json): Promise<{ ok: boolean; data: Json }> {
   const res = await fetch("/api/v1/portal-admin" + (body ? "" : "?view=push"), body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : { cache: "no-store" });
   return { ok: res.ok, data: (await res.json().catch(() => ({}))) as Json };
 }
+const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", hour12: false }) : "—");
 const input = "w-20 rounded-lg border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm";
 
 /**
@@ -95,6 +96,13 @@ export function PortalNotificacionesPanel() {
         <span className="text-[var(--os-text-muted)]">Claves VAPID: {data.vapidConfigured ? "configuradas" : "FALTAN (no se puede enviar)"} · Cron: {data.cronConfigured ? "configurado" : "FALTA CRON_SECRET"}</span>
       </div>
 
+      <div className="rounded-lg border border-[var(--os-border)] p-3 text-sm" data-testid="push-worker">
+        <b>Última ejecución del worker:</b> {fmt(data.worker.lastFinishedAt)} ({data.worker.lastTrigger ?? "nunca ejecutado"}) ·{" "}
+        <span data-testid="push-worker-state" className={data.worker.lastOk === false ? "text-red-700" : ""}>{data.worker.lastOk == null ? "sin datos" : data.worker.lastOk ? "OK" : `ERROR: ${data.worker.lastError ?? ""}`}</span>
+        {" "}· Último cron: {fmt(data.worker.lastCronAt)} · Corridas: {data.worker.runsTotal}
+        {data.worker.lastCronAt == null ? <div className="text-amber-700">El cron todavía no corrió: revisá CRON_SECRET y el cron «/api/cron/portal-push» en Vercel.</div> : null}
+      </div>
+
       <div className="flex flex-wrap items-end gap-3 text-sm" data-testid="push-days">
         <label className="space-y-1">Elaboración: días hábiles estimados<br /><input className={input} inputMode="numeric" value={days.elaboracionDays} onChange={(e) => setDays({ ...days, elaboracionDays: e.target.value })} data-testid="push-days-elab" /></label>
         <label className="space-y-1">Envasado: días hábiles estimados<br /><input className={input} inputMode="numeric" value={days.envasadoDays} onChange={(e) => setDays({ ...days, envasadoDays: e.target.value })} data-testid="push-days-env" /></label>
@@ -112,13 +120,17 @@ export function PortalNotificacionesPanel() {
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm" data-testid="push-clients">
-          <thead><tr className="text-left text-[var(--os-text-muted)]"><th className="py-1 pr-3">Cliente con acceso al portal</th><th className="pr-3">Usuarios</th><th className="pr-3">Dispositivos</th><th className="pr-3">Piloto de notificaciones</th><th className="pr-3">Prueba</th></tr></thead>
+          <thead><tr className="text-left text-[var(--os-text-muted)]"><th className="py-1 pr-3">Cliente con acceso al portal</th><th className="pr-3">Usuarios</th><th className="pr-3">Dispositivos</th><th className="pr-3">Última suscripción</th><th className="pr-3">Última enviada</th><th className="pr-3">Eventos (pend/sim/env/fall)</th><th className="pr-3">Último fallo</th><th className="pr-3">Piloto de notificaciones</th><th className="pr-3">Prueba</th></tr></thead>
           <tbody>
             {data.clients.map((c) => (
               <tr key={c.id} className="border-t border-[var(--os-border)]" data-testid="push-client-row">
                 <td className="py-2 pr-3">{c.name} <span className="text-[var(--os-text-muted)]">({c.code})</span></td>
                 <td className="pr-3">{c.users}</td>
-                <td className="pr-3">{c.devices}</td>
+                <td className="pr-3" data-testid="push-diag-devices">{c.devices}{c.deviceErrors ? ` (${c.deviceErrors} con error)` : ""}</td>
+                <td className="pr-3">{fmt(c.lastSubscriptionAt)}</td>
+                <td className="pr-3">{fmt(c.lastSentAt)}</td>
+                <td className="pr-3" data-testid="push-diag-events">{c.events.pendientes}/{c.events.simulados}/{c.events.enviados}/{c.events.fallidos}{c.events.sinDispositivos ? ` · ${c.events.sinDispositivos} sin dispositivos` : ""}</td>
+                <td className="pr-3 text-xs">{c.lastFailure ? `${c.lastFailure.reason} (${fmt(c.lastFailure.at)})` : "—"}</td>
                 <td className="pr-3">
                   <label className="inline-flex items-center gap-2">
                     <input type="checkbox" checked={c.pilotEnabled} disabled={busy} data-testid="push-pilot-toggle"
@@ -139,7 +151,7 @@ export function PortalNotificacionesPanel() {
                 </td>
               </tr>
             ))}
-            {data.clients.length === 0 ? <tr><td colSpan={5} className="py-2 text-[var(--os-text-muted)]">No hay clientes con acceso al portal.</td></tr> : null}
+            {data.clients.length === 0 ? <tr><td colSpan={9} className="py-2 text-[var(--os-text-muted)]">No hay clientes con acceso al portal.</td></tr> : null}
           </tbody>
         </table>
       </div>

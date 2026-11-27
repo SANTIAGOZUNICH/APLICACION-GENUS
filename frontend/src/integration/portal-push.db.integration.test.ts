@@ -120,10 +120,12 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: notificaciones push en Postgres real$
     await s.updatePushSettings(direccion, { elaboracionDays: 8, envasadoDays: 3 });
   });
 
-  it("sin piloto el cliente no puede suscribirse y el worker no registra nada para él", async () => {
+  it("sin piloto el cliente SÍ puede registrar su dispositivo (el piloto solo decide el envío) y el worker no registra nada para él", async () => {
     const s = await svc();
-    await expect(s.savePushSubscription(sessA, SUB("pre"), "vitest")).rejects.toMatchObject({ code: "PUSH_NOT_ENABLED" });
-    expect(await s.pushClientConfig(sessA, null)).toMatchObject({ available: false, reason: "pilot" });
+    expect(await s.pushClientConfig(sessA, null)).toMatchObject({ available: true, reason: "ok", pilotEnabled: false });
+    expect(await s.savePushSubscription(sessA, SUB("pre"), "vitest")).toEqual({ registered: true, devices: 1 });
+    expect(await s.pushClientConfig(sessA, ENDPOINT("pre"))).toMatchObject({ thisDevice: true, devices: 1 });
+    expect(await s.removePushSubscription(sessA, ENDPOINT("pre"))).toBe(1);
     const send = sender();
     const sum = await s.runPushWorker({ sender: send, vapid: { publicKey: "k", privateKey: "k", subject: "mailto:x@y.z" } });
     expect(sum.clients).toBe(0);
@@ -264,7 +266,7 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: notificaciones push en Postgres real$
     await s.runPushWorker(deps);
     expect(await types()).toEqual(["ENVASADO", "LISTO"]);
     const listo = (await outboxOf(A.id, `OP-A4-${RUN}`)).find((r) => r.event_type === "LISTO")!;
-    expect(listo.title).toBe("¡TU PEDIDO ESTÁ LISTO! 🎉");
+    expect(listo.title).toBe("¡TU PEDIDO ESTÁ LISTO PARA ENTREGAR! 🎉");
   });
 
   // ───────────────────────── Fallos de envío ─────────────────────────

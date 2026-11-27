@@ -16,6 +16,7 @@ import {
 } from "./order-status";
 import { stageCountdown, type BusinessCalendarOptions, type Countdown } from "./business-days";
 import { hmac } from "./security";
+import { pedidoSentToSector } from "./client-link-rules";
 import {
   ESTIMATE_DISCLAIMER,
   FINALIZATION_MESSAGE,
@@ -60,6 +61,8 @@ export type RawWorkRow = {
   pedidoFecha?: string | null;
   /** Decisión de Calidad (solo para derivar «reproceso»; NUNCA sale del servidor). */
   qualityStatus?: string | null;
+  /** production_pedidos.estado: el pedido ya fue ENVIADO a un sector por Producción (NUNCA sale del servidor). */
+  pedidoEstado?: string | null;
 };
 /** Renglón de pedido (un producto) SIN trabajos vivos: recién recibido, o con todos sus trabajos cancelados. */
 export type RawPedidoRow = {
@@ -279,7 +282,8 @@ export function buildOverview(input: {
     const orderRef = g.rows.find((r) => r.pedidoOp)?.pedidoOp?.trim() || null;
     const id = opaque(clientId, "product", g.key);
     const orderKey = orderKeyOf(orderRef, g.key);
-    const started = g.rows.some((r) => r.sector !== "ELABORACION" || r.operationalStatus !== "pendiente" || r.progressUpdatedAt != null);
+    // «En elaboración» desde que Producción envía el pedido a Elaboración (estado del pedido), no recién cuando hay avance.
+    const started = g.rows.some((r) => r.sector !== "ELABORACION" || r.operationalStatus !== "pendiente" || r.progressUpdatedAt != null || pedidoSentToSector(r.pedidoEstado));
     const reprocess = g.rows.some((r) => r.qualityStatus === "rechazado" && r.operationalStatus !== "entregado");
     const commercial = deriveClientProductStatus({ hasWork: true, cancelled: false, stage: stage.stage, substage: stage.substage, started, reprocess });
     const cs = commercial.status!;

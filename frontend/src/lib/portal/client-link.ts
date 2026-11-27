@@ -15,6 +15,7 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
+import { schedulePortalPush } from "./push/push-trigger";
 import { ensureClientIdentity, type IdentitySource } from "./client-identity";
 import { normalizeClientName } from "./client-identity-rules";
 import { buildNameIndex, isClientUuid, resolveName, type NameIndex } from "./client-link-rules";
@@ -110,7 +111,10 @@ export async function linkPedidoToClient(
 export async function linkPedidoSafe(pedidoId: string, input: { cliente: unknown; portalClientId?: unknown; source: IdentitySource; actor?: string | null }): Promise<LinkResult | null> {
   try {
     if (!isDatabaseConfigured()) return null;
-    return await linkPedidoToClient(pedidoId, input);
+    const linked = await linkPedidoToClient(pedidoId, input);
+    // Pedido recién asignado a un cliente: «Pedido recibido» al instante (en segundo plano; nunca afecta al alta).
+    if (linked?.clientId) schedulePortalPush({ clientId: linked.clientId });
+    return linked;
   } catch (err) {
     console.error("[portal] no se pudo vincular el pedido al cliente del portal (el backfill lo reintenta)", err instanceof Error ? err.message : err);
     return null;

@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { disablePush, enablePush, fetchPushConfig, type PushConfig } from "./push-client";
-import { currentPlatform, pushSupported, type PlatformInfo } from "./pwa-env";
+import { useState, useSyncExternalStore } from "react";
+import { PUSH_STATE_LABEL } from "./push-state";
+import type { PlatformInfo } from "./pwa-env";
 import { portalPwaStore } from "./pwa-store";
+import type { PushController } from "./use-push-state";
 
 /** Instrucciones de instalación por plataforma (la instalación en iPhone es manual: Safari no ofrece «Instalar»). */
 export function InstallInstructions({ platform }: { platform: PlatformInfo }) {
@@ -33,28 +34,11 @@ export function InstallInstructions({ platform }: { platform: PlatformInfo }) {
   );
 }
 
-const PUSH_MESSAGES: Record<string, string> = {
-  vapid: "Las notificaciones no están disponibles por el momento.",
-  pilot: "Las notificaciones todavía no están habilitadas para tu cuenta.",
-  demo: "Las notificaciones no están disponibles en la demostración.",
-};
-
-/** Instalar la app + activar/desactivar avisos en ESTE dispositivo. El permiso del navegador solo se pide al tocar el botón. */
-export function AppPanel() {
+/** Instalar la app + estado permanente de las notificaciones en ESTE dispositivo (activar / desactivar / reintentar). */
+export function AppPanel({ push }: { push: PushController }) {
   const installEvent = useSyncExternalStore(portalPwaStore.subscribe, portalPwaStore.getInstallEvent, () => null);
-  const [platform, setPlatform] = useState<PlatformInfo | null>(null);
-  const [cfg, setCfg] = useState<PushConfig | null | undefined>(undefined);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
-
-  const reload = useCallback(async () => setCfg(await fetchPushConfig()), []);
-  useEffect(() => {
-    // Datos del navegador y del servidor: se resuelven después del montaje.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPlatform(currentPlatform());
-    void reload();
-  }, [reload]);
+  const { platform, cfg, state, busy, message } = push;
 
   async function install() {
     const ev = portalPwaStore.getInstallEvent();
@@ -63,29 +47,12 @@ export function AppPanel() {
     await ev.userChoice.catch(() => undefined);
     portalPwaStore.setInstallEvent(null);
   }
-  async function toggle() {
-    if (!cfg) return;
-    setBusy(true);
-    setMsg(null);
-    try {
-      if (cfg.thisDevice) {
-        await disablePush();
-        setMsg("Notificaciones desactivadas en este dispositivo.");
-      } else if (cfg.publicKey) {
-        const r = await enablePush(cfg.publicKey);
-        setMsg(r.ok ? "Listo: vas a recibir avisos de tus pedidos en este dispositivo." : r.message);
-      }
-      await reload();
-    } finally {
-      setBusy(false);
-    }
-  }
 
   if (!platform) return null;
   const standalone = platform.standalone;
-  const supported = pushSupported();
-  const iosNeedsInstall = platform.iosSafariTab && !supported;
-  const iosTooOld = platform.ios && platform.iosVersion != null && platform.iosVersion < 16.04;
+  const on = state === "activadas";
+  const canToggle = on || state === "desactivadas" || state === "error";
+  const devices = cfg?.devices ?? 0;
 
   return (
     <section className="gp-card gp-app-panel" aria-labelledby="gp-app" data-testid="app-panel">
@@ -104,31 +71,26 @@ export function AppPanel() {
           </button>
         ) : null}
       </div>
-      {showHelp && !standalone ? <InstallInstructions platform={platform} /> : null}
+      {(showHelp || state === "instalacion") && !standalone ? <InstallInstructions platform={platform} /> : null}
 
       <div className="gp-push" data-testid="push-box">
         <b>Notificaciones de pedidos</b>
-        {iosTooOld ? (
-          <p className="gp-note" data-testid="push-msg">Para recibir notificaciones en iPhone necesitás iOS 16.4 o superior.</p>
-        ) : iosNeedsInstall ? (
-          <p className="gp-note" data-testid="push-msg">En iPhone las notificaciones solo funcionan desde la app instalada: agregala a la pantalla de inicio y abrila desde ahí.</p>
-        ) : cfg === undefined ? (
-          <p className="gp-note" data-testid="push-msg" data-loading="1">Comprobando notificaciones…</p>
-        ) : !cfg ? (
-          <p className="gp-note" data-testid="push-msg">Notificaciones no disponibles por el momento.</p>
-        ) : !cfg.available ? (
-          <p className="gp-note" data-testid="push-msg">{PUSH_MESSAGES[cfg.reason] ?? "Notificaciones no disponibles."}</p>
-        ) : !supported ? (
-          <p className="gp-note" data-testid="push-msg">Este navegador no admite notificaciones.</p>
-        ) : (
+        <p className="gp-note" data-testid="push-state" data-state={state} role="status">
+          {PUSH_STATE_LABEL[state]}
+          {state === "activadas" && devices > 0 ? ` · ${devices} ${devices === 1 ? "dispositivo" : "dispositivos"} en tu cuenta` : ""}
+        </p>
+        {state === "instalacion" ? <p className="gp-note" data-testid="push-msg">En iPhone las notificaciones solo funcionan desde la app instalada (iOS 16.4 o superior): agregala a la pantalla de inicio y abrila desde ahí.</p> : null}
+        {state === "no_compatible" ? <p className="gp-note" data-testid="push-msg">Este dispositivo o navegador no admite notificaciones. En iPhone se necesita iOS 16.4 o superior.</p> : null}
+        {state === "bloqueado" ? <p className="gp-note" data-testid="push-msg">Bloqueaste las notificaciones de este sitio. Para activarlas, habilitalas desde los ajustes del navegador o del teléfono y volvé a abrir el portal.</p> : null}
+        {state === "no_disponible" ? <p className="gp-note" data-testid="push-msg">Las notificaciones no están disponibles por el momento.</p> : null}
+        {canToggle ? (
           <div className="gp-app-actions">
-            <button type="button" className={`gp-btn ${cfg.thisDevice ? "gp-btn-ghost" : "gp-btn-primary"} gp-btn-sm`} disabled={busy} onClick={() => void toggle()} data-testid="push-toggle" data-state={cfg.thisDevice ? "on" : "off"}>
-              {cfg.thisDevice ? "Desactivar notificaciones" : "Activar notificaciones"}
+            <button type="button" className={`gp-btn ${on ? "gp-btn-ghost" : "gp-btn-primary"} gp-btn-sm`} disabled={busy} onClick={() => void (on ? push.disable() : push.enable())} data-testid="push-toggle" data-state={on ? "on" : "off"}>
+              {on ? "Desactivar notificaciones" : state === "error" ? "Reintentar" : "Activar notificaciones"}
             </button>
-            <span className="gp-note" data-testid="push-state">{cfg.thisDevice ? "Activadas en este dispositivo" : "Desactivadas en este dispositivo"}{cfg.devices > 0 ? ` · ${cfg.devices} ${cfg.devices === 1 ? "dispositivo" : "dispositivos"} en tu cuenta` : ""}</span>
           </div>
-        )}
-        {msg ? <p className="gp-note" role="status" data-testid="push-feedback">{msg}</p> : null}
+        ) : null}
+        {message ? <p className="gp-note" role="status" data-testid="push-feedback">{message}</p> : null}
       </div>
     </section>
   );

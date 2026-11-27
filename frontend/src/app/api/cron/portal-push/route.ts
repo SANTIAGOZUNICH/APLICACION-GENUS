@@ -19,6 +19,6 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: true, push: await runPushWorker() });
   } catch (err) {
     console.error("[portal-push] el worker falló (sin efecto sobre Producción)", err);
-    return NextResponse.json({ ok: false, error: "El worker de notificaciones falló; se reintenta en la próxima corrida." }, { status: 200 });
+    return NextResponse.json({ ok: false, error: "El worker de notificaciones falló; se reintenta en la próxima corrida." }, { status: 500 });
   }
 }

@@ -1,7 +1,7 @@
 /** Cliente de notificaciones del portal: permiso solo tras un gesto del usuario, suscripción y baja. */
 import { pushSupported, urlBase64ToUint8Array } from "./pwa-env";
 
-export type PushConfig = { available: boolean; reason: "ok" | "vapid" | "pilot" | "demo"; publicKey: string | null; devices: number; thisDevice: boolean };
+export type PushConfig = { available: boolean; reason: "ok" | "vapid" | "demo"; publicKey: string | null; devices: number; thisDevice: boolean; pilotEnabled?: boolean };
 
 const post = (path: string, body: unknown) => fetch(`/entregas/api/push/${path}`, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
@@ -35,11 +35,14 @@ export async function enablePush(publicKey: string): Promise<{ ok: true } | { ok
     const reg = (await navigator.serviceWorker.getRegistration("/entregas")) ?? (await navigator.serviceWorker.ready);
     const sub = (await reg.pushManager.getSubscription()) ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) }));
     const res = await post("subscribe", { subscription: sub.toJSON() });
-    if (!res.ok) {
-      const j = (await res.json().catch(() => ({}))) as { error?: string };
+    const j = (await res.json().catch(() => ({}))) as { error?: string; registered?: boolean };
+    if (!res.ok || j.registered !== true) {
       await sub.unsubscribe().catch(() => undefined);
       return { ok: false, reason: "error", message: j.error ?? "No pudimos activar las notificaciones." };
     }
+    // Segunda comprobación independiente: el servidor tiene que listar ESTE dispositivo. Si no, no se muestra «activadas».
+    const cfg = await fetchPushConfig();
+    if (!cfg?.thisDevice) return { ok: false, reason: "error", message: "No pudimos confirmar el registro de este dispositivo. Reintentá." };
     return { ok: true };
   } catch {
     return { ok: false, reason: "error", message: "No pudimos activar las notificaciones en este dispositivo." };
