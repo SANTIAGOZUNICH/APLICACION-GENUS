@@ -39,11 +39,14 @@ function createFakeDb() {
   const workItemDeliveryLines = new Map<string, FakeRow>();
   const productionPedidoStatusEvents: Record<string, unknown>[] = [];
 
+  const asignacionLotes = new Map<string, FakeRow>();
+
   function tableFor(name: string): Map<string, FakeRow> {
     if (name === "operationalOrders") return operationalOrders;
     if (name === "workItemDeliveryLines") return workItemDeliveryLines;
     if (name === "workItemDeliveries") return workItemDeliveries;
     if (name === "productionPedidos") return productionPedidos;
+    if (name === "asignacionLotes") return asignacionLotes;
     return workItems;
   }
 
@@ -172,8 +175,21 @@ vi.mock("drizzle-orm", async () => {
   };
 });
 
+/** Las notificaciones (os_notifications) son un efecto lateral best-effort: el fake las descarta sin tocar work_items. */
+function notificationSinkInsert(tx: { insert: (t: { __name: string }) => unknown }) {
+  return (table: { __name: string }) => {
+    if (table.__name !== "osNotifications") return tx.insert(table);
+    const done = Promise.resolve([]);
+    const chain = { onConflictDoNothing: () => done, returning: () => done, then: done.then.bind(done) };
+    return { values: () => chain };
+  };
+}
+
 vi.mock("@/lib/db/client", () => ({
-  getDb: () => ({ transaction: (fn: (tx: unknown) => unknown) => fn(fakeDbHandle.tx) }),
+  getDb: () => ({
+    transaction: (fn: (tx: unknown) => unknown) => fn(fakeDbHandle.tx),
+    insert: notificationSinkInsert(fakeDbHandle.tx as never),
+  }),
 }));
 
 // Las entregas parciales a Codificado (0077) no participan de estos escenarios: el schema simulado no las define.
@@ -280,6 +296,9 @@ vi.mock("@/lib/db/schema", () => {
     productionPedidos: table("productionPedidos", pedidoCols),
     workItemDeliveryLines: table("workItemDeliveryLines", lineCols),
     productionPedidoStatusEvents: table("productionPedidoStatusEvents", []),
+    // Tablas usadas por rutas laterales (vínculo con lote / notificaciones): el fake las ve vacías.
+    asignacionLotes: table("asignacionLotes", ["id", "archived"]),
+    osNotifications: table("osNotifications", []),
   };
 });
 

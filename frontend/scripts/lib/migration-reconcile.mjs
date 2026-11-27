@@ -50,6 +50,9 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0065_mp_weekly_saved_controls": "7047eb2e043f69e620a5aa14dee380b00262e20046d81acf57fd80fd6f3a207f",
   "0066_mp_weekly_saved_product_controls": "7873b1aa830bd86315d148775b7640c558302f87110984aa9f6ff7af6b185b7d",
   "0067_work_item_lote_link": "9d6f05486e88ef73d219d7e1d0b7c02b06cb5c5fc49eae935f880e97dd29c223",
+  // 0068 reordena datos con UPDATE: rejectStatement lo rechaza a propósito, así que la reconciliación NUNCA lo ejecuta
+  // (solo la aplica Drizzle en orden del journal; su `when` es monotónico). Figura acá con su hash pinado para la guarda de revisión.
+  "0068_me_load_order": "adee86e5f65f59e2725fea7a9ddda1ba16f11828d9dc1b7625d40464063764ec",
   "0069_scheduled_delivery_immovable": "55c8696434e68273d361fd181b45ef41b35f43f3b121637a88d7c3aa02e476ab",
   "0070_me_material_pedido_links": "11f24856bec974c0121c72d9a277be8f47fc854ec002cb49d6a06f13bccb9aa8",
   "0071_email_orders": "3fa5294fe522bee90f0241fb5f9eef047f2caab16135f8dc4ef52678454008bd",
@@ -131,7 +134,11 @@ export function rejectStatement(stmt) {
   if (body.includes(";")) return "varias sentencias en una";
   if (!ALLOWED_STATEMENT_PATTERNS.some((re) => re.test(body))) return "no es DDL aditivo idempotente permitido";
   // Se ignoran palabras dentro de literales/identificadores citados al buscar verbos prohibidos.
-  const noQuoted = body.replace(/'(?:[^']|'')*'/g, "''").replace(/"[^"]*"/g, '""');
+  // Las acciones referenciales de una FK (ON DELETE CASCADE, etc.) no son sentencias DELETE/UPDATE: se ignoran al buscar verbos.
+  const noQuoted = body
+    .replace(/'(?:[^']|'')*'/g, "''")
+    .replace(/"[^"]*"/g, '""')
+    .replace(/\bon\s+(?:delete|update)\s+(?:cascade|restrict|no\s+action|set\s+null|set\s+default)\b/gi, " ");
   if (!DROP_NOT_NULL.test(body) && FORBIDDEN.test(noQuoted)) return "contiene una palabra prohibida";
   return null;
 }
@@ -322,6 +329,9 @@ export const REQUIRED_SCHEMA_OBJECTS = Object.freeze([
   { migration: "0065_mp_weekly_saved_controls", object: "mp_weekly_saved_controls" },
   { migration: "0066_mp_weekly_saved_product_controls", object: "mp_weekly_saved_product_controls" },
   { migration: "0067_work_item_lote_link", object: "work_items.asignacion_lote_id" },
+  { migration: "0068_me_load_order", object: "inv_me_ingresos.load_seq" },
+  { migration: "0068_me_load_order", object: "inv_me_salidas.load_seq" },
+  { migration: "0068_me_load_order", object: "inv_me_materials.load_seq" },
 ]);
 
 /** @param {{ query: (text: string, params?: unknown[]) => Promise<any[]>, required?: ReadonlyArray<{migration: string, object: string}> }} opts */

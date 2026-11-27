@@ -358,6 +358,104 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: notificaciones push en Postgres real$
     await s.updatePushSettings(direccion, { globalSendEnabled: false });
   });
 
+  // ───────────────────────── Notificación de prueba (manual, solo Dirección) ─────────────────────────
+  it("notificación de prueba: solo al cliente elegido, con el interruptor global APAGADO, sin tocar pedidos/estado/outbox de pedidos", async () => {
+    const s = await svc();
+    const adm = await admin();
+    const { createPortalUser } = await import("@/lib/portal/user-admin-service");
+    const mk = async (label: string) => {
+      const c = await adm.createClient(produccion, { displayName: `Cliente ${label} ${RUN}`, aliases: [`IT PP ${label} ${RUN}`], emails: [] });
+      const u = await createPortalUser(direccion, { clientId: c.id, username: `pt${label.toLowerCase()}-${RUN}`, password: "Clave-Segura-IT-2026" });
+      const sess = { id: randomUUID(), clientId: c.id, email: null, clientName: `IT PP ${label} ${RUN}`, publicCode: c.publicCode, userId: u.id, username: u.username, mustChangePassword: false, actor: `usuario:${u.username}` } as import("@/lib/portal/auth-service").PortalSession;
+      return { id: c.id, sess };
+    };
+    const C = await mk("C");
+    const D = await mk("D");
+    const E = await mk("E");
+    const send = vi.fn(async (_sub: { endpoint: string }, _payload: string) => undefined);
+
+    // Rechazos: no habilitado en el piloto / sin dispositivos.
+    await expect(s.sendTestPush(direccion, C.id, { sender: send })).rejects.toMatchObject({ status: 409, code: "PUSH_NOT_ENABLED" });
+    await s.setClientPilot(direccion, C.id, true);
+    await s.setClientPilot(direccion, D.id, true);
+    await expect(s.sendTestPush(direccion, C.id, { sender: send })).rejects.toMatchObject({ status: 409, code: "PUSH_NO_DEVICES" });
+    expect(send).not.toHaveBeenCalled();
+    await expect(s.sendTestPush(direccion, C.id, { sender: null })).rejects.toMatchObject({ status: 503, code: "PUSH_UNAVAILABLE" });
+
+    // 403 para todo sector que no sea Dirección.
+    for (const staff of [produccion, administracion, envasado]) await expect(s.sendTestPush(staff, C.id, { sender: send })).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
+
+    await s.savePushSubscription(C.sess, SUB("c-phone"), "Mozilla C1");
+    await s.savePushSubscription(C.sess, SUB("c-dead"), "Mozilla C2");
+    await s.savePushSubscription(D.sess, SUB("d-phone"), "Mozilla D");
+
+    // Foto de lo que NO debe cambiar.
+    expect((await s.getPushSettings()).globalSendEnabled).toBe(false);
+    const snapshot = async () => ({
+      work: await q("select md5(string_agg(t::text, '|' order by id)) as h, count(*)::int as n from work_items t"),
+      state: await q("select md5(coalesce(string_agg(t::text, '|' order by client_id, order_key), '')) as h, count(*)::int as n from portal_push_order_state t"),
+      outbox: await q("select md5(coalesce(string_agg(t::text, '|' order by id), '')) as h, count(*)::int as n from portal_push_outbox t where event_type <> 'prueba'"),
+      settings: await q("select global_send_enabled from portal_push_settings where id = 1"),
+    });
+    const before = await snapshot();
+
+    const deadSend = vi.fn(async (sub: { endpoint: string }) => {
+      if (sub.endpoint === ENDPOINT("c-dead")) throw Object.assign(new Error("Gone"), { statusCode: 410 });
+    });
+    const res = await s.sendTestPush(direccion, C.id, { sender: deadSend });
+    expect(res).toEqual({ sent: 1, failed: 0, removed: 1, devices: 2 });
+    // Solo los dispositivos de C (nunca los de D) y con el texto exacto.
+    expect(deadSend.mock.calls.map((c) => c[0].endpoint).sort()).toEqual([ENDPOINT("c-dead"), ENDPOINT("c-phone")].sort());
+    const payload = JSON.parse(String((deadSend.mock.calls[0] as unknown[])[1]));
+    expect(payload).toMatchObject({ title: "¡Bienvenido a Laboratorio Genus! 🎉", body: "Las notificaciones de tu portal funcionan correctamente. A partir de ahora podrás recibir novedades sobre tus pedidos.", url: "/entregas" });
+    // Baja automática del 410; D intacto.
+    expect(await q("select 1 from portal_push_subscriptions where endpoint = $1", [ENDPOINT("c-dead")])).toEqual([]);
+    expect(await q("select 1 from portal_push_subscriptions where client_id = $1::uuid", [D.id])).toHaveLength(1);
+    // Sin cambios en work_items / estado / outbox de pedidos / interruptor global.
+    expect(await snapshot()).toEqual(before);
+    // Historial de C: tipo «prueba», no leída, abre /entregas; D no lo ve; se puede marcar como leída.
+    const hC = await s.listPushHistory(C.sess);
+    expect(hC.items).toHaveLength(1);
+    expect(hC.items[0]).toMatchObject({ type: "prueba", url: "/entregas", read: false, title: "¡Bienvenido a Laboratorio Genus! 🎉" });
+    expect(hC.unread).toBe(1);
+    expect((await s.listPushHistory(D.sess)).items).toEqual([]);
+    expect(await s.markPushRead(C.sess, [hC.items[0]!.id])).toBe(1);
+    expect((await s.listPushHistory(C.sess)).unread).toBe(0);
+    // El indicador de cola de pedidos no cuenta pruebas.
+    const qi = await s.queueIndicators();
+    expect(await q("select count(*)::int as n from portal_push_outbox where status = 'ENVIADA' and event_type <> 'prueba'")).toEqual([{ n: qi.enviadas }]);
+    // Auditoría con el usuario de Dirección.
+    const au = await q("select actor, actor_kind, detail from portal_audit_events where client_id = $1::uuid and event_type = 'PUSH_PRUEBA_ENVIADA'", [C.id]);
+    expect(au).toHaveLength(1);
+    expect(au[0]).toMatchObject({ actor: direccion.email, actor_kind: "STAFF", detail: { devices: 2, sent: 1, removed: 1 } });
+
+    // Doble clic: dentro de la ventana de 30 s no se reenvía.
+    const calls = deadSend.mock.calls.length;
+    await expect(s.sendTestPush(direccion, C.id, { sender: deadSend })).rejects.toMatchObject({ status: 429, code: "RATE_LIMITED" });
+    expect(deadSend.mock.calls.length).toBe(calls);
+    expect(await q("select 1 from portal_push_outbox where client_id = $1::uuid and event_type = 'prueba'", [C.id])).toHaveLength(1);
+
+    // Aislamiento: la prueba a D (ventana propia) solo llega a D.
+    const sendD = vi.fn(async () => undefined);
+    expect(await s.sendTestPush(direccion, D.id, { sender: sendD })).toMatchObject({ sent: 1, failed: 0 });
+    expect(sendD.mock.calls.map((c) => (c as unknown as [{ endpoint: string }])[0].endpoint)).toEqual([ENDPOINT("d-phone")]);
+
+    // Con el interruptor global ENCENDIDO el envío de prueba tampoco lo modifica.
+    await s.updatePushSettings(direccion, { globalSendEnabled: true });
+    await s.setClientPilot(direccion, E.id, true);
+    await s.savePushSubscription(E.sess, SUB("e-phone"), "Mozilla E");
+    const sendE = vi.fn(async () => undefined);
+    await s.sendTestPush(direccion, E.id, { sender: sendE });
+    expect((await s.getPushSettings()).globalSendEnabled).toBe(true);
+    await s.updatePushSettings(direccion, { globalSendEnabled: false });
+  });
+
+  it("la ruta admin push_test devuelve 403 a quien no es Dirección (el servicio lo valida de nuevo)", async () => {
+    const s = await svc();
+    await expect(s.sendTestPush(produccion, A.id, { sender: vi.fn() })).rejects.toMatchObject({ status: 403 });
+    await expect(s.sendTestPush(direccion, "no-es-uuid", { sender: vi.fn() })).rejects.toMatchObject({ status: 400, code: "VALIDATION" });
+  });
+
   it("la API HTTP exige sesión del portal y mismo origen", async () => {
     const { POST, GET } = await import("@/app/entregas/api/push/[action]/route");
     const ctx = (action: string) => ({ params: Promise.resolve({ action }) });

@@ -54,6 +54,21 @@ export function PortalNotificacionesPanel() {
     }
   }
 
+  // Prueba puntual a un cliente del piloto: no cambia el interruptor global ni toca pedidos.
+  async function actTest(clientId: string, name: string) {
+    setBusy(true);
+    try {
+      const r = await api({ action: "push_test", clientId });
+      if (r.ok) {
+        const d = r.data as { sent?: number; failed?: number };
+        setMsg({ kind: "ok", text: `Notificación de prueba enviada a ${name}: ${d.sent ?? 0} dispositivo(s) enviados, ${d.failed ?? 0} fallidos.` });
+        await load();
+      } else setMsg({ kind: "err", text: String(r.data.error ?? "No se pudo enviar la notificación de prueba.") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!allowed || !data) return null;
   const q = data.queue;
   return (
@@ -97,7 +112,7 @@ export function PortalNotificacionesPanel() {
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm" data-testid="push-clients">
-          <thead><tr className="text-left text-[var(--os-text-muted)]"><th className="py-1 pr-3">Cliente con acceso al portal</th><th className="pr-3">Usuarios</th><th className="pr-3">Dispositivos</th><th className="pr-3">Piloto de notificaciones</th></tr></thead>
+          <thead><tr className="text-left text-[var(--os-text-muted)]"><th className="py-1 pr-3">Cliente con acceso al portal</th><th className="pr-3">Usuarios</th><th className="pr-3">Dispositivos</th><th className="pr-3">Piloto de notificaciones</th><th className="pr-3">Prueba</th></tr></thead>
           <tbody>
             {data.clients.map((c) => (
               <tr key={c.id} className="border-t border-[var(--os-border)]" data-testid="push-client-row">
@@ -111,9 +126,20 @@ export function PortalNotificacionesPanel() {
                     {c.pilotEnabled ? `Habilitado${c.baselineAt ? ` · base ${c.baselineOrders} pedidos` : ""}` : "No habilitado"}
                   </label>
                 </td>
+                <td className="pr-3">
+                  {c.pilotEnabled ? (
+                    <Button type="button" variant="secondary" disabled={busy} data-testid="push-test-send"
+                      onClick={() => {
+                        if (!window.confirm(`Se enviará una notificación REAL de prueba a los ${c.devices} dispositivo(s) suscripto(s) de ${c.name}. ¿Enviar?`)) return;
+                        void actTest(c.id, c.name);
+                      }}>
+                      Enviar notificación de prueba
+                    </Button>
+                  ) : null}
+                </td>
               </tr>
             ))}
-            {data.clients.length === 0 ? <tr><td colSpan={4} className="py-2 text-[var(--os-text-muted)]">No hay clientes con acceso al portal.</td></tr> : null}
+            {data.clients.length === 0 ? <tr><td colSpan={5} className="py-2 text-[var(--os-text-muted)]">No hay clientes con acceso al portal.</td></tr> : null}
           </tbody>
         </table>
       </div>

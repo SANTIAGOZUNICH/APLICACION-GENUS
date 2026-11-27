@@ -31,10 +31,13 @@ function createFakeDb() {
     return true;
   }
 
+  const asignacionLotes = new Map<string, FakeRow>();
+
   function tableFor(name: string): Map<string, FakeRow> {
     if (name === "workItemDeliveries") return workItemDeliveries;
     if (name === "workItemDeliveryLines") return workItemDeliveryLines;
     if (name === "productionPedidos") return productionPedidos;
+    if (name === "asignacionLotes") return asignacionLotes;
     return workItems;
   }
 
@@ -148,12 +151,22 @@ vi.mock("drizzle-orm", async () => {
   };
 });
 
+/** Las notificaciones (os_notifications) son un efecto lateral best-effort: el fake las descarta sin tocar work_items. */
+function notificationSinkInsert(tx: { insert: (t: { __name: string }) => unknown }) {
+  return (table: { __name: string }) => {
+    if (table.__name !== "osNotifications") return tx.insert(table);
+    const done = Promise.resolve([]);
+    const chain = { onConflictDoNothing: () => done, returning: () => done, then: done.then.bind(done) };
+    return { values: () => chain };
+  };
+}
+
 vi.mock("@/lib/db/client", () => ({
   getDb: () => ({
     transaction: (fn: (tx: unknown) => unknown) => fn(fakeDbHandle.tx),
     select: fakeDbHandle.tx.select,
     update: fakeDbHandle.tx.update,
-    insert: fakeDbHandle.tx.insert,
+    insert: notificationSinkInsert(fakeDbHandle.tx as never),
   }),
 }));
 
@@ -277,6 +290,9 @@ vi.mock("@/lib/db/schema", () => {
     operationalOrders: table("operationalOrders", ["id", "orderNumber", "type", "linkedWorkItemId", "version"]),
     productionPedidos: table("productionPedidos", ["id", "op", "estado", "deletedAt"]),
     productionPedidoStatusEvents: table("productionPedidoStatusEvents", []),
+    // Tablas usadas por rutas laterales (vínculo con lote / notificaciones): el fake las ve vacías.
+    asignacionLotes: table("asignacionLotes", ["id", "archived"]),
+    osNotifications: table("osNotifications", []),
     workItemDeliveryLines: table("workItemDeliveryLines", [
       "id", "workItemId", "deliveryId", "idempotencyKey", "status", "quantity",
     ]),

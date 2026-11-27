@@ -9,7 +9,7 @@ import {
 import { createDemoToken } from "@/lib/portal/demo-service";
 import { createPortalUser, listPortalUsers, removePortalUser, resetPortalUserPassword, setPortalUserStatus, updatePortalUser } from "@/lib/portal/user-admin-service";
 import { PortalError } from "@/lib/portal/store";
-import { pushAdminOverview, setClientPilot, updatePushSettings } from "@/lib/portal/push/push-service";
+import { pushAdminOverview, sendTestPush, setClientPilot, updatePushSettings } from "@/lib/portal/push/push-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -58,6 +58,7 @@ export async function POST(request: Request) {
     const clientId = id(b.clientId);
     switch (b.action) {
       case "push_settings": return NextResponse.json({ settings: await updatePushSettings(staff, { globalSendEnabled: b.globalSendEnabled, elaboracionDays: b.elaboracionDays, envasadoDays: b.envasadoDays }) });
+      case "push_test": return NextResponse.json(await sendTestPush(staff, clientId));
       case "push_pilot": return NextResponse.json(await setClientPilot(staff, clientId, b.enabled === true));
       case "create_user": return NextResponse.json(await createPortalUser(staff, { clientId: b.clientId, username: b.username, password: b.password, email: b.email, displayName: b.displayName }), { status: 201 });
       case "activate_user": return NextResponse.json(await setPortalUserStatus(staff, String(b.userId ?? ""), true));
