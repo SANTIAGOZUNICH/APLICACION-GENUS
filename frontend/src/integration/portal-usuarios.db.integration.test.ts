@@ -387,4 +387,60 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: usuario y contraseña en Postgres rea
     expect(c!.confirmed_by_email).toBe(s.actor);
     expect(s.actor).toMatch(/^usuario:compras\.b-/);
   });
+
+  // ───────────────────────── Alta con usuario y contraseña autogenerados ─────────────────────────
+  it("alta autogenerada: usuario desde el nombre del cliente, sin correo, unicidad por sufijo, concurrencia, login, hash bcrypt y permisos", async () => {
+    const { createPortalUser, suggestPortalUsername, resetPortalUserPassword } = await uadmin();
+    const { generateAccessPassword, slugifyUsername } = await import("@/lib/portal/access-credentials");
+    const { resolvePortalSession } = await auth();
+    const adm = await admin();
+    const name = `Cosmética Ñandú ${RUN} Co.`;
+    const base = slugifyUsername(name);
+    expect(base).toBe(`cosmeticanandu${RUN.toLowerCase()}co`);
+    const C = await adm.createClient(produccion, { displayName: name, aliases: [], emails: [] });
+    const D = await adm.createClient(produccion, { displayName: `${name}`.replace("Co.", "Co"), aliases: [], emails: [] }); // mismo slug, otro cliente
+
+    await expect(suggestPortalUsername(produccion, C.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect((await suggestPortalUsername(administracion, C.id)).username).toBe(base);
+
+    const pass1 = generateAccessPassword(12, base);
+    const u1 = await createPortalUser(direccion, { clientId: C.id, username: base, password: pass1, autoSuffix: true }); // sin correo
+    expect(u1.username).toBe(base);
+    expect((await suggestPortalUsername(direccion, D.id)).username).toBe(`${base}2`); // ya existe en otro cliente: sufijo
+    const u2 = await createPortalUser(direccion, { clientId: D.id, username: base, password: generateAccessPassword(12, base), autoSuffix: true });
+    expect(u2.username).toBe(`${base}2`);
+    // sin autoSuffix la colisión sigue siendo un error explícito
+    await expect(createPortalUser(direccion, { clientId: D.id, username: base, password: generateAccessPassword(12, base) })).rejects.toMatchObject({ code: "USERNAME_TAKEN" });
+
+    // carrera: 6 altas simultáneas con la misma base → todas distintas y todas válidas
+    const racers = await Promise.all(Array.from({ length: 6 }, () => createPortalUser(administracion, { clientId: C.id, username: base, password: generateAccessPassword(12, base), autoSuffix: true })));
+    const names = [u1.username, u2.username, ...racers.map((r) => r.username)];
+    expect(new Set(names).size).toBe(names.length);
+    expect(names.every((n) => n.startsWith(base))).toBe(true);
+
+    // login con las credenciales autogeneradas (el cliente puede entrar directo y elegir su propia clave)
+    const first = await login(u1.username, pass1, "198.51.100.61");
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    // bcrypt en DB, clave jamás en claro ni en auditoría
+    const [row] = await q("select password_hash, email from portal_users where id = $1", [u1.id]);
+    expect(String(row!.password_hash)).toMatch(/^\$2[aby]\$/);
+    expect(String(row!.password_hash)).not.toContain(pass1);
+    expect(row!.email).toBeNull();
+    const audit = JSON.stringify(await q("select * from portal_audit_events where client_id in ($1, $2)", [C.id, D.id]));
+    expect(audit).not.toContain(pass1);
+
+    // restablecer: la sesión anterior cae, la nueva clave entra y no se registra
+    const reset = await resetPortalUserPassword(direccion, u1.id);
+    expect(await resolvePortalSession(first.token)).toBeNull();
+    expect((await login(u1.username, pass1, "198.51.100.62")).ok).toBe(false);
+    expect((await login(u1.username, reset.temporaryPassword, "198.51.100.62")).ok).toBe(true);
+    const [row2] = await q("select password_hash from portal_users where id = $1", [u1.id]);
+    expect(String(row2!.password_hash)).toMatch(/^\$2[aby]\$/);
+    expect(JSON.stringify(await q("select * from portal_audit_events where client_id = $1", [C.id]))).not.toContain(reset.temporaryPassword);
+    // otros sectores no crean ni restablecen
+    await expect(createPortalUser(produccion, { clientId: C.id, username: base, autoSuffix: true })).rejects.toMatchObject({ status: 403 });
+    await expect(resetPortalUserPassword(envasado, u1.id)).rejects.toMatchObject({ status: 403 });
+  });
 });
