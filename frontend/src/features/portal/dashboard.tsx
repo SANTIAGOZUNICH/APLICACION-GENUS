@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PortalDeliveryView, PortalOverviewData, PortalProductView } from "@/lib/portal/overview";
+import { useAutoSync } from "@/features/os/operational/lib/use-auto-sync";
+import type { PortalDeliveryView, PortalOrderView, PortalOverviewData, PortalProductView } from "@/lib/portal/overview";
 import type { PortalNotificationView } from "@/lib/portal/data-service";
 import { fmtDate, fmtDateTime, fmtQty } from "./format";
 import { ProductCard } from "./product-card";
@@ -31,6 +32,23 @@ export function DemoBanner({ onReset }: { onReset: () => void }) {
   );
 }
 
+/** Un pedido con todos sus productos: estado del pedido, progreso por producto y una tarjeta por producto. */
+export function OrderBlock({ order: o, products }: { order: PortalOrderView; products: PortalProductView[] }) {
+  return (
+    <article className="gp-order" data-testid="order" data-status={o.status.key} aria-label={o.orderRef ? `Pedido ${o.orderRef}` : "Pedido"}>
+      <header className="gp-order-head">
+        <div>
+          <h3>{o.orderRef ? `Pedido ${o.orderRef}` : "Pedido sin número asignado"}</h3>
+          <div className="gp-meta" data-testid="order-progress">{o.progress.total > 1 || o.partial ? o.progressText : `${products.length} ${products.length === 1 ? "producto" : "productos"}`}</div>
+        </div>
+        <span className={`gp-pill s-${o.status.key}`} data-testid="order-status">{o.status.label}</span>
+      </header>
+      <p className="gp-message" data-testid="order-message">{o.message}</p>
+      <div className="gp-grid">{products.map((p) => <ProductCard key={p.id} product={p} detailHref={`/entregas/producto/${p.id}`} />)}</div>
+    </article>
+  );
+}
+
 export async function logout() {
   try {
     await fetch("/entregas/api/auth/logout", { method: "POST", credentials: "same-origin" });
@@ -39,31 +57,37 @@ export async function logout() {
   }
 }
 
-/** Hook compartido: datos del cliente con refresco al volver a la pestaña y cada 60 s. Sesión vencida → login. */
+/** Cada cuántos segundos se consulta si hubo novedades (solo con la pestaña visible; al volver a ella se consulta en el acto). */
+export const PORTAL_POLL_MS = 15_000;
+
+/**
+ * Hook compartido: datos del cliente SIN recargar la página. Reutiliza `useAutoSync` de GENUS OS (solo lectura; pausado en segundo
+ * plano; al volver a la pestaña, al recuperar conexión o al enfocar la ventana consulta enseguida; no pisa un diálogo abierto).
+ * La consulta es liviana: manda `If-None-Match` con la firma de lo último recibido y el servidor responde 304 si nada cambió.
+ * Solo se vuelve a renderizar si los datos cambiaron. Sesión vencida → login.
+ */
 export function usePortalData(initial: ClientPayload) {
   const [data, setData] = useState(initial);
-  const refresh = useCallback(async () => {
-    try {
-      const res = await fetch("/entregas/api/overview", { credentials: "same-origin", cache: "no-store" });
-      if (res.status === 401) {
-        window.location.assign("/entregas");
-        return;
-      }
-      if (res.ok) setData((await res.json()) as ClientPayload);
-    } catch {
-      /* sin conexión: se conservan los datos ya cargados */
+  const etag = useRef<string | null>(null);
+  const run = useCallback(async () => {
+    const res = await fetch("/entregas/api/overview", { credentials: "same-origin", cache: "no-store", headers: etag.current ? { "If-None-Match": etag.current } : {} });
+    if (res.status === 304) return;
+    if (res.status === 401 || res.status === 403) {
+      window.location.assign("/entregas");
+      return;
     }
+    if (!res.ok) throw new Error("No se pudo actualizar: se reintenta solo.");
+    etag.current = res.headers.get("ETag");
+    const next = (await res.json()) as ClientPayload;
+    setData((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
   }, []);
-  useEffect(() => {
-    const t = setInterval(() => void refresh(), 60_000);
-    const onVis = () => document.visibilityState === "visible" && void refresh();
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      clearInterval(t);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [refresh]);
-  return { data, refresh };
+  const sync = useAutoSync({ intervalMs: PORTAL_POLL_MS, run });
+  const { syncNow } = sync;
+  const refresh = useCallback(async () => {
+    etag.current = null;
+    await syncNow(true);
+  }, [syncNow]);
+  return { data, refresh, lastSyncAt: sync.lastSyncAt, syncError: sync.error };
 }
 
 function Bell({ notifications, onRead }: { notifications: PortalNotificationView[]; onRead: () => void }) {
@@ -119,7 +143,7 @@ function DeliveryRow({ d, onConfirm }: { d: PortalDeliveryView; onConfirm: (id: 
 }
 
 export function Dashboard({ initial, contact }: { initial: ClientPayload; contact: Contact }) {
-  const { data, refresh } = usePortalData(initial);
+  const { data, refresh, lastSyncAt, syncError } = usePortalData(initial);
   const [dialog, setDialog] = useState<string | null>(null);
   const [localRead, setLocalRead] = useState(false);
   const s = data.summary;
@@ -151,12 +175,18 @@ export function Dashboard({ initial, contact }: { initial: ClientPayload; contac
           <div className="gp-tile is-ready"><b data-testid="sum-ready">{s.listos}</b><span>Listos para entregar</span></div>
         </section>
 
-        <section className="gp-section" aria-labelledby="gp-prod">
-          <h2 id="gp-prod">Tus productos</h2>
+        <p className="gp-note gp-sync" data-testid="sync-status" data-state={syncError ? "error" : lastSyncAt ? "ok" : "idle"} role="status" aria-live="polite">
+          {syncError ? `Sin conexión: mostramos lo último que recibimos (${syncError})` : lastSyncAt ? `Actualizado ${lastSyncAt.toLocaleTimeString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", hour12: false, hour: "2-digit", minute: "2-digit" })} h · se actualiza solo` : "Se actualiza solo"}
+        </p>
+
+<section className="gp-section" aria-labelledby="gp-prod">
+          <h2 id="gp-prod">Tus pedidos</h2>
           {products.length === 0 ? (
             <div className="gp-empty" data-testid="no-products">Por ahora no tenés producciones en curso. Cuando haya novedades, las vas a ver acá.</div>
           ) : (
-            <div className="gp-grid">{products.map((p) => <ProductCard key={p.id} product={p} detailHref={`/entregas/producto/${p.id}`} />)}</div>
+            <div className="gp-orders">
+              {data.orders.map((o) => <OrderBlock key={o.id} order={o} products={products.filter((p) => o.productIds.includes(p.id))} />)}
+            </div>
           )}
         </section>
 

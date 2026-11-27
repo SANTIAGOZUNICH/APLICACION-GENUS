@@ -378,7 +378,7 @@ const BASE_SECTOR_DEFINITIONS: SectorDefinition[] = [
     visibleEntities: ["pedido", "oa", "oe"],
     workItemSources: ["pedidos_2026"],
     allowedActions: ["Consultar entregas", "Consultar remitos", "Consultar cantidades entregadas", "Registrar facturación", "Consultar facturación"],
-    sidebarItems: ["control_facturacion", "dashboard", "entregados", "entregas", "remitos", "avisos", "configuracion"],
+    sidebarItems: ["control_facturacion", "dashboard", "entregados", "entregas", "remitos", "avisos", "portal_clientes", "configuracion"],
     creamyContext: {
       role: "Copiloto administrativo",
       topics: ["entregas", "remitos", "facturación"],

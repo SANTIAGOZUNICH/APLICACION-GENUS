@@ -30,10 +30,15 @@ export async function readJson(request: Request): Promise<Record<string, unknown
   }
 }
 
-export async function requireSession(request: Request): Promise<{ session: PortalSession; token: string }> {
+/**
+ * Sesión del cliente (cookie). Un usuario con contraseña TEMPORAL no puede ver ni hacer nada hasta elegir una propia:
+ * solo el endpoint de cambio de contraseña pasa `allowPasswordChange`.
+ */
+export async function requireSession(request: Request, opts: { allowPasswordChange?: boolean } = {}): Promise<{ session: PortalSession; token: string }> {
   const token = parsePortalCookie(request.headers.get("cookie"));
   const session = await resolvePortalSession(token);
   if (!token || !session) throw new PortalError("Tu sesión venció. Ingresá de nuevo.", 401, "NO_SESSION");
+  if (session.mustChangePassword && !opts.allowPasswordChange) throw new PortalError("Tenés que elegir una contraseña nueva antes de continuar.", 403, "PASSWORD_CHANGE_REQUIRED");
   return { session, token };
 }
 

@@ -28,7 +28,23 @@ export const LIMITS = {
   cooldownSeconds: 30,
 };
 
-export type PortalSession = { id: string; clientId: string; email: string; clientName: string; publicCode: string };
+export type PortalSession = {
+  id: string;
+  clientId: string;
+  /** Correo con el que ingresó (sesión por correo) o el correo OPCIONAL del usuario con contraseña; null si no tiene. */
+  email: string | null;
+  clientName: string;
+  publicCode: string;
+  /** Usuario con contraseña (portal_users) dueño de la sesión; null en las sesiones por correo. */
+  userId: string | null;
+  username: string | null;
+  /** El usuario debe elegir una contraseña nueva antes de ver nada (la actual es temporal). */
+  mustChangePassword: boolean;
+  /** Etiqueta estable para constancias y auditoría: el correo, o «usuario:<nombre>» si no hay correo. */
+  actor: string;
+};
+
+export const actorLabel = (email: string | null, username: string | null): string => email ?? (username ? `usuario:${username}` : "desconocido");
 
 type Target = { clientId: string; clientName: string; email: string } | null;
 
@@ -128,7 +144,12 @@ async function createSession(db: SqlExec, t: { clientId: string; clientName: str
     returning expires_at`)).rows as Row[];
   await db.execute(sql`update portal_authorized_emails set last_login_at = now() where client_id = ${t.clientId}::uuid and email = ${t.email} and removed_at is null`);
   await audit(db, { clientId: t.clientId, type: "LOGIN_OK", kind: "CLIENTE", actor: t.email, ipHash });
-  return { ok: true, token, expiresAt: isoOrNull(rows[0]?.expires_at)!, session: { id, clientId: t.clientId, email: t.email, clientName: t.clientName, publicCode: t.publicCode } };
+  return {
+    ok: true,
+    token,
+    expiresAt: isoOrNull(rows[0]?.expires_at)!,
+    session: { id, clientId: t.clientId, email: t.email, clientName: t.clientName, publicCode: t.publicCode, userId: null, username: null, mustChangePassword: false, actor: t.email },
+  };
 }
 
 /** Verifica código de cliente + correo + código temporal y abre la sesión. Todos los fallos son indistinguibles. */
@@ -193,34 +214,56 @@ export async function verifyLoginLink(input: { token: unknown; headers: Headers 
   return createSession(db, { clientId: String(info[0].client_id), clientName: String(info[0].display_name), email: String(info[0].email), publicCode: String(info[0].public_code) }, ipHash, input.headers.get("user-agent"));
 }
 
-/** Resuelve la sesión del portal desde el token de la cookie. Revalida cliente y correo en cada llamada. */
+/**
+ * Resuelve la sesión del portal desde el token de la cookie. Revalida cliente y correo/usuario en cada llamada: suspender el
+ * cliente, deshabilitar el acceso, dar de baja el correo o DESACTIVAR el usuario invalida la sesión en el acto.
+ */
 export async function resolvePortalSession(token: string | null): Promise<PortalSession | null> {
   if (!token) return null;
   const db = requireDb();
   const rows = (await db.execute(sql`
-    select s.id, s.client_id, s.email, s.last_seen_at, c.display_name, c.public_code
+    select s.id, s.client_id, s.email, s.user_id, s.last_seen_at, c.display_name, c.public_code,
+           u.username as u_username, u.email as u_email, coalesce(u.must_change_password, false) as must_change
       from portal_sessions s
       join portal_clients c on c.id = s.client_id and c.status = 'ACTIVO' and c.access_enabled
-      join portal_authorized_emails e on e.client_id = s.client_id and e.email = s.email and e.removed_at is null and e.status = 'ACTIVO'
+      left join portal_authorized_emails e on s.user_id is null and e.client_id = s.client_id and e.email = s.email and e.removed_at is null and e.status = 'ACTIVO'
+      left join portal_users u on u.id = s.user_id and u.client_id = s.client_id and u.removed_at is null and u.status = 'ACTIVO'
      where s.token_hash = ${sha256(token)} and s.revoked_at is null and s.expires_at > now()
+       and ((s.user_id is null and e.id is not null) or (s.user_id is not null and u.id is not null))
      limit 1`)).rows as Row[];
   const r = rows[0];
   if (!r) return null;
   const seen = new Date(String(r.last_seen_at)).getTime();
   if (Date.now() - seen > 5 * 60_000) await db.execute(sql`update portal_sessions set last_seen_at = now() where id = ${String(r.id)}::uuid`).catch(() => undefined);
-  return { id: String(r.id), clientId: String(r.client_id), email: String(r.email), clientName: String(r.display_name), publicCode: String(r.public_code) };
+  const userId = r.user_id ? String(r.user_id) : null;
+  const username = userId ? String(r.u_username) : null;
+  const email = userId ? (r.u_email ? String(r.u_email) : null) : String(r.email);
+  return {
+    id: String(r.id),
+    clientId: String(r.client_id),
+    email,
+    clientName: String(r.display_name),
+    publicCode: String(r.public_code),
+    userId,
+    username,
+    mustChangePassword: r.must_change === true,
+    actor: actorLabel(email, username),
+  };
 }
 
 export async function logoutPortalSession(token: string | null): Promise<void> {
   if (!token) return;
   const db = requireDb();
   const rows = (await db.execute(sql`
-    update portal_sessions set revoked_at = now(), revoked_reason = 'logout' where token_hash = ${sha256(token)} and revoked_at is null returning client_id, email`)).rows as Row[];
-  if (rows[0]) await audit(db, { clientId: String(rows[0].client_id), type: "LOGOUT", kind: "CLIENTE", actor: String(rows[0].email) });
+    update portal_sessions set revoked_at = now(), revoked_reason = 'logout' where token_hash = ${sha256(token)} and revoked_at is null returning client_id, email, user_id`)).rows as Row[];
+  if (rows[0]) await audit(db, { clientId: String(rows[0].client_id), type: "LOGOUT", kind: "CLIENTE", actor: rows[0].email ? String(rows[0].email) : rows[0].user_id ? `usuario:${String(rows[0].user_id)}` : null });
 }
 
-/** Cierra todas las sesiones de un cliente (suspensión) o de un correo (bloqueo/baja). */
-export async function revokeSessions(db: SqlExec, scope: { clientId: string; email?: string }, reason: string): Promise<number> {
+/** Cierra todas las sesiones de un cliente (suspensión), de un correo (bloqueo/baja) o de un usuario con contraseña. */
+export async function revokeSessions(db: SqlExec, scope: { clientId: string; email?: string; userId?: string }, reason: string): Promise<number> {
+  if (scope.userId) {
+    return (await db.execute(sql`update portal_sessions set revoked_at = now(), revoked_reason = ${reason} where client_id = ${scope.clientId}::uuid and user_id = ${scope.userId}::uuid and revoked_at is null returning id`)).rows.length;
+  }
   const rows = scope.email
     ? (await db.execute(sql`update portal_sessions set revoked_at = now(), revoked_reason = ${reason} where client_id = ${scope.clientId}::uuid and email = ${scope.email} and revoked_at is null returning id`)).rows
     : (await db.execute(sql`update portal_sessions set revoked_at = now(), revoked_reason = ${reason} where client_id = ${scope.clientId}::uuid and revoked_at is null returning id`)).rows;

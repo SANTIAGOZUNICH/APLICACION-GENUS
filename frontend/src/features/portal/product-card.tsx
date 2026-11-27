@@ -6,21 +6,25 @@ import { TruckTracker } from "./truck";
 
 export function ProductCard({ product: p, detailHref, compact = false }: { product: PortalProductView; detailHref?: string; compact?: boolean }) {
   const q = p.quantities;
-  const showEta = p.countdown && (p.stage === "ELABORACION" || p.stage === "ENVASADO");
+  const c = p.commercial;
+  const cancelled = c.id === 0;
+  const showEta = p.countdown && c.id >= 3 && c.id <= 4;
+  const hasFigures = c.id >= 3;
   return (
-    <article className="gp-card" data-testid="product-card" data-stage={p.stage} aria-label={p.product}>
+    <article className="gp-card" data-testid="product-card" data-stage={p.stage} data-status={c.key} aria-label={p.product}>
       <div className="gp-card-head">
         <div>
           <h3>{p.product}</h3>
           <div className="gp-meta">{p.orderRef ? `Pedido ${p.orderRef}` : "Pedido sin número asignado"}</div>
         </div>
-        <span className={`gp-pill s-${p.stage}`} data-testid="stage-pill">{p.stageLabel}</span>
+        <span className={`gp-pill s-${c.key}`} data-testid="stage-pill">{c.label}</span>
       </div>
-      <TruckTracker productId={p.id} stageIndex={p.stageIndex} withinPct={p.countdown?.progressPct ?? 0} />
+      {cancelled ? null : <TruckTracker productId={p.id} stageIndex={c.id - 1} withinPct={p.countdown?.progressPct ?? 0} />}
       <p className="gp-message" data-testid="stage-message">{p.message}</p>
+      {cancelled || c.id < 2 ? null : (
       <div className="gp-facts" data-testid="facts">
         <div className="gp-fact"><span>Solicitado</span><b>{q.mixedUnits ? "Varias unidades" : fmtQty(q.requested, q.unit)}</b></div>
-        {!compact && p.stage !== "ELABORACION" ? <div className="gp-fact" data-testid="fact-available"><span>Disponible</span><b>{q.mixedUnits ? "—" : fmtQty(q.available, q.unit)}</b></div> : null}
+        {!compact && hasFigures && p.stage !== "ELABORACION" ? <div className="gp-fact" data-testid="fact-available"><span>Disponible</span><b>{q.mixedUnits ? "—" : fmtQty(q.available, q.unit)}</b></div> : null}
         {!compact ? (
           <>
             <div className="gp-fact" data-testid="fact-delivered"><span>Entregado</span><b>{q.mixedUnits ? "—" : fmtQty(q.delivered, q.unit)}</b></div>
@@ -28,6 +32,7 @@ export function ProductCard({ product: p, detailHref, compact = false }: { produ
           </>
         ) : null}
       </div>
+      )}
       {p.availableSince && q.available > 0 ? (
         <p className="gp-note" data-testid="available-since" style={{ margin: "2px 0 0" }}>Disponible desde el {fmtDateTime(p.availableSince)}</p>
       ) : null}

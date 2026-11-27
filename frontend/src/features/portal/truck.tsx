@@ -2,24 +2,32 @@
 
 import { useEffect, useRef, useState } from "react";
 
-const STOPS = [12.5, 37.5, 62.5, 87.5];
-const LABELS = ["Elaboración", "Envasado", "Listo para entregar", "Entregado"];
+/** Los 6 estados comerciales (cortos para que entren en el celular; el nombre completo va en el aria-label y en la etiqueta del estado). */
+const LABELS = ["Recibido", "Programado", "Elaboración", "Envasado", "Listo", "Entregado"];
+const FULL_LABELS = ["Pedido recibido", "Pedido programado", "En elaboración", "En envasado", "Listo para entregar", "Entregado"];
+const N = LABELS.length;
+const STOPS = LABELS.map((_, i) => ((i + 0.5) * 100) / N);
 
 export function stopPosition(stageIndex: number, withinPct: number): number {
-  const base = STOPS[Math.min(3, Math.max(0, stageIndex))]!;
-  const within = stageIndex <= 1 ? Math.min(1, Math.max(0, withinPct / 100)) * 9 : 0;
-  return base + within;
+  const i = Math.min(N - 1, Math.max(0, stageIndex));
+  // Dentro de Elaboración y Envasado el camión avanza hacia la parada siguiente según el plazo estimado.
+  const within = i === 2 || i === 3 ? Math.min(1, Math.max(0, withinPct / 100)) * (100 / N) * 0.55 : 0;
+  return STOPS[i]! + within;
 }
 
 const ICONS: Record<number, string> = {
+  // pedido recibido (documento con tilde)
+  0: "M7 3h7l4 4v14H7zM14 3v4h4M9.5 14l2 2 3.5-4",
+  // programado (calendario)
+  1: "M4.5 6.5h15V20h-15zM4.5 10.5h15M8.5 4v4M15.5 4v4",
   // frasco de laboratorio
-  0: "M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3M8 15h8",
+  2: "M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3M8 15h8",
   // envase
-  1: "M10 2.5h4V5l1.6 2.6V19a1.6 1.6 0 0 1-1.6 1.6h-4A1.6 1.6 0 0 1 8.4 19V7.6L10 5zM8.4 12h7.2",
+  3: "M10 2.5h4V5l1.6 2.6V19a1.6 1.6 0 0 1-1.6 1.6h-4A1.6 1.6 0 0 1 8.4 19V7.6L10 5zM8.4 12h7.2",
   // cajas
-  2: "M3.5 8.5 12 4l8.5 4.5v7L12 20l-8.5-4.5zM3.5 8.5 12 13l8.5-4.5M12 13v7",
+  4: "M3.5 8.5 12 4l8.5 4.5v7L12 20l-8.5-4.5zM3.5 8.5 12 13l8.5-4.5M12 13v7",
   // llegada
-  3: "M3 11 12 3l9 8M5.5 9.5V20h13V9.5M10 20v-5.5h4V20",
+  5: "M3 11 12 3l9 8M5.5 9.5V20h13V9.5M10 20v-5.5h4V20",
 };
 
 export function TruckSvg() {
@@ -39,8 +47,9 @@ export function TruckSvg() {
   );
 }
 
-/** Camino de 4 etapas con el camión GENUS. Anima solo cuando la etapa cambia (y respeta «reducir movimiento» por CSS). */
+/** Camino de 6 estados comerciales con el camión GENUS. Anima solo cuando la etapa cambia (y respeta «reducir movimiento» por CSS). */
 export function TruckTracker({ productId, stageIndex, withinPct, labels = LABELS }: { productId: string; stageIndex: number; withinPct: number; labels?: string[] }) {
+  const last = labels.length - 1;
   const target = stopPosition(stageIndex, withinPct);
   const [left, setLeft] = useState(target);
   const [moving, setMoving] = useState(false);
@@ -76,21 +85,21 @@ export function TruckTracker({ productId, stageIndex, withinPct, labels = LABELS
     const raf = requestAnimationFrame(() => requestAnimationFrame(() => setLeft(target)));
     const t = setTimeout(() => {
       setMoving(false);
-      if (stageIndex === 3) setArrived(true);
+      if (stageIndex === last) setArrived(true);
     }, 1500);
     return () => {
       cancelAnimationFrame(raf);
       clearTimeout(t);
     };
-  }, [productId, target, stageIndex]);
+  }, [productId, target, stageIndex, last]);
 
   return (
-    <div className="gp-road" role="img" aria-label={`Etapa actual: ${labels[stageIndex]}`} data-testid="truck-tracker" data-stage={stageIndex}>
+    <div className="gp-road" role="img" aria-label={`Estado actual: ${FULL_LABELS[stageIndex] ?? labels[stageIndex]}`} data-testid="truck-tracker" data-stage={stageIndex}>
       <div className="gp-road-line"><i style={{ width: `${left}%` }} /></div>
       <div className={`gp-truck${moving ? " is-moving" : ""}${arrived ? " is-arrived" : ""}`} style={{ left: `${left}%` }} data-testid="truck"><TruckSvg /></div>
       <div className="gp-stops">
         {labels.map((label, i) => (
-          <div key={label} className={`gp-stop ${i < stageIndex || (stageIndex === 3 && i === 3) ? "done" : i === stageIndex ? "current" : ""}`} style={{ left: `${STOPS[i]}%` }}>
+          <div key={label} className={`gp-stop ${i < stageIndex || (stageIndex === last && i === last) ? "done" : i === stageIndex ? "current" : ""}`} style={{ left: `${STOPS[i]}%`, width: `${100 / N}%` }}>
             <svg viewBox="0 0 24 24"><path d={ICONS[i]!} /></svg>
             <small>{label}</small>
           </div>

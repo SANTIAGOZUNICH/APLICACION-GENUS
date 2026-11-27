@@ -72,13 +72,13 @@ check("indicación discreta «Modo demostración»", (await demoPage.getByTestId
 const cards = demoPage.getByTestId("product-card");
 check("seis productos ficticios", (await cards.count()) === 6);
 const card = (name) => cards.filter({ hasText: name });
-check("crema facial en elaboración con 8 días hábiles restantes", (await card("Crema facial").getByTestId("stage-pill").innerText()) === "Elaboración" && /\b8 días hábiles/.test(await card("Crema facial").getByTestId("eta").innerText()));
-check("shampoo en envasado con 3 días hábiles restantes", (await card("Shampoo").getByTestId("stage-pill").innerText()) === "Envasado" && /\b3 días hábiles/.test(await card("Shampoo").getByTestId("eta").innerText()));
+check("crema facial en elaboración con 8 días hábiles restantes", (await card("Crema facial").getByTestId("stage-pill").innerText()) === "En elaboración" && /\b8 días hábiles/.test(await card("Crema facial").getByTestId("eta").innerText()));
+check("shampoo en envasado con 3 días hábiles restantes", (await card("Shampoo").getByTestId("stage-pill").innerText()) === "En envasado" && /\b3 días hábiles/.test(await card("Shampoo").getByTestId("eta").innerText()));
 check("sérum listo para entregar", (await card("Sérum").getByTestId("stage-pill").innerText()) === "Listo para entregar");
 const parcialNote = await card("Acondicionador").getByTestId("partial-note").innerText();
 check("disponibilidad y entrega parciales: solicitado 5.000 · disponible 1.500 · entregado 2.000 · pendiente 1.500", ["5.000", "1.500", "2.000"].every((n) => parcialNote.includes(n)) && /disponible 1\.500/.test(parcialNote) && /pendiente 1\.500/.test(parcialNote), parcialNote);
 check("la tarjeta muestra los cuatro datos y desde cuándo está disponible", (await card("Acondicionador").getByTestId("fact-available").innerText()).includes("1.500") && (await card("Acondicionador").getByTestId("fact-pending").innerText()).includes("1.500") && (await card("Acondicionador").getByTestId("available-since").count()) === 1);
-check("el pedido con solo una parte lista NO figura como «Listo para entregar»", (await card("Acondicionador").getByTestId("stage-pill").innerText()) === "Envasado");
+check("el pedido con solo una parte lista NO figura como «Listo para entregar»", (await card("Acondicionador").getByTestId("stage-pill").innerText()) === "En envasado");
 check("entregado con recepción pendiente y entregado con recepción confirmada", (await demoPage.locator('[data-testid="delivery-row"]').filter({ hasText: "Tónico" }).getByTestId("confirm-receipt").count()) === 1 && (await demoPage.locator('[data-testid="delivery-row"]').filter({ hasText: "Mascarilla" }).getByTestId("delivery-confirmed").count()) === 1);
 check("camión GENUS en las seis tarjetas, con progreso", (await demoPage.getByTestId("truck").count()) === 6 && (await demoPage.getByTestId("truck-tracker").count()) === 6);
 check("historial de entregas y notificaciones", (await demoPage.locator('[data-testid="delivery-row"]').count()) >= 3 && (await demoPage.getByTestId("bell-count").innerText()) === "2");
@@ -153,6 +153,7 @@ check("POST con origen ajeno al canje rechazado", (await (await pwRequest.newCon
 const rc = await browser.newContext({ baseURL: BASE, viewport: { width: 1280, height: 800 } });
 const rp = await rc.newPage();
 await rp.goto("/entregas");
+await rp.getByTestId("tab-correo").click();
 await rp.getByLabel("Código de cliente").fill(real.publicCode);
 await rp.getByLabel("Correo autorizado").fill(REAL_EMAIL);
 await rp.getByRole("button", { name: "Enviarme un código" }).click();

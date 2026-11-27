@@ -24,6 +24,7 @@ export default async function ProductoPage({ params }: { params: Promise<{ id: s
   const session = await resolvePortalSession(token && /^[A-Za-z0-9_-]{20,200}$/.test(token) ? token : null).catch(() => null);
   // Redirect relativo: nunca expone el host interno cuando el portal se sirve detrás del dominio institucional.
   if (!session) redirect("/entregas");
+  if (session.mustChangePassword) redirect("/entregas");
   const { overview } = await loadPortalOverview(session.clientId);
   const initial: ClientPayload = { ...toClientPayload(overview), client: { name: session.clientName, code: session.publicCode }, notifications: await listNotifications(session.clientId) };
   const c = portalContact();
