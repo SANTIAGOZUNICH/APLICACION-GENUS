@@ -203,6 +203,7 @@ await os.locator('button[type="submit"]').click();
 await os.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 30000 });
 await os.getByText("Portal de Clientes").first().click();
 await os.getByTestId("portal-users").waitFor({ timeout: 30000 });
+await os.getByTestId("user-row").filter({ hasText: USER_A }).waitFor({ timeout: 30000 }); // el listado carga aparte del panel
 check("GENUS OS: Dirección ve «Usuarios del portal» con el último acceso", (await os.getByTestId("user-row").filter({ hasText: USER_A }).count()) === 1 && !/nunca/.test(await os.getByTestId("user-row").filter({ hasText: USER_A }).innerText()));
 await os.getByTestId("user-form").getByLabel("Cliente").selectOption(idB);
 await os.getByTestId("user-form").getByLabel("Usuario", { exact: true }).fill(`panel-${RUN.toLowerCase()}`);

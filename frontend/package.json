@@ -68,7 +68,9 @@
     "test:e2e:pedidos-op-db": "bash scripts/e2e/run-pedidos-op-db-local.sh",
     "test:e2e:pedidos-op": "bash scripts/e2e/run-pedidos-op-local.sh",
     "test:e2e:portal-usuarios-db": "bash scripts/e2e/run-portal-usuarios-db-local.sh",
-    "test:e2e:portal-usuarios": "bash scripts/e2e/run-portal-usuarios-e2e-local.sh"
+    "test:e2e:portal-usuarios": "bash scripts/e2e/run-portal-usuarios-e2e-local.sh",
+    "test:e2e:portal-push-db": "bash scripts/e2e/run-portal-push-db-local.sh",
+    "test:e2e:portal-push": "bash scripts/e2e/run-portal-push-e2e-local.sh"
   },
   "engines": {
     "node": ">=20"
@@ -103,6 +105,7 @@
     "react-dom": "19.2.4",
     "server-only": "^0.0.1",
     "tailwind-merge": "^3.6.0",
+    "web-push": "^3.6.7",
     "ws": "^8.21.1",
     "xlsx": "^0.18.5"
   },
@@ -117,6 +120,7 @@
     "@types/node": "^20.19.43",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.1",
     "dotenv-cli": "^11.0.0",
     "drizzle-kit": "^0.31.10",

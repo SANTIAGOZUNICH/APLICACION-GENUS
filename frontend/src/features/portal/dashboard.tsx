@@ -8,6 +8,9 @@ import { fmtDate, fmtDateTime, fmtQty } from "./format";
 import { ProductCard } from "./product-card";
 import { ReceiptDialog } from "./receipt-dialog";
 import { PortalHeader } from "./shell";
+import { AppPanel } from "./pwa/app-panel";
+import { cleanupOnLogout, type PushHistoryItem } from "./pwa/push-client";
+import { usePushInbox } from "./pwa/use-push-inbox";
 
 export type ClientPayload = Omit<PortalOverviewData, "ready"> & { client: { name: string; code: string }; notifications: PortalNotificationView[]; demo?: boolean };
 export type Contact = { email: string; whatsappUrl: string; whatsappLabel: string };
@@ -35,7 +38,7 @@ export function DemoBanner({ onReset }: { onReset: () => void }) {
 /** Un pedido con todos sus productos: estado del pedido, progreso por producto y una tarjeta por producto. */
 export function OrderBlock({ order: o, products }: { order: PortalOrderView; products: PortalProductView[] }) {
   return (
-    <article className="gp-order" data-testid="order" data-status={o.status.key} aria-label={o.orderRef ? `Pedido ${o.orderRef}` : "Pedido"}>
+    <article className="gp-order" id={`pedido-${o.id}`} data-testid="order" data-status={o.status.key} aria-label={o.orderRef ? `Pedido ${o.orderRef}` : "Pedido"}>
       <header className="gp-order-head">
         <div>
           <h3>{o.orderRef ? `Pedido ${o.orderRef}` : "Pedido sin número asignado"}</h3>
@@ -51,6 +54,7 @@ export function OrderBlock({ order: o, products }: { order: PortalOrderView; pro
 
 export async function logout() {
   try {
+    await cleanupOnLogout();
     await fetch("/entregas/api/auth/logout", { method: "POST", credentials: "same-origin" });
   } finally {
     window.location.assign("/entregas");
@@ -90,9 +94,10 @@ export function usePortalData(initial: ClientPayload) {
   return { data, refresh, lastSyncAt: sync.lastSyncAt, syncError: sync.error };
 }
 
-function Bell({ notifications, onRead }: { notifications: PortalNotificationView[]; onRead: () => void }) {
+function Bell({ notifications, onRead, push, onPushRead }: { notifications: PortalNotificationView[]; onRead: () => void; push: PushHistoryItem[]; onPushRead: (ids: string[] | "all") => void }) {
   const [open, setOpen] = useState(false);
-  const unread = notifications.filter((n) => !n.read).length;
+  const pushUnread = push.filter((n) => !n.read).length;
+  const unread = notifications.filter((n) => !n.read).length + pushUnread;
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -103,7 +108,7 @@ function Bell({ notifications, onRead }: { notifications: PortalNotificationView
   async function toggle() {
     const next = !open;
     setOpen(next);
-    if (next && unread) {
+    if (next && notifications.some((n) => !n.read)) {
       await fetch("/entregas/api/notifications", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
       onRead();
     }
@@ -116,8 +121,16 @@ function Bell({ notifications, onRead }: { notifications: PortalNotificationView
       </button>
       {open ? (
         <div className="gp-pop" role="region" aria-label="Notificaciones">
-          {notifications.length === 0 ? <div className="gp-empty">Todavía no tenés notificaciones.</div> : (
+          {pushUnread > 0 ? <button type="button" className="gp-link-btn gp-pop-all" onClick={() => onPushRead("all")} data-testid="push-read-all">Marcar todas como leídas</button> : null}
+          {notifications.length === 0 && push.length === 0 ? <div className="gp-empty">Todavía no tenés notificaciones.</div> : (
             <ul className="gp-list">
+              {push.map((n) => (
+                <li key={`push-${n.id}`} className={`gp-row${n.read ? " read" : " unread"}`} data-testid="push-item" data-read={n.read ? "1" : "0"}>
+                  <a href={n.url} onClick={() => { if (!n.read) onPushRead([n.id]); setOpen(false); }} style={{ color: "inherit", textDecoration: "none" }}>
+                    <b>{n.title}</b><div className="gp-meta" style={{ whiteSpace: "pre-line" }}>{n.body}</div><div className="gp-note">{fmtDateTime(n.createdAt)}</div>
+                  </a>
+                </li>
+              ))}
               {notifications.map((n) => (
                 <li key={n.id} className={`gp-row${n.read ? "" : " unread"}`}><div><b>{n.title}</b><div className="gp-meta">{n.body}</div><div className="gp-note">{fmtDateTime(n.createdAt)}</div></div></li>
               ))}
@@ -146,7 +159,23 @@ export function Dashboard({ initial, contact }: { initial: ClientPayload; contac
   const { data, refresh, lastSyncAt, syncError } = usePortalData(initial);
   const [dialog, setDialog] = useState<string | null>(null);
   const [localRead, setLocalRead] = useState(false);
+  const inbox = usePushInbox(!data.demo);
   const s = data.summary;
+  // Al tocar una notificación se abre el pedido (#pedido-<id>): se lo muestra y resalta, también si la app ya estaba abierta.
+  useEffect(() => {
+    const go = () => {
+      const h = window.location.hash;
+      if (!h.startsWith("#pedido-")) return;
+      const el = document.getElementById(h.slice(1));
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      el.classList.add("gp-order-focus");
+      window.setTimeout(() => el.classList.remove("gp-order-focus"), 4000);
+    };
+    go();
+    window.addEventListener("hashchange", go);
+    return () => window.removeEventListener("hashchange", go);
+  }, [data.orders.length]);
   const notifications = localRead ? data.notifications.map((n) => ({ ...n, read: true })) : data.notifications;
   const products: PortalProductView[] = data.products;
 
@@ -156,7 +185,7 @@ export function Dashboard({ initial, contact }: { initial: ClientPayload; contac
         demo={data.demo}
         right={
           <>
-            <Bell notifications={notifications} onRead={() => setLocalRead(true)} />
+            <Bell notifications={notifications} onRead={() => setLocalRead(true)} push={inbox.items} onPushRead={(ids) => void inbox.read(ids)} />
             <button className="gp-btn gp-btn-ghost gp-btn-sm" onClick={() => void logout()} data-testid="logout">Salir</button>
           </>
         }
@@ -206,6 +235,8 @@ export function Dashboard({ initial, contact }: { initial: ClientPayload; contac
             </div>
           </section>
         </div>
+
+        {data.demo ? null : <div className="gp-section"><AppPanel /></div>}
 
         <footer className="gp-footer" data-testid="disclaimer">{data.disclaimer}</footer>
       </main>

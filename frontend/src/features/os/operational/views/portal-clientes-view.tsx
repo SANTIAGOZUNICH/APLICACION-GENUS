@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import type { AdminClient } from "@/lib/portal/admin-service";
 import { PortalUsuariosPanel } from "./portal-usuarios-panel";
+import { PortalNotificacionesPanel } from "./portal-notificaciones-panel";
 
 type Json = Record<string, unknown>;
 type Problems = {
@@ -175,6 +176,8 @@ export function PortalClientesView() {
         {msg ? <div role="status" className={`rounded-lg px-3 py-2 text-sm ${msg.kind === "ok" ? "bg-emerald-500/10 text-emerald-700" : "bg-red-500/10 text-red-700"}`}>{msg.text}</div> : null}
 
         <PortalUsuariosPanel />
+
+        <PortalNotificacionesPanel />
 
         {clientsForbidden ? null : (<>
         <section className="space-y-3 rounded-xl border border-[var(--os-border)] p-4">

@@ -20,6 +20,10 @@
     {
       "path": "/api/cron/email-orders-sync",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/portal-push",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
