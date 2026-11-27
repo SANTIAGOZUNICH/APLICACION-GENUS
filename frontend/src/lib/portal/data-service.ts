@@ -12,7 +12,7 @@ import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { clientKey, parseQuantity } from "@/lib/entregas/rules";
+import { parseQuantity } from "@/lib/entregas/rules";
 import { getDb } from "@/lib/db/client";
 import { osNotifications } from "@/lib/db/schema";
 import type { BusinessCalendarOptions } from "./business-days";
@@ -30,6 +30,8 @@ import {
 import type { PortalSession } from "./auth-service";
 import { audit, isoOrNull, requireDb, str, PortalError, type Row, type SqlExec } from "./store";
 import { hmac } from "./security";
+import { loadNameIndex } from "./client-link";
+import { belongsToClient, manualStageOf, workOwner } from "./client-link-rules";
 import type { PortalWorkSector } from "./stage-rules";
 
 const LIVE = sql`w.deleted_at is null and w.operational_cancelled_at is null and w.operational_status <> 'cancelado' and w.status::text <> 'CANCELADO'`;
@@ -47,13 +49,22 @@ export async function loadCalendarOptions(db: SqlExec = requireDb()): Promise<Bu
   };
 }
 
-/** Ids de trabajos vivos que pertenecen a los alias (nombres de GENUS OS) de un cliente del portal. */
+/**
+ * Ids de trabajos vivos del cliente. Vínculo PRINCIPAL = ID del cliente (`work_items.portal_client_id`, o el de su pedido). Solo los
+ * trabajos SIN ningún ID (históricos) se vinculan por nombre, y únicamente si el nombre apunta a UN solo cliente (inequívoco).
+ * Un trabajo cuyo ID y el de su pedido difieren (conflicto) no se muestra a nadie.
+ */
 export async function findClientWorkIds(db: SqlExec, clientId: string): Promise<string[]> {
-  const aliases = (await db.execute(sql`select name_key from portal_client_aliases where client_id = ${clientId}::uuid and removed_at is null`)).rows as Row[];
-  const keys = new Set(aliases.map((a) => String(a.name_key)));
-  if (!keys.size) return [];
-  const pairs = (await db.execute(sql`select w.id::text as id, w.client from work_items w where ${LIVE}`)).rows as Row[];
-  return pairs.filter((p) => keys.has(clientKey(String(p.client ?? "")))).map((p) => String(p.id));
+  const index = await loadNameIndex(db);
+  const rows = (await db.execute(sql`
+    select w.id::text as id, w.client, w.portal_client_id::text as wid, p.portal_client_id::text as pid
+      from work_items w
+      left join production_pedidos p on p.id = w.production_pedido_id and p.deleted_at is null
+     where ${LIVE}
+       and (w.portal_client_id = ${clientId}::uuid or p.portal_client_id = ${clientId}::uuid or (w.portal_client_id is null and p.portal_client_id is null))`)).rows as Row[];
+  return rows
+    .filter((r) => belongsToClient(workOwner(r.wid ? String(r.wid) : null, r.pid ? String(r.pid) : null), r.client, clientId, index))
+    .map((r) => String(r.id));
 }
 
 export type ClientFacts = { works: RawWorkRow[]; deliveries: RawDeliveryRow[]; events: RawEventRow[]; marks: RawMarkRow[]; pedidos: RawPedidoRow[] };
@@ -61,24 +72,30 @@ export type ClientFacts = { works: RawWorkRow[]; deliveries: RawDeliveryRow[]; e
 const CANCELLED_WORK = sql`(w2.operational_cancelled_at is not null or w2.operational_status = 'cancelado' or w2.status::text = 'CANCELADO')`;
 
 /**
- * Renglones de pedido del cliente SIN trabajos vivos: recién recibidos (estado INGRESO) o cuyos trabajos se cancelaron.
- * El cliente se resuelve por la MISMA igualdad exacta de alias que los trabajos: nunca por parecido ni por parámetro del request.
+ * Renglones de pedido del cliente SIN trabajos vivos: recién recibidos o cancelados (y, si están vinculados por ID, con un estado
+ * manual de Producción). Vínculo principal = `production_pedidos.portal_client_id`; solo los pedidos sin ID (históricos) se
+ * vinculan por nombre inequívoco. Nunca por parecido ni por parámetro del request.
  */
 export async function loadClientPedidos(db: SqlExec, clientId: string): Promise<RawPedidoRow[]> {
-  const aliases = (await db.execute(sql`select name_key from portal_client_aliases where client_id = ${clientId}::uuid and removed_at is null`)).rows as Row[];
-  const keys = new Set(aliases.map((a) => String(a.name_key)));
-  if (!keys.size) return [];
+  const index = await loadNameIndex(db);
   const rows = (await db.execute(sql`
-    select p.id::text as id, p.op, p.producto, p.estado, p.cliente,
+    select p.id::text as id, p.op, p.producto, p.estado, p.cliente, p.portal_client_id::text as pid, to_char(p.fecha, 'YYYY-MM-DD') as fecha, p.q,
            (select count(*)::int from work_items w2 where w2.production_pedido_id = p.id and w2.deleted_at is null and ${CANCELLED_WORK}) as cancelled_works
       from production_pedidos p
      where p.deleted_at is null
+       and (p.portal_client_id = ${clientId}::uuid or p.portal_client_id is null)
        and not exists (select 1 from work_items w where w.production_pedido_id = p.id and ${LIVE})
-       and (p.estado is null or p.estado = '' or p.estado = 'INGRESO'
+       and (p.portal_client_id = ${clientId}::uuid
+            or p.estado is null or p.estado = '' or p.estado = 'INGRESO'
             or exists (select 1 from work_items w2 where w2.production_pedido_id = p.id and w2.deleted_at is null and ${CANCELLED_WORK}))`)).rows as Row[];
   return rows
-    .filter((r) => keys.has(clientKey(String(r.cliente ?? ""))))
-    .map((r): RawPedidoRow => ({ id: String(r.id), op: str(r.op), producto: str(r.producto), estado: str(r.estado), cancelledWorks: Number(r.cancelled_works ?? 0) }));
+    .filter((r) => (r.pid ? String(r.pid) === clientId : belongsToClient({ kind: "name" }, r.cliente, clientId, index)))
+    .map((r): RawPedidoRow => ({
+      id: String(r.id), op: str(r.op), producto: str(r.producto), estado: str(r.estado), cancelledWorks: Number(r.cancelled_works ?? 0),
+      fecha: str(r.fecha), q: r.q == null || !Number.isFinite(Number(r.q)) ? null : Number(r.q),
+      // Estado manual: solo para pedidos vinculados por ID (asignación explícita); los históricos conservan la regla anterior.
+      manualStage: r.pid ? manualStageOf(str(r.estado)) : null,
+    }));
 }
 
 /** Trae las filas operativas de esos trabajos. Lista blanca de columnas: nada confidencial se selecciona. */
@@ -89,7 +106,7 @@ export async function loadFacts(db: SqlExec, workIds: string[]): Promise<ClientF
     select w.id::text as id, w.client, w.product, w.sector::text as sector, w.operational_status, w.source, w.created_at, w.completed_at,
            w.progress_updated_at, w.sent_to_codificado_at, coalesce(w.via_codificado, false) as via_codificado, w.planned_quantity, w.unit,
            w.finished_qty, w.deliverable_units, w.packaging_total_units, w.production_pedido_id::text as pedido_id,
-           p.op as pedido_op, p.producto as pedido_producto, w.quality_status
+           p.op as pedido_op, p.producto as pedido_producto, to_char(p.fecha, 'YYYY-MM-DD') as pedido_fecha, w.quality_status
       from work_items w
       left join production_pedidos p on p.id = w.production_pedido_id and p.deleted_at is null
      where w.id in (${list}) and ${LIVE}`)).rows as Row[];
@@ -137,6 +154,7 @@ export async function loadFacts(db: SqlExec, workIds: string[]): Promise<ClientF
         productionPedidoId: str(r.pedido_id),
         pedidoOp: str(r.pedido_op),
         pedidoProducto: str(r.pedido_producto),
+        pedidoFecha: str(r.pedido_fecha),
         qualityStatus: str(r.quality_status),
       })
     ),

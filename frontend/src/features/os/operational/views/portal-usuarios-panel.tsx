@@ -21,7 +21,7 @@ async function api(body?: Json, query = "?view=users"): Promise<{ ok: boolean; d
  * Usuarios del Portal de Clientes (usuario + contraseña). Solo Dirección y Administración: el servidor lo vuelve a validar.
  * La contraseña temporal se muestra UNA sola vez; después solo existe su hash.
  */
-export function PortalUsuariosPanel({ onForbidden }: { onForbidden?: () => void }) {
+export function PortalUsuariosPanel({ onForbidden, refreshKey }: { onForbidden?: () => void; /** Cambia cuando se crea/modifica un cliente: recarga el selector de clientes sin recargar la página. */ refreshKey?: string }) {
   const [users, setUsers] = useState<AdminPortalUser[]>([]);
   const [clients, setClients] = useState<ClientOpt[]>([]);
   const [allowed, setAllowed] = useState(true);
@@ -52,7 +52,7 @@ export function PortalUsuariosPanel({ onForbidden }: { onForbidden?: () => void 
     // Carga inicial: el estado se actualiza al resolver la consulta.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
-  }, [load]);
+  }, [load, refreshKey]);
 
   async function act(body: Json, okText: string) {
     setBusy(true);

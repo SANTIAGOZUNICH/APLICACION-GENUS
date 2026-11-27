@@ -71,7 +71,9 @@
     "test:e2e:pwa-reload": "bash scripts/e2e/run-pwa-reload-e2e-local.sh",
     "test:e2e:portal-usuarios": "bash scripts/e2e/run-portal-usuarios-e2e-local.sh",
     "test:e2e:portal-push-db": "bash scripts/e2e/run-portal-push-db-local.sh",
-    "test:e2e:portal-push": "bash scripts/e2e/run-portal-push-e2e-local.sh"
+    "test:e2e:portal-push": "bash scripts/e2e/run-portal-push-e2e-local.sh",
+    "test:e2e:portal-vinculo-db": "bash scripts/e2e/run-portal-vinculo-db-local.sh",
+    "test:e2e:portal-vinculo": "bash scripts/e2e/run-portal-vinculo-e2e-local.sh"
   },
   "engines": {
     "node": ">=20"

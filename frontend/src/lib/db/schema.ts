@@ -247,8 +247,11 @@ export const workItems = pgTable(
     parentWorkItemId: uuid("parent_work_item_id"),
     /** 0061 — solo en la original: cantidad total de la orden a repartir entre sus programaciones. */
     scheduleTotal: text("schedule_total"),
+    /** 0098 — cliente del portal (portal_clients.id): vínculo principal por ID. NULL = histórico (se vincula por alias). */
+    portalClientId: uuid("portal_client_id"),
   },
   (table) => [
+    index("work_items_portal_client_idx").on(table.portalClientId),
     check(
       "work_items_branch_owner_values",
       sql`${table.branchOwner} IS NULL OR ${table.branchOwner} IN ('Cristian', 'Nicolás')`
@@ -1763,10 +1766,13 @@ export const productionPedidos = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     deletedBy: text("deleted_by"),
     deleteReason: text("delete_reason"),
+    /** 0098 — cliente del portal (portal_clients.id): vínculo principal por ID. NULL = histórico (se vincula por alias). */
+    portalClientId: uuid("portal_client_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    index("production_pedidos_portal_client_idx").on(table.portalClientId),
     index("production_pedidos_fecha_idx").on(table.fecha),
     index("production_pedidos_estado_idx").on(table.estado),
     index("production_pedidos_op_idx").on(table.op),

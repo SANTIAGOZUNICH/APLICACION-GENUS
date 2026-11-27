@@ -15,17 +15,17 @@ export function ProductCard({ product: p, detailHref, compact = false }: { produ
       <div className="gp-card-head">
         <div>
           <h3>{p.product}</h3>
-          <div className="gp-meta">{p.orderRef ? `Pedido ${p.orderRef}` : "Pedido sin número asignado"}</div>
+          <div className="gp-meta">{p.orderRef ? `Pedido ${p.orderRef}` : "Pedido sin número asignado"}{p.orderedAt ? <span data-testid="ordered-at"> · Fecha del pedido: {fmtIsoDay(p.orderedAt)}</span> : null}</div>
         </div>
         <span className={`gp-pill s-${c.key}`} data-testid="stage-pill">{c.label}</span>
       </div>
       {cancelled ? null : <TruckTracker productId={p.id} stageIndex={c.id - 1} withinPct={p.countdown?.progressPct ?? 0} />}
       <p className="gp-message" data-testid="stage-message">{p.message}</p>
-      {cancelled || c.id < 2 ? null : (
+      {cancelled || (c.id < 2 && q.requested == null) ? null : (
       <div className="gp-facts" data-testid="facts">
         <div className="gp-fact"><span>Solicitado</span><b>{q.mixedUnits ? "Varias unidades" : fmtQty(q.requested, q.unit)}</b></div>
         {!compact && hasFigures && p.stage !== "ELABORACION" ? <div className="gp-fact" data-testid="fact-available"><span>Disponible</span><b>{q.mixedUnits ? "—" : fmtQty(q.available, q.unit)}</b></div> : null}
-        {!compact ? (
+        {!compact && c.id >= 2 ? (
           <>
             <div className="gp-fact" data-testid="fact-delivered"><span>Entregado</span><b>{q.mixedUnits ? "—" : fmtQty(q.delivered, q.unit)}</b></div>
             <div className="gp-fact" data-testid="fact-pending"><span>Pendiente</span><b>{q.mixedUnits ? "—" : fmtQty(q.pending, q.unit)}</b></div>

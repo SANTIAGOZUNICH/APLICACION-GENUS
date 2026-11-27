@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
 import {
-  addClientAlias, addClientEmail, clientActivity, createClient, inviteClientEmail, linkingProblems, listClients, listHolidayOverrides,
+  addClientAlias, addClientEmail, backfillIdLinks, clientActivity, createClient, inviteClientEmail, linkingProblems, listClients, listHolidayOverrides,
   historyGenerate, historyPreview, renameClient, setClientAccess,
   previewClient, removeClientAlias, removeClientEmail, setClientStatus, setHolidayOverride, type Staff,
 } from "@/lib/portal/admin-service";
@@ -71,6 +71,8 @@ export async function POST(request: Request) {
       case "enable_access": return NextResponse.json(await setClientAccess(staff, clientId, true));
       case "disable_access": return NextResponse.json(await setClientAccess(staff, clientId, false));
       case "rename_client": await renameClient(staff, clientId, b.name); return NextResponse.json({ ok: true });
+      // Vínculo por ID de los pedidos/trabajos históricos: SOLO Dirección (el servicio lo vuelve a validar). Ambiguos/sin coincidencia solo se reportan.
+      case "backfill_links": return NextResponse.json(await backfillIdLinks(staff));
       case "history_generate": return NextResponse.json(await historyGenerate(staff, b as { previewToken: unknown; expectedCount: unknown }));
       case "suspend": return NextResponse.json(await setClientStatus(staff, clientId, "SUSPENDIDO", b.reason));
       case "activate": return NextResponse.json(await setClientStatus(staff, clientId, "ACTIVO", null));

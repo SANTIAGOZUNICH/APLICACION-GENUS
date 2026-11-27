@@ -44,3 +44,22 @@ Alcance auditado: `src/lib/portal/*`, `src/app/entregas/**`, `src/app/api/v1/por
 
 ## 4. Variables de entorno
 Ninguna nueva. Se siguen usando `PORTAL_AUTH_SECRET` (recomendada; si falta se deriva de la conexión a la base), `PORTAL_PUBLIC_BASE_URL`, `PORTAL_EMAIL_MODE` (solo para el ingreso por correo).
+
+## 5. Vínculo por ID del cliente (migración 0098) — pedido asignado que no aparecía en el portal
+
+**Síntoma (producción):** se creó el cliente «GENUS TEST» con acceso al portal, se asignó un pedido desde Producción (formulario «Nuevo pedido») y el pedido no aparecía.
+
+**Causa raíz (reproducida con Postgres real, `portal-vinculo.db.integration.test.ts`):** el portal vinculaba por NOMBRE y el cliente del pedido es texto libre.
+1. Mayúsculas, tildes y espacios no rompen el vínculo (se normalizan), pero cualquier otra diferencia sí: «GENUS-TEST», «GENUS TEST S.A.» o «GENUSTEST» pasaban por el gancho `ensureClientIdentitySafe`, que creaba OTRO cliente «automático» con ese nombre: el pedido quedaba asignado a un cliente que nadie usa y el cliente real no lo veía.
+2. Un pedido SIN trabajos solo se mostraba con estado vacío o `INGRESO`: el formulario permite elegir el estado y con `EN ELABORACIÓN`, `EN ENVASADO`, etc. el pedido quedaba invisible hasta que existiera un trabajo.
+3. Los trabajos se vinculaban por el nombre del TRABAJO, no por el de su pedido: un trabajo con otro texto no seguía a su pedido.
+
+**Solución:** `portal_clients.id` es el vínculo principal.
+- `production_pedidos.portal_client_id` y `work_items.portal_client_id` (nullable, indexadas). El formulario de Pedidos ofrece un selector/autocompletado (nombre comercial + alias) que guarda el ID; si se tipea el texto, el servidor lo resuelve contra clientes y alias normalizados y vincula SOLO si es inequívoco (nombre nuevo → cliente nuevo como antes; nombre que coincide con 2+ clientes → no se vincula). El ID elegido manda aunque el texto sea otro.
+- Los trabajos heredan el ID de su pedido (prevalece el del pedido); sin pedido, el del nombre resuelto. Editar otro campo del pedido conserva el ID; cambiar el cliente reasigna pedido y trabajos.
+- El portal lista por ID. Los históricos sin ID se ven por nombre únicamente si apunta a UN solo cliente. Un pedido vinculado por ID y sin trabajos se muestra con su estado manual (recibido / en elaboración / en envasado; nunca «Listo» ni «Entregado», que exigen evidencia operativa), con producto, cantidad (Q), OP y fecha.
+- Push y firma (ETag) usan `loadPortalOverview`: la misma asociación. La firma incluye los pedidos sin trabajos.
+
+**Backfill de históricos (solo Dirección, bajo demanda, idempotente):** panel Dirección › Portal de Clientes › «Problemas de vinculación» muestra el reporte (se pueden vincular / ambiguos / sin coincidencia / trabajos divergentes) sin escribir nada. El botón «Vincular por ID los inequívocos» (acción `backfill_links`) escribe `portal_client_id` solo donde es NULO y el nombre apunta a un único cliente; ambiguos y sin coincidencia se reportan y NO se vinculan. Queda auditado (`VINCULO_ID_BACKFILL`).
+
+**Pruebas:** `npm run test:e2e:portal-vinculo-db` (integración sin mocks) y `npm run test:e2e:portal-vinculo` (Chromium: panel de Dirección → formulario real de Producción → portal abierto → cambios de sector → outbox push simulada).

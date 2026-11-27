@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { clientKey } from "@/lib/entregas/rules";
 import { generateHistoricalClients, previewHistoricalClients } from "./client-identity";
+import { executeIdBackfill, runIdBackfill, type BackfillReport } from "./client-link";
 import { revokeSessions } from "./auth-service";
 import { loadPortalOverview } from "./data-service";
 import { sendInvitation } from "./notify-service";
@@ -175,26 +176,36 @@ export async function clientActivity(staff: Staff, clientId: string, db: SqlExec
 export async function linkingProblems(staff: Staff, db: SqlExec = requireDb()) {
   need(staff);
   const works = (await db.execute(sql`
-    select w.client, w.production_pedido_id is null as no_pedido
-      from work_items w
+    select w.client, w.production_pedido_id is null as no_pedido, (w.portal_client_id is not null or p.portal_client_id is not null) as by_id
+      from work_items w left join production_pedidos p on p.id = w.production_pedido_id and p.deleted_at is null
      where w.deleted_at is null and w.operational_cancelled_at is null and w.operational_status <> 'cancelado' and w.status::text <> 'CANCELADO'`)).rows as Row[];
   const aliasRows = (await db.execute(sql`select a.name_key, a.name_label, c.display_name, c.status from portal_client_aliases a join portal_clients c on c.id = a.client_id where a.removed_at is null`)).rows as Row[];
   const mapped = new Map(aliasRows.map((a) => [String(a.name_key), a]));
-  const byKey = new Map<string, { label: string; works: number; withoutPedido: number }>();
+  const byKey = new Map<string, { label: string; works: number; withoutPedido: number; byId: number }>();
   for (const w of works) {
     const label = String(w.client ?? "").trim();
     const key = clientKey(label);
     if (!key) continue;
-    const e = byKey.get(key) ?? { label, works: 0, withoutPedido: 0 };
+    const e = byKey.get(key) ?? { label, works: 0, withoutPedido: 0, byId: 0 };
     e.works++;
     if (w.no_pedido === true) e.withoutPedido++;
+    if (w.by_id === true) e.byId++;
     byKey.set(key, e);
   }
   return {
-    unmappedClients: [...byKey.entries()].filter(([k]) => !mapped.has(k)).map(([, v]) => v).sort((a, b) => b.works - a.works).slice(0, 200),
+    // Un nombre sin alias solo es problema si TODOS sus trabajos carecen de vínculo por ID (los vinculados por ID se ven igual).
+    unmappedClients: [...byKey.entries()].filter(([k, v]) => !mapped.has(k) && v.byId < v.works).map(([, v]) => ({ label: v.label, works: v.works - v.byId, withoutPedido: v.withoutPedido })).sort((a, b) => b.works - a.works).slice(0, 200),
     mappedWithoutPedido: [...byKey.entries()].filter(([k, v]) => mapped.has(k) && v.withoutPedido > 0).map(([k, v]) => ({ client: String(mapped.get(k)!.display_name), alias: v.label, worksWithoutPedido: v.withoutPedido })),
     aliasesWithoutWork: aliasRows.filter((a) => !byKey.has(String(a.name_key))).map((a) => ({ client: String(a.display_name), alias: String(a.name_label) })),
+    // Vínculo por ID de los históricos (solo lectura: nunca vincula nada arbitrariamente). Ambiguos y sin coincidencia quedan listados.
+    idLinking: await runIdBackfill({ execute: false }, db),
   };
+}
+
+/** Vincula por ID los históricos INEQUÍVOCOS (solo Dirección, bajo demanda, idempotente). Ambiguos y sin coincidencia solo se reportan. */
+export async function backfillIdLinks(staff: Staff, db: SqlExec = requireDb()): Promise<BackfillReport> {
+  need(staff);
+  return executeIdBackfill(staff, db);
 }
 
 export async function listHolidayOverrides(staff: Staff, db: SqlExec = requireDb()) {

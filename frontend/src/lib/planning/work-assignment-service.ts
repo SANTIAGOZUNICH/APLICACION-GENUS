@@ -1,7 +1,7 @@
 import "server-only";
 
 import { triggerMeControlSync } from "@/lib/me-control/trigger";
-import { ensureClientIdentitySafe } from "@/lib/portal/client-identity";
+import { linkWorkSafe } from "@/lib/portal/client-link";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
@@ -854,7 +854,7 @@ async function assignWorkItemDurableImpl(
     if (opts?.tx) return await run(opts.tx);
     const done = await getDb().transaction(run);
     // Fuera de una transacción ajena: la identidad (código) del cliente se asigna ya confirmado el alta.
-    await ensureClientIdentitySafe(done.item?.client, "asignacion", null);
+    await linkWorkSafe(done.item?.id, done.item?.client, "asignacion", null);
     return done;
   } catch (err) {
     logSanitizedError(operationId, "work-assignment", err);

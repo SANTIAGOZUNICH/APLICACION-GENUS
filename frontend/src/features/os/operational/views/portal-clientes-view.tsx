@@ -12,6 +12,15 @@ type Problems = {
   unmappedClients: Array<{ label: string; works: number; withoutPedido: number }>;
   mappedWithoutPedido: Array<{ client: string; alias: string; worksWithoutPedido: number }>;
   aliasesWithoutWork: Array<{ client: string; alias: string }>;
+  idLinking: {
+    executed: boolean;
+    pedidos: { pending: number; linkable: number; ambiguous: number; unmatched: number };
+    works: { pending: number; viaPedido: number; viaName: number; ambiguous: number; unmatched: number };
+    divergent: number;
+    ambiguous: Array<{ name: string; pedidos: number; works: number; ops: string[]; clients: Array<{ id: string; name: string }> }>;
+    unmatched: Array<{ name: string; pedidos: number; works: number; ops: string[] }>;
+    applied: { pedidos: number; works: number };
+  };
 };
 type Activity = {
   notifications: Array<{ title: string; body: string; createdAt: string | null; read: boolean; emailed: boolean }>;
@@ -143,6 +152,19 @@ export function PortalClientesView() {
     return r;
   }
 
+  /** Vincula por ID los históricos inequívocos (solo Dirección; el servidor lo valida). Ambiguos y sin coincidencia NO se tocan. */
+  async function backfillLinks() {
+    const il = problems?.idLinking;
+    if (!il) return;
+    if (!window.confirm(`Se vincularán por ID ${il.pedidos.linkable} pedidos y ${il.works.viaPedido + il.works.viaName} trabajos cuyo nombre coincide con UN solo cliente. Los ambiguos y sin coincidencia no se tocan. ¿Continuar?`)) return;
+    const r = await api("", { action: "backfill_links" });
+    if (r.ok) {
+      const applied = (r.data as unknown as { applied: { pedidos: number; works: number } }).applied;
+      setMsg({ kind: "ok", text: `Vinculados por ID: ${applied.pedidos} pedidos y ${applied.works} trabajos.` });
+      await load();
+    } else setMsg({ kind: "err", text: String(r.data.error ?? "No se pudo vincular.") });
+  }
+
   async function createClient() {
     const lines = (s: string) => s.split(/[\n,;]/).map((x) => x.trim()).filter(Boolean);
     const r = await act({ action: "create_client", displayName: form.name, aliases: lines(form.aliases).length ? lines(form.aliases) : [form.name], emails: lines(form.emails) }, "Cliente creado.");
@@ -175,7 +197,7 @@ export function PortalClientesView() {
         )}
         {msg ? <div role="status" className={`rounded-lg px-3 py-2 text-sm ${msg.kind === "ok" ? "bg-emerald-500/10 text-emerald-700" : "bg-red-500/10 text-red-700"}`}>{msg.text}</div> : null}
 
-        <PortalUsuariosPanel />
+        <PortalUsuariosPanel refreshKey={clients.map((c) => c.id).join(",")} />
 
         <PortalNotificacionesPanel />
 
@@ -289,6 +311,29 @@ export function PortalClientesView() {
                 <ul className="mt-1">{problems.mappedWithoutPedido.map((u) => <li key={u.alias}>{u.client} · «{u.alias}» · {u.worksWithoutPedido}</li>)}</ul></div>
               <div><b>Nombres sin trabajos vivos ({problems.aliasesWithoutWork.length}):</b> posible error de tipeo.
                 <ul className="mt-1">{problems.aliasesWithoutWork.map((u) => <li key={u.alias}>{u.client} · «{u.alias}»</li>)}</ul></div>
+              <div data-testid="portal-id-linking">
+                <b>Vínculo por ID de pedidos históricos:</b>{" "}
+                {problems.idLinking.pedidos.pending + problems.idLinking.works.pending === 0
+                  ? "todo vinculado por ID."
+                  : `${problems.idLinking.pedidos.pending} pedidos y ${problems.idLinking.works.pending} trabajos sin ID (se ven por nombre inequívoco).`}
+                <ul className="mt-1">
+                  <li>Se pueden vincular sin duda: {problems.idLinking.pedidos.linkable} pedidos · {problems.idLinking.works.viaPedido + problems.idLinking.works.viaName} trabajos</li>
+                  <li>Ambiguos (el nombre coincide con 2 o más clientes; no se vinculan): {problems.idLinking.pedidos.ambiguous} pedidos · {problems.idLinking.works.ambiguous} trabajos</li>
+                  <li>Sin coincidencia (no existe ese cliente del portal; no se vinculan): {problems.idLinking.pedidos.unmatched} pedidos · {problems.idLinking.works.unmatched} trabajos</li>
+                  {problems.idLinking.divergent > 0 ? <li>Trabajos cuyo cliente difiere del de su pedido (prevalece el del pedido): {problems.idLinking.divergent}</li> : null}
+                </ul>
+                {problems.idLinking.ambiguous.length ? (
+                  <div className="mt-2"><b>Ambiguos ({problems.idLinking.ambiguous.length}):</b>
+                    <ul className="max-h-48 overflow-auto">{problems.idLinking.ambiguous.map((a) => <li key={a.name}>«{a.name}» ↔ {a.clients.map((c) => c.name).join(" / ")} · {a.pedidos} pedidos · {a.works} trabajos{a.ops.length ? ` · OP ${a.ops.join(", ")}` : ""}</li>)}</ul></div>
+                ) : null}
+                {problems.idLinking.unmatched.length ? (
+                  <div className="mt-2"><b>Sin coincidencia ({problems.idLinking.unmatched.length}):</b>
+                    <ul className="max-h-48 overflow-auto">{problems.idLinking.unmatched.map((a) => <li key={a.name}>«{a.name}» · {a.pedidos} pedidos · {a.works} trabajos{a.ops.length ? ` · OP ${a.ops.join(", ")}` : ""}</li>)}</ul></div>
+                ) : null}
+                <div className="mt-2">
+                  <Button onClick={() => void backfillLinks()} disabled={problems.idLinking.pedidos.linkable + problems.idLinking.works.viaPedido + problems.idLinking.works.viaName === 0} data-testid="backfill-links-btn">Vincular por ID los inequívocos (solo Dirección)</Button>
+                </div>
+              </div>
             </div>
           )}
         </section>
