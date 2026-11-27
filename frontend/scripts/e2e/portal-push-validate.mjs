@@ -270,6 +270,28 @@ check("el cliente NO ve en su historial los eventos simulados", (await a.getByTe
   check("Dirección edita los plazos (estimaciones en días hábiles)", (await q("select elaboracion_days, envasado_days from portal_push_settings where id = 1"))[0].elaboracion_days === 10, JSON.stringify(await q("select elaboracion_days, envasado_days from portal_push_settings where id = 1")));
   await p.getByTestId("push-days-elab").fill("8");
   await p.getByTestId("push-days-save").click();
+  // Notificación de prueba: botón solo para clientes habilitados; B (habilitado recién) no tiene dispositivos; A sí. Push real siempre apagado.
+  await p.waitForFunction(() => /Plazos guardados/.test(document.body.innerText));
+  p.on("dialog", (d) => void d.accept());
+  const globalBefore = (await q("select global_send_enabled from portal_push_settings where id = 1"))[0].global_send_enabled;
+  const workBefore = (await q("select count(*)::int as n from work_items"))[0].n;
+  const orderStateBefore = (await q("select count(*)::int as n from portal_push_order_state"))[0].n;
+  const outboxBefore = (await q("select count(*)::int as n from portal_push_outbox where event_type <> 'prueba'"))[0].n;
+  check("el botón «Enviar notificación de prueba» aparece solo en clientes habilitados en el piloto", (await rowA.getByTestId("push-test-send").count()) === 1 && (await rowB.getByTestId("push-test-send").count()) === 1);
+  await rowB.getByTestId("push-test-send").click();
+  await p.waitForFunction(() => /no tiene dispositivos suscriptos/.test(document.body.innerText));
+  check("cliente habilitado SIN dispositivos: rechazo con mensaje claro y nada enviado ni registrado", (await q("select count(*)::int as n from portal_push_outbox where client_id = $1::uuid and event_type = 'prueba'", [idB]))[0].n === 0);
+  await rowA.getByTestId("push-test-send").click();
+  await p.waitForFunction(() => /Notificación de prueba enviada a .*dispositivo\(s\) enviados, \d+ fallidos/.test(document.body.innerText));
+  check("la prueba responde con cantidad de dispositivos enviados/fallidos y se audita con el usuario de Dirección", (await q("select count(*)::int as n from portal_audit_events where client_id = $1::uuid and event_type = 'PUSH_PRUEBA_ENVIADA' and actor = $2", [idA, E2E_USERS.direccion.email]))[0].n === 1);
+  await rowA.getByTestId("push-test-send").click();
+  await p.waitForFunction(() => /hace instantes/.test(document.body.innerText));
+  check("doble clic: la segunda prueba dentro de 30 s se rechaza y no se vuelve a auditar", (await q("select count(*)::int as n from portal_audit_events where client_id = $1::uuid and event_type = 'PUSH_PRUEBA_ENVIADA'", [idA]))[0].n === 1);
+  check("la prueba no cambió el interruptor global ni work_items, estado de pedidos ni outbox de pedidos", (await q("select global_send_enabled from portal_push_settings where id = 1"))[0].global_send_enabled === globalBefore
+    && (await q("select count(*)::int as n from work_items"))[0].n === workBefore
+    && (await q("select count(*)::int as n from portal_push_order_state"))[0].n === orderStateBefore
+    && (await q("select count(*)::int as n from portal_push_outbox where event_type <> 'prueba'"))[0].n === outboxBefore);
+  check("Producción NO puede enviar la prueba (403)", (await post(produccion, "push_test", { clientId: idA })).status() === 403);
   await p.screenshot({ path: `${OUT}/05-panel-direccion.png`, fullPage: true });
   await octx.close();
 }

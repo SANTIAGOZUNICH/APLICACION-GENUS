@@ -158,6 +158,9 @@ describe("no es un ejecutor arbitrario de SQL", () => {
   });
 });
 
+/** Migraciones con UPDATE de datos (0068 reordena, 0082 completa CANTIDAD): pinadas por hash pero deliberadamente NO ejecutables por la reconciliación. */
+const DATA_UPDATE_MIGRATIONS = new Set(["0068_me_load_order", "0082_despachos_planilla"]);
+
 describe("guardas sobre el journal real del repo", () => {
   const journal = JSON.parse(fs.readFileSync(path.join(DRIZZLE_DIR, "meta", "_journal.json"), "utf8")) as { entries: Entry[] };
 
@@ -174,6 +177,11 @@ describe("guardas sobre el journal real del repo", () => {
     for (const e of journal.entries.filter((x) => x.idx > 37)) {
       const text = fs.readFileSync(path.join(DRIZZLE_DIR, `${e.tag}.sql`), "utf8");
       expect((ALLOWED_RECONCILE_MIGRATIONS as Record<string, string>)[e.tag], `${e.tag} debe figurar en ALLOWED_RECONCILE_MIGRATIONS (revisión explícita)`).toBe(drizzleHash(text));
+      if (DATA_UPDATE_MIGRATIONS.has(e.tag)) {
+        // Modifica datos con UPDATE: el validador DEBE rechazarla para que la reconciliación nunca la ejecute (solo Drizzle, en orden).
+        expect(splitStatements(text).some((stmt) => rejectStatement(stmt) !== null), `${e.tag} debe ser rechazada por la reconciliación`).toBe(true);
+        continue;
+      }
       for (const stmt of splitStatements(text)) expect(rejectStatement(stmt), `${e.tag}: ${stmt.slice(0, 60)}`).toBeNull();
     }
   });
@@ -206,7 +214,7 @@ const PORTAL_TABLES = ["portal_clients", "portal_client_aliases", "portal_author
 
 /** Objetos de 0057–0061 (Control semanal, cajas por entrega, avisos por usuario, programaciones). */
 const NEW_TABLES = ["portal_users", "portal_push_settings", "portal_push_client_pilot", "portal_push_subscriptions", "portal_push_order_state", "portal_push_outbox", "portal_push_reads", "deposito_ubicacion_clientes", "deposito_ingreso_ubicacion", "deposito_mapa_config", "deposito_mapa_shapes", "deposito_ubicaciones", "deposito_ubicacion_items", "deposito_ubicacion_movements", "insumo_stock_config", "insumo_stock_movements", "insumo_stock_audit", "production_observation_seen", "cajas_genus_config", "cajas_genus_movements", "cajas_genus_line_review", "cajas_genus_client_settings", "cajas_genus_audit", "insumo_items", "insumo_responsables", "insumo_retiros", "insumo_retiro_items", "insumo_retiro_events", "ai_provider_health", "internal_delivery_hides", "work_item_me_history", "mp_master_links", "mp_weekly_row_state", "mp_weekly_production_exclusions", "os_internal_message_users", "billing_invoices", "billing_invoice_lines", "billing_invoice_events", "billing_work_notes", "genus_auth_activations", "delivery_remito_marks", "delivery_remito_mark_events", "mp_weekly_saved_controls", "mp_weekly_saved_product_controls", "deposito_despachos", "deposito_despachos_audit", "mp_weekly_total_replacements", "me_product_materials", "me_material_compat", "me_control_alerts", "work_item_codificado_transfers", "work_item_comments", "internal_delivery_changes", "email_order_sync_runs"];
-const NEW_COLUMNS = ["portal_sessions.user_id", "deposito_ubicacion_items.lot_key", "insumo_items.unit", "insumo_items.min_stock", "insumo_items.alert_state", "deposito_despachos.me_stock_status", "work_items.me_status", "work_item_delivery_lines.packing_groups", "os_notifications.target_emails", "work_items.schedule_root_id", "work_items.schedule_total", "work_items.asignacion_lote_id", "work_items.parent_work_item_id", "work_item_codificado_transfers.packing_groups", "internal_delivery_changes.old_packing", "internal_delivery_changes.new_packing", "deposito_despachos.egreso", "deposito_despachos.control_by", "deposito_despachos.entregado_by"];
+const NEW_COLUMNS = ["portal_sessions.user_id", "deposito_ubicacion_items.lot_key", "insumo_items.unit", "insumo_items.min_stock", "insumo_items.alert_state", "deposito_despachos.me_stock_status", "work_items.me_status", "work_item_delivery_lines.packing_groups", "os_notifications.target_emails", "work_items.schedule_root_id", "work_items.schedule_total", "work_items.asignacion_lote_id", "inv_me_ingresos.load_seq", "inv_me_salidas.load_seq", "inv_me_materials.load_seq", "work_items.parent_work_item_id", "work_item_codificado_transfers.packing_groups", "internal_delivery_changes.old_packing", "internal_delivery_changes.new_packing", "deposito_despachos.egreso", "deposito_despachos.control_by", "deposito_despachos.entregado_by"];
 
 describe("verificación de esquema después del migrate (build)", () => {
   // information_schema simulado: tablas y columnas presentes.
@@ -235,7 +243,7 @@ describe("verificación de esquema después del migrate (build)", () => {
     expect(res.ok).toBe(false);
     expect(res.missing.map((m) => m.object)).toEqual(REQUIRED_SCHEMA_OBJECTS.map((r) => r.object));
     expect(new Set(res.missing.map((m) => m.migration))).toEqual(
-      new Set(["0043_asignacion_lotes_local_edits", "0044_inventory_ingreso_adjuntos", "0045_scheduled_deliveries", "0046_dashboard_kpi_targets", "0047_work_item_delivery_lines", "0049_mp_load_order", "0050_entregas_correcciones", "0051_formula_drive_index", "0052_portal_clientes", "0053_portal_demo", "0054_portal_disponibilidad", "0055_portal_codigos_automaticos", "0056_ingreso_con_remito", "0057_mp_master_links", "0058_mp_weekly_row_state", "0059_delivery_line_packing", "0060_aviso_user_recipients", "0061_work_item_schedules", "0062_billing_control", "0063_admin_account_activation", "0064_delivery_remito_marks", "0065_mp_weekly_saved_controls", "0066_mp_weekly_saved_product_controls", "0067_work_item_lote_link", "0073_deposito_despachos", "0075_mp_weekly_total_replacements", "0076_me_control", "0077_codificado_transfers", "0078_work_item_comments", "0079_internal_delivery_changes", "0080_delivery_boxes", "0081_email_order_sync_runs", "0082_despachos_planilla", "0083_work_item_me_control", "0084_despachos_stock_me", "0085_envasado_delivery_list_hides", "0086_ai_provider_health", "0087_cajas_genus", "0088_insumos", "0089_production_observation_seen", "0090_insumos_stock", "0092_ubicaciones_deposito", "0093_ubicaciones_integridad", "0094_ubicaciones_clientes", "0096_portal_usuarios", "0097_portal_push"])
+      new Set(["0043_asignacion_lotes_local_edits", "0044_inventory_ingreso_adjuntos", "0045_scheduled_deliveries", "0046_dashboard_kpi_targets", "0047_work_item_delivery_lines", "0049_mp_load_order", "0050_entregas_correcciones", "0051_formula_drive_index", "0052_portal_clientes", "0053_portal_demo", "0054_portal_disponibilidad", "0055_portal_codigos_automaticos", "0056_ingreso_con_remito", "0057_mp_master_links", "0058_mp_weekly_row_state", "0059_delivery_line_packing", "0060_aviso_user_recipients", "0061_work_item_schedules", "0062_billing_control", "0063_admin_account_activation", "0064_delivery_remito_marks", "0065_mp_weekly_saved_controls", "0066_mp_weekly_saved_product_controls", "0067_work_item_lote_link", "0068_me_load_order", "0073_deposito_despachos", "0075_mp_weekly_total_replacements", "0076_me_control", "0077_codificado_transfers", "0078_work_item_comments", "0079_internal_delivery_changes", "0080_delivery_boxes", "0081_email_order_sync_runs", "0082_despachos_planilla", "0083_work_item_me_control", "0084_despachos_stock_me", "0085_envasado_delivery_list_hides", "0086_ai_provider_health", "0087_cajas_genus", "0088_insumos", "0089_production_observation_seen", "0090_insumos_stock", "0092_ubicaciones_deposito", "0093_ubicaciones_integridad", "0094_ubicaciones_clientes", "0096_portal_usuarios", "0097_portal_push"])
     );
   });
 

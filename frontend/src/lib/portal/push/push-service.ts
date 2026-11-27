@@ -13,7 +13,7 @@ import { sql } from "drizzle-orm";
 import { clientKey } from "@/lib/entregas/rules";
 import { loadPortalOverview } from "../data-service";
 import type { PortalSession } from "../auth-service";
-import { audit, isoOrNull, requireDb, PortalError, type Row, type SqlExec } from "../store";
+import { audit, isoOrNull, rateLimitHit, requireDb, PortalError, type Row, type SqlExec } from "../store";
 import {
   DEFAULT_ELABORACION_DAYS,
   DEFAULT_ENVASADO_DAYS,
@@ -158,10 +158,17 @@ export async function setClientPilot(staff: PushStaff, clientId: string, enabled
   return { enabled, baselineOrders };
 }
 
+/** Tipo de aviso de la notificación de prueba manual: nunca lo genera ni lo reclama el worker de pedidos. */
+export const PUSH_TEST_EVENT_TYPE = "prueba";
+export const PUSH_TEST_TITLE = "¡Bienvenido a Laboratorio Genus! 🎉";
+export const PUSH_TEST_BODY = "Las notificaciones de tu portal funcionan correctamente. A partir de ahora podrás recibir novedades sobre tus pedidos.";
+export const PUSH_TEST_URL = "/entregas";
+export const PUSH_TEST_WINDOW_SECONDS = 30;
+
 export type PushQueueIndicators = { pendientes: number; enviadas: number; fallidas: number; simuladas: number; sinDispositivos: number; expiradas: number };
 
 export async function queueIndicators(db: SqlExec = requireDb()): Promise<PushQueueIndicators> {
-  const rows = (await db.execute(sql`select status, count(*)::int as n from portal_push_outbox group by status`)).rows as Row[];
+  const rows = (await db.execute(sql`select status, count(*)::int as n from portal_push_outbox where event_type <> ${PUSH_TEST_EVENT_TYPE} group by status`)).rows as Row[];
   const n = (...s: string[]) => rows.filter((r) => s.includes(String(r.status))).reduce((a, r) => a + Number(r.n), 0);
   return { pendientes: n("PENDIENTE", "PROCESANDO"), enviadas: n("ENVIADA"), fallidas: n("FALLIDA"), simuladas: n("SIMULADA"), sinDispositivos: n("SIN_DISPOSITIVOS"), expiradas: n("EXPIRADA") };
 }
@@ -240,7 +247,7 @@ export async function removePushSubscription(session: PortalSession, endpoint: u
 
 // ───────────────────────── Historial del cliente ─────────────────────────
 
-export type PushHistoryItem = { id: string; type: PushEventType; title: string; body: string; url: string; createdAt: string; read: boolean };
+export type PushHistoryItem = { id: string; type: PushEventType | typeof PUSH_TEST_EVENT_TYPE; title: string; body: string; url: string; createdAt: string; read: boolean };
 
 /** Historial visible: solo avisos REALES (los simulados del modo piloto nunca se muestran al cliente). */
 export async function listPushHistory(session: PortalSession, limit = 30, db: SqlExec = requireDb()): Promise<{ items: PushHistoryItem[]; unread: number }> {
@@ -250,7 +257,7 @@ export async function listPushHistory(session: PortalSession, limit = 30, db: Sq
       from portal_push_outbox o left join portal_push_reads r on r.outbox_id = o.id and r.owner_key = ${owner}
      where o.client_id = ${session.clientId}::uuid and o.mode = 'REAL' and o.status in ('ENVIADA', 'SIN_DISPOSITIVOS', 'FALLIDA')
      order by coalesce(o.processed_at, o.created_at) desc limit ${limit}`)).rows as Row[];
-  const items = rows.map((r): PushHistoryItem => ({ id: String(r.id), type: String(r.event_type) as PushEventType, title: String(r.title), body: String(r.body), url: String(r.url), createdAt: isoOrNull(r.at)!, read: r.read === true }));
+  const items = rows.map((r): PushHistoryItem => ({ id: String(r.id), type: String(r.event_type) as PushEventType | typeof PUSH_TEST_EVENT_TYPE, title: String(r.title), body: String(r.body), url: String(r.url), createdAt: isoOrNull(r.at)!, read: r.read === true }));
   return { items, unread: items.filter((i) => !i.read).length };
 }
 
@@ -437,4 +444,48 @@ export async function runPushWorker(deps: WorkerDeps = {}): Promise<PushWorkerSu
   await detectAndEnqueue(db, now, summary, { elaboracionDays: settings.elaboracionDays, envasadoDays: settings.envasadoDays });
   await dispatchPending(db, now, summary, { sender }, settings.globalSendEnabled);
   return summary;
+}
+
+
+// ───────────────────────── Notificación de prueba (manual, solo Dirección) ─────────────────────────
+
+export type PushTestResult = { sent: number; failed: number; removed: number; devices: number };
+
+/**
+ * Envío PUNTUAL de una notificación REAL de bienvenida a los dispositivos de UN cliente habilitado en el piloto. Es independiente del
+ * interruptor global (no lo lee ni lo cambia) y NO toca work_items, portal_push_order_state ni eventos de pedidos del outbox:
+ * solo deja una fila de historial `prueba` (ya enviada; el worker solo reclama PENDIENTE/PROCESANDO) y la auditoría.
+ */
+export async function sendTestPush(staff: PushStaff, clientId: string, deps: { db?: SqlExec; sender?: PushSender | null } = {}): Promise<PushTestResult> {
+  need(staff);
+  const db = deps.db ?? requireDb();
+  if (!/^[0-9a-f-]{36}$/i.test(clientId)) throw new PortalError("Cliente inválido.", 400, "VALIDATION");
+  const c = ((await db.execute(sql`select id from portal_clients where id = ${clientId}::uuid`)).rows as Row[])[0];
+  if (!c) throw new PortalError("Cliente inexistente.", 404, "NOT_FOUND");
+  if (!(await isPilotEnabled(db, clientId))) throw new PortalError("El cliente no está habilitado en el piloto de notificaciones.", 409, "PUSH_NOT_ENABLED");
+  const sender = deps.sender === undefined ? ((cfg) => (cfg ? createWebPushSender(cfg) : null))(vapidConfig()) : deps.sender;
+  if (!sender) throw new PortalError("Faltan las claves VAPID: no se puede enviar la notificación de prueba.", 503, "PUSH_UNAVAILABLE");
+  const subs = ((await db.execute(sql`select id::text as id, endpoint, p256dh, auth from portal_push_subscriptions where client_id = ${clientId}::uuid order by created_at`)).rows as Row[]).map(
+    (r): PushSubscriptionRow => ({ id: String(r.id), endpoint: String(r.endpoint), p256dh: String(r.p256dh), auth: String(r.auth) }),
+  );
+  if (!subs.length) throw new PortalError("El cliente no tiene dispositivos suscriptos: nadie activó las notificaciones todavía.", 409, "PUSH_NO_DEVICES");
+  // Antirrebote (doble clic / reintentos): una sola prueba por cliente cada 30 s, contada en la base.
+  const rl = await rateLimitHit(db, `push-test:${clientId}`, PUSH_TEST_WINDOW_SECONDS, 1);
+  if (!rl.allowed) throw new PortalError("Ya se envió una notificación de prueba a este cliente hace instantes. Esperá unos segundos.", 429, "RATE_LIMITED");
+
+  const testId = randomUUID();
+  const plan = await planPushSend(subs, { title: PUSH_TEST_TITLE, body: PUSH_TEST_BODY, url: PUSH_TEST_URL, tag: `prueba-${testId}`, eventId: testId }, sender);
+  for (const id of plan.sent) await db.execute(sql`update portal_push_subscriptions set last_ok_at = now(), failures = 0, last_error = null where id = ${id}::uuid`);
+  for (const id of plan.gone) await db.execute(sql`delete from portal_push_subscriptions where id = ${id}::uuid`);
+  for (const f of plan.failed) {
+    await db.execute(sql`update portal_push_subscriptions set failures = failures + 1, last_error = ${f.error} where id = ${f.id}::uuid`);
+    await db.execute(sql`delete from portal_push_subscriptions where id = ${f.id}::uuid and failures >= ${PUSH_MAX_SUBSCRIPTION_FAILURES}`);
+  }
+  if (plan.sent.length > 0) {
+    await db.execute(sql`
+      insert into portal_push_outbox (id, client_id, order_key, order_ref, order_opaque_id, product_key, event_type, title, body, url, status, mode, attempts, sent_count, failed_count, processed_at)
+      values (${testId}::uuid, ${clientId}::uuid, ${`prueba:${testId}`}, null, null, '', ${PUSH_TEST_EVENT_TYPE}, ${PUSH_TEST_TITLE}, ${PUSH_TEST_BODY}, ${PUSH_TEST_URL}, 'ENVIADA', 'REAL', 1, ${plan.sent.length}, ${plan.failed.length}, now())`);
+  }
+  await audit(db, { clientId, type: "PUSH_PRUEBA_ENVIADA", kind: "STAFF", actor: staff.email, detail: { devices: subs.length, sent: plan.sent.length, failed: plan.failed.length, removed: plan.gone.length } });
+  return { sent: plan.sent.length, failed: plan.failed.length, removed: plan.gone.length, devices: subs.length };
 }
