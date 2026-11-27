@@ -652,6 +652,13 @@
       "when": 1793900025000,
       "tag": "0096_portal_usuarios",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1793900026000,
+      "tag": "0097_portal_push",
+      "breakpoints": true
     }
   ]
 }

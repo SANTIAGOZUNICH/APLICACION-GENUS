@@ -101,6 +101,9 @@ APP_ENV=(PATH="$PATH" HOME="${HOME:-/root}" NODE_EXTRA_CA_CERTS="$NODE_EXTRA_CA_
   CRON_SECRET=e2e-cron-secret)
 # Opt-in (circuito): /api/v1/live-sync/operations exige "modo real + adaptador Drive configurado". Se habilita con valores
 # FICTICIOS (sin red ni credenciales reales) solo para que la ruta acepte las mutaciones que escriben en la base descartable.
+if [[ -n "${GENUS_E2E_VAPID_PUBLIC_KEY:-}" ]]; then
+  APP_ENV+=(VAPID_PUBLIC_KEY="$GENUS_E2E_VAPID_PUBLIC_KEY" VAPID_PRIVATE_KEY="$GENUS_E2E_VAPID_PRIVATE_KEY" VAPID_SUBJECT="mailto:e2e@invalid.local")
+fi
 if [[ "${GENUS_E2E_FAKE_LIVE_SYNC:-}" == "1" ]]; then
   APP_ENV+=(GOOGLE_SERVICE_ACCOUNT_EMAIL=e2e-fake@invalid.local GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY=e2e-fake GOOGLE_DRIVE_GENUS_FOLDER_ID=e2e-fake-folder)
 fi

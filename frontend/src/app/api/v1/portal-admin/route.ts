@@ -9,6 +9,7 @@ import {
 import { createDemoToken } from "@/lib/portal/demo-service";
 import { createPortalUser, listPortalUsers, removePortalUser, resetPortalUserPassword, setPortalUserStatus, updatePortalUser } from "@/lib/portal/user-admin-service";
 import { PortalError } from "@/lib/portal/store";
+import { pushAdminOverview, setClientPilot, updatePushSettings } from "@/lib/portal/push/push-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +34,8 @@ export async function GET(request: Request) {
     const view = url.searchParams.get("view") ?? "clients";
     const clientId = id(url.searchParams.get("clientId"));
     // Usuarios con contraseña: Dirección y Administración (cada función valida el rol de nuevo).
+    // Notificaciones push: SOLO Dirección (el servicio lo vuelve a validar).
+    if (view === "push") return NextResponse.json(await pushAdminOverview(staff));
     if (view === "users") return NextResponse.json(await listPortalUsers(staff));
     if (view === "clients") return NextResponse.json({ clients: await listClients(staff), holidays: await listHolidayOverrides(staff) });
     if (view === "history_preview") return NextResponse.json(await historyPreview(staff));
@@ -54,6 +57,8 @@ export async function POST(request: Request) {
     if (!b || typeof b.action !== "string") throw new PortalError("Solicitud inválida.", 400, "VALIDATION");
     const clientId = id(b.clientId);
     switch (b.action) {
+      case "push_settings": return NextResponse.json({ settings: await updatePushSettings(staff, { globalSendEnabled: b.globalSendEnabled, elaboracionDays: b.elaboracionDays, envasadoDays: b.envasadoDays }) });
+      case "push_pilot": return NextResponse.json(await setClientPilot(staff, clientId, b.enabled === true));
       case "create_user": return NextResponse.json(await createPortalUser(staff, { clientId: b.clientId, username: b.username, password: b.password, email: b.email, displayName: b.displayName }), { status: 201 });
       case "activate_user": return NextResponse.json(await setPortalUserStatus(staff, String(b.userId ?? ""), true));
       case "deactivate_user": return NextResponse.json(await setPortalUserStatus(staff, String(b.userId ?? ""), false));
