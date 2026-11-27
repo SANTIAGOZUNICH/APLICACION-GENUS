@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { beginOperationGuard, endOperationGuard } from "@/lib/pwa/operation-guard";
 import { Button } from "@/components/ui/button";
 import { buildPortalAccessMessage, buildWhatsappShareUrl, generateAccessPassword } from "@/lib/portal/access-credentials";
 import type { AdminPortalUser } from "@/lib/portal/user-admin-service";
@@ -40,6 +41,13 @@ export function PortalUsuariosPanel({ onForbidden }: { onForbidden?: () => void 
     setUsers(r.data.users as AdminPortalUser[]);
     setClients(r.data.clients as ClientOpt[]);
   }, [onForbidden]);
+  // Con datos sin enviar o credenciales visibles, bloquea la actualización automática de la app (no perder lo escrito).
+  const dirty = Boolean(secret || form.username || form.password || form.displayName || form.email);
+  useEffect(() => {
+    if (!dirty) return;
+    const id = beginOperationGuard("form-dirty", "Usuarios del portal");
+    return () => endOperationGuard(id);
+  }, [dirty]);
   useEffect(() => {
     // Carga inicial: el estado se actualiza al resolver la consulta.
     // eslint-disable-next-line react-hooks/set-state-in-effect

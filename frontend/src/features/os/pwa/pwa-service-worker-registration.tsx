@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { hasBlockingOperations, subscribeOperationGuards } from "@/lib/pwa/operation-guard";
 import { fetchServerBuild, isBuildSkew } from "@/lib/pwa/build-version";
 
@@ -20,6 +20,7 @@ export function PwaServiceWorkerRegistration() {
   const [updateState, setUpdateState] = useState<UpdateState>("idle");
   const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
   const [blocking, setBlocking] = useState(false);
+  const applyingRef = useRef(false);
 
   useEffect(() => subscribeOperationGuards(() => setBlocking(hasBlockingOperations())), []);
 
@@ -64,11 +65,8 @@ export function PwaServiceWorkerRegistration() {
           if (!worker || cancelled) return;
           setWaitingWorker(worker);
           setUpdateState(hasBlockingOperations() ? "blocked" : "available");
-          worker.addEventListener("statechange", () => {
-            if (worker.state === "activated" && navigator.serviceWorker.controller) {
-              window.location.reload();
-            }
-          });
+          // NUNCA recargar solo al activarse el SW: tiraría lo escrito en formularios (p. ej. «Crear acceso»).
+          // La recarga la dispara únicamente el botón «Actualizar ahora» (applyUpdate), sin operaciones en curso.
         };
 
         if (reg.waiting) trackWaiting(reg.waiting);
@@ -116,7 +114,16 @@ export function PwaServiceWorkerRegistration() {
       return;
     }
     setUpdateState("applying");
-    waitingWorker.postMessage({ type: "SKIP_WAITING" });
+    applyingRef.current = true;
+    // El SW activa con skipWaiting en install: si ya está activo, alcanza con recargar; si sigue en espera, se lo pide.
+    if (waitingWorker.state === "installed") {
+      waitingWorker.addEventListener("statechange", () => {
+        if (waitingWorker.state === "activated" && applyingRef.current && !hasBlockingOperations()) window.location.reload();
+      });
+      waitingWorker.postMessage({ type: "SKIP_WAITING" });
+    } else {
+      window.location.reload();
+    }
   };
 
   if (updateState === "idle" || updateState === "applying") return null;
