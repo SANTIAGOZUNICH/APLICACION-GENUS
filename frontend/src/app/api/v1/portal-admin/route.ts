@@ -7,6 +7,7 @@ import {
   previewClient, removeClientAlias, removeClientEmail, setClientStatus, setHolidayOverride, type Staff,
 } from "@/lib/portal/admin-service";
 import { createDemoToken } from "@/lib/portal/demo-service";
+import { createPortalUser, listPortalUsers, removePortalUser, resetPortalUserPassword, setPortalUserStatus, updatePortalUser } from "@/lib/portal/user-admin-service";
 import { PortalError } from "@/lib/portal/store";
 
 export const runtime = "nodejs";
@@ -31,6 +32,8 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const view = url.searchParams.get("view") ?? "clients";
     const clientId = id(url.searchParams.get("clientId"));
+    // Usuarios con contraseña: Dirección y Administración (cada función valida el rol de nuevo).
+    if (view === "users") return NextResponse.json(await listPortalUsers(staff));
     if (view === "clients") return NextResponse.json({ clients: await listClients(staff), holidays: await listHolidayOverrides(staff) });
     if (view === "history_preview") return NextResponse.json(await historyPreview(staff));
     if (view === "problems") return NextResponse.json(await linkingProblems(staff));
@@ -51,6 +54,12 @@ export async function POST(request: Request) {
     if (!b || typeof b.action !== "string") throw new PortalError("Solicitud inválida.", 400, "VALIDATION");
     const clientId = id(b.clientId);
     switch (b.action) {
+      case "create_user": return NextResponse.json(await createPortalUser(staff, { clientId: b.clientId, username: b.username, password: b.password, email: b.email, displayName: b.displayName }), { status: 201 });
+      case "activate_user": return NextResponse.json(await setPortalUserStatus(staff, String(b.userId ?? ""), true));
+      case "deactivate_user": return NextResponse.json(await setPortalUserStatus(staff, String(b.userId ?? ""), false));
+      case "reset_user_password": return NextResponse.json(await resetPortalUserPassword(staff, String(b.userId ?? "")));
+      case "update_user": await updatePortalUser(staff, String(b.userId ?? ""), { email: b.email, displayName: b.displayName }); return NextResponse.json({ ok: true });
+      case "remove_user": return NextResponse.json(await removePortalUser(staff, String(b.userId ?? "")));
       case "create_client": return NextResponse.json(await createClient(staff, b as { displayName: unknown }), { status: 201 });
       case "enable_access": return NextResponse.json(await setClientAccess(staff, clientId, true));
       case "disable_access": return NextResponse.json(await setClientAccess(staff, clientId, false));

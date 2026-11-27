@@ -66,7 +66,7 @@
 .gp-road-line { position: absolute; left: 2%; right: 2%; bottom: 24px; height: 8px; border-radius: 99px; background: #dbe8f3; overflow: hidden; }
 .gp-road-line i { display: block; height: 100%; background: linear-gradient(90deg, var(--gp-turq), var(--gp-sky)); border-radius: 99px; transition: width 1.2s cubic-bezier(.4, 0, .2, 1); }
 .gp-stops { position: absolute; left: 2%; right: 2%; bottom: 0; height: 52px; }
-.gp-stop { position: absolute; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 2px; width: 25%; text-align: center; }
+.gp-stop { position: absolute; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 2px; width: 16.6%; text-align: center; }
 .gp-stop svg { width: 26px; height: 26px; color: #9bb3c9; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; background: #fff; border-radius: 50%; padding: 3px; box-shadow: 0 0 0 1px var(--gp-line); }
 .gp-stop small { font-size: 11px; color: var(--gp-muted); line-height: 1.15; }
 .gp-stop.done svg { color: var(--gp-turq); box-shadow: 0 0 0 1px #bfe6ec; }
@@ -148,7 +148,7 @@
   .gp-truck { width: 70px; }
   .gp-truck.is-moving .gp-wheel { animation: none; }
   .gp-truck.is-moving { animation: none; }
-  .gp-stop small { font-size: 10px; }
+  .gp-stop small { font-size: 9px; letter-spacing: -.02em; }
   .gp-road { height: 100px; }
   .gp-dialog-actions { flex-direction: column-reverse; }
 }
@@ -162,3 +162,19 @@
 @media (max-width: 560px) { .gp-demo-badge { font-size: 11px; padding: 3px 9px; } .gp-brand { display: none; } }
 .gp-header .gp-btn-sm { white-space: nowrap; }
 @media (max-width: 560px) { .gp-header-in { gap: 8px; } .gp-header .gp-btn-sm { padding: 8px 12px; } }
+
+/* Pedidos (agrupan productos) y estado comercial */
+.gp-orders { display: grid; gap: 22px; }
+.gp-order { background: #fff; border: 1px solid var(--gp-line); border-radius: 22px; padding: 18px; box-shadow: var(--gp-shadow); min-width: 0; }
+.gp-order-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.gp-order-head h3 { font-size: 19px; }
+.gp-order > .gp-message { margin: 10px 0 14px; }
+.gp-order .gp-card { box-shadow: none; background: var(--gp-bg); }
+.gp-pill.s-RECIBIDO, .gp-pill.s-PROGRAMADO { background: #eef2f7; color: #4a627f; }
+.gp-pill.s-CANCELADO { background: #f1f1f1; color: #6b6b6b; }
+.gp-sync { margin: 10px 2px 0; }
+.gp-field small { display: block; margin-top: 4px; color: var(--gp-muted); }
+.gp-tabs { display: flex; gap: 6px; margin: 14px 0 6px; background: var(--gp-bg); border-radius: 12px; padding: 4px; }
+.gp-tab { flex: 1; appearance: none; border: 0; background: transparent; border-radius: 9px; padding: 9px 10px; font: inherit; font-weight: 700; color: var(--gp-muted); cursor: pointer; min-height: 40px; }
+.gp-tab[aria-selected="true"] { background: #fff; color: var(--gp-navy); box-shadow: var(--gp-shadow-sm); }
+@media (max-width: 560px) { .gp-order { padding: 12px; border-radius: 18px; } .gp-grid { grid-template-columns: minmax(0, 1fr); } }

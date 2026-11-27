@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import type { AdminClient } from "@/lib/portal/admin-service";
+import { PortalUsuariosPanel } from "./portal-usuarios-panel";
 
 type Json = Record<string, unknown>;
 type Problems = {
@@ -17,7 +18,7 @@ type Activity = {
   receipts: Array<{ product: string; orderRef: string | null; quantity: string; unit: string | null; confirmedAt: string | null; by: string }>;
   audit: Array<{ type: string; kind: string; actor: string | null; createdAt: string | null }>;
 };
-type Preview = { client: { name: string; code: string }; summary: { inProcess: number; elaboracion: number; envasado: number; listos: number }; products: Array<{ id: string; product: string; orderRef: string | null; stageLabel: string; message: string; quantities: { requested: number | null; delivered: number; pending: number | null; available: number; unit: string | null } }>; deliveries: unknown[] };
+type Preview = { client: { name: string; code: string }; summary: { inProcess: number; elaboracion: number; envasado: number; listos: number }; products: Array<{ id: string; product: string; orderRef: string | null; commercial: { label: string }; message: string; quantities: { requested: number | null; delivered: number; pending: number | null; available: number; unit: string | null } }>; deliveries: unknown[] };
 
 type HistItem = { key: string; name: string; works: number; pedidos: number; entregas: number; similarTo: string[] };
 type HistPreview = { total: number; items: HistItem[]; previewToken: string };
@@ -47,6 +48,8 @@ export function PortalClientesView() {
   const [histExclude, setHistExclude] = useState<Set<string>>(new Set());
   const [histBusy, setHistBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  // Administración solo gestiona usuarios del portal: el resto del panel (clientes, vínculos, feriados) es de Producción y Dirección.
+  const [clientsForbidden, setClientsForbidden] = useState(false);
 
   async function copyCode(code: string) {
     try {
@@ -119,6 +122,7 @@ export function PortalClientesView() {
 
   const load = useCallback(async () => {
     const r = await api("?view=clients");
+    if (!r.ok && r.data.code === "FORBIDDEN") return setClientsForbidden(true);
     if (!r.ok) return setMsg({ kind: "err", text: String(r.data.error ?? "No se pudo cargar el portal.") });
     setClients(r.data.clients as AdminClient[]);
     setHolidays(r.data.holidays as typeof holidays);
@@ -153,9 +157,10 @@ export function PortalClientesView() {
         <header className="space-y-1">
           <h2 className="text-2xl font-semibold tracking-tight">Portal de Clientes</h2>
           <p className="text-sm text-[var(--os-text-muted)]">
-            Habilitá clientes para que sigan sus pedidos en <strong>laboratoriogenus.com.ar/entregas</strong>. Cada cliente entra con su código + un correo autorizado + un código temporal. Los datos salen de GENUS OS; nada se carga dos veces.
+            Habilitá clientes para que sigan sus pedidos en <strong>laboratoriogenus.com.ar/entregas</strong>. Cada cliente entra con un usuario y contraseña, o con su código + un correo autorizado + un código temporal. Los datos salen de GENUS OS; nada se carga dos veces.
           </p>
         </header>
+        {clientsForbidden ? null : (
         <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--os-border)] bg-[var(--os-surface)] p-4" data-testid="portal-demo">
           <div className="max-w-2xl space-y-1">
             <h3 className="font-semibold">Portal de prueba</h3>
@@ -166,8 +171,12 @@ export function PortalClientesView() {
           </div>
           <Button onClick={() => void openDemo()} disabled={demoBusy} data-testid="open-demo">{demoBusy ? "Abriendo…" : "Abrir portal de prueba"}</Button>
         </section>
+        )}
         {msg ? <div role="status" className={`rounded-lg px-3 py-2 text-sm ${msg.kind === "ok" ? "bg-emerald-500/10 text-emerald-700" : "bg-red-500/10 text-red-700"}`}>{msg.text}</div> : null}
 
+        <PortalUsuariosPanel />
+
+        {clientsForbidden ? null : (<>
         <section className="space-y-3 rounded-xl border border-[var(--os-border)] p-4">
           <h3 className="font-semibold">Nuevo cliente</h3>
           <div className="grid gap-3 md:grid-cols-3">
@@ -292,6 +301,7 @@ export function PortalClientesView() {
             <Button onClick={() => void act({ action: "holiday", date: hol.date, name: hol.name, holidayAction: hol.action }, "Excepción guardada.")} disabled={!hol.date || hol.name.trim().length < 2}>Guardar</Button>
           </div>
         </section>
+        </>)}
       </div>
 
       {preview ? (
@@ -300,7 +310,7 @@ export function PortalClientesView() {
             <h3 className="text-lg font-semibold">Lo que ve {preview.client.name} ({preview.client.code})</h3>
             <p className="text-sm text-[var(--os-text-muted)]">Vista de solo lectura, generada con el mismo código que el portal. No inicia sesión como el cliente.</p>
             <p className="text-sm">En proceso {preview.summary.inProcess} · Elaboración {preview.summary.elaboracion} · Envasado {preview.summary.envasado} · Listos {preview.summary.listos}</p>
-            <ul className="space-y-2 text-sm">{preview.products.map((p) => <li key={p.id} className="rounded-lg border border-[var(--os-border)] p-2"><b>{p.product}</b> {p.orderRef ? `· Pedido ${p.orderRef}` : ""} · <b>{p.stageLabel}</b><div className="text-[var(--os-text-muted)]">{p.message}</div><div>Solicitado {p.quantities.requested ?? "—"} · entregado {p.quantities.delivered} · disponible {p.quantities.available} {p.quantities.unit ?? ""}</div></li>)}</ul>
+            <ul className="space-y-2 text-sm">{preview.products.map((p) => <li key={p.id} className="rounded-lg border border-[var(--os-border)] p-2"><b>{p.product}</b> {p.orderRef ? `· Pedido ${p.orderRef}` : ""} · <b>{p.commercial.label}</b><div className="text-[var(--os-text-muted)]">{p.message}</div><div>Solicitado {p.quantities.requested ?? "—"} · entregado {p.quantities.delivered} · disponible {p.quantities.available} {p.quantities.unit ?? ""}</div></li>)}</ul>
             <Button onClick={() => setPreview(null)}>Cerrar</Button>
           </div>
         </div>

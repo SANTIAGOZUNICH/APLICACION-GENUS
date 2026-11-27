@@ -41,7 +41,10 @@ describe("vista del cliente", () => {
       ["Acondicionador", "ENVASADO", "OP-9"],
       ["Shampoo", "ELABORACION", "OP-9"],
     ]);
-    expect(o.summary).toEqual({ inProcess: 2, elaboracion: 1, envasado: 1, listos: 0, entregados: 0 });
+    expect(o.summary).toMatchObject({ inProcess: 2, elaboracion: 1, envasado: 1, listos: 0, entregados: 0, pedidos: 1 });
+    // Un pedido (OP-9) con dos productos en etapas distintas: el pedido figura en la etapa MENOS avanzada.
+    expect(o.orders).toHaveLength(1);
+    expect(o.orders[0]).toMatchObject({ orderRef: "OP-9", status: { id: 3, label: "En elaboración" }, todoListo: false });
   });
 
   it("cadena Elaboración → Envasado del mismo pedido: UNA tarjeta, en Envasado, con la cuenta regresiva desde el ingreso real", () => {
@@ -113,7 +116,7 @@ describe("vista del cliente", () => {
     for (const secret of ["SECRET-WORK-ID", "SECRET-LINE", "PEDIDO-UUID", "ready", "workItemId", "branch_owner", "observ", "formula", "lote", "costo"]) {
       expect(json.toLowerCase()).not.toContain(secret.toLowerCase());
     }
-    expect(Object.keys(toClientPayload(o)).sort()).toEqual(["deliveries", "disclaimer", "products", "summary"]);
+    expect(Object.keys(toClientPayload(o)).sort()).toEqual(["deliveries", "disclaimer", "orders", "products", "summary"]);
   });
 
   it("una confirmación explícita de disponibilidad genera el insumo del aviso con la cantidad confirmada", () => {
@@ -152,5 +155,87 @@ describe("vista del cliente", () => {
     const o = build([row({ productionPedidoId: null, pedidoOp: null, pedidoProducto: null })]);
     expect(o.products[0]!.orderRef).toBeNull();
     expect(o.products[0]!.product).toBe("SHAMPOO PLUS");
+  });
+});
+
+describe("estado comercial y pedidos (vista del cliente)", () => {
+  const mk = (id: string, pedido: string, product: string, over: Partial<RawWorkRow> = {}) => row({ id, productionPedidoId: pedido, pedidoProducto: product, pedidoOp: "OP-77", ...over });
+
+  it("trabajo asignado que todavía no empezó → «Pedido programado»; al empezar → «En elaboración»", () => {
+    const sched = build([mk("w1", "PA", "Crema", { operationalStatus: "pendiente" })], { events: [assigned("w1")] });
+    expect(sched.products[0]!.commercial).toMatchObject({ id: 2, label: "Pedido programado" });
+    const going = build([mk("w1", "PA", "Crema", { operationalStatus: "en_curso" })], { events: [assigned("w1")] });
+    expect(going.products[0]!.commercial.id).toBe(3);
+  });
+
+  it("renglón de pedido sin trabajos → «Pedido recibido» (sin inventar etapas ni cantidades)", () => {
+    const o = buildOverview({ clientId: CLIENT, works: [], deliveries: [], events: [], pedidos: [{ id: "PX", op: "OP-80", producto: "Jabón líquido", estado: "INGRESO", cancelledWorks: 0 }], confirmations: new Map(), now: NOW });
+    expect(o.products).toHaveLength(1);
+    expect(o.products[0]).toMatchObject({ product: "Jabón líquido", orderRef: "OP-80", commercial: { id: 1, label: "Pedido recibido" } });
+    expect(o.products[0]!.quantities.requested).toBeNull();
+    expect(o.orders[0]).toMatchObject({ orderRef: "OP-80", status: { id: 1 } });
+    expect(o.summary).toMatchObject({ recibidos: 1, inProcess: 1 });
+  });
+
+  it("un pedido recibido junto a otro producto ya en envasado mantiene el pedido en «Pedido recibido»", () => {
+    const o = buildOverview({
+      clientId: CLIENT,
+      works: [mk("w2", "PB", "Shampoo", { sector: "ENVASADO_MASIVO" })],
+      deliveries: [],
+      events: [],
+      pedidos: [{ id: "PC", op: "OP-77", producto: "Acondicionador", estado: "INGRESO", cancelledWorks: 0 }],
+      confirmations: new Map(),
+      now: NOW,
+    });
+    expect(o.orders).toHaveLength(1);
+    expect(o.orders[0]).toMatchObject({ status: { id: 1 }, partial: false, progress: { total: 2 } });
+  });
+
+  it("producto cancelado no bloquea el pedido y figura como «Cancelado»; pedido 100 % cancelado no cuenta como en proceso", () => {
+    const mixed = buildOverview({
+      clientId: CLIENT,
+      works: [mk("w3", "PD", "Shampoo", { sector: "ENVASADO_MASIVO", operationalStatus: "revision", completedAt: "2026-10-18T09:00:00Z" })],
+      deliveries: [],
+      events: [],
+      marks: [{ id: "m1", workItemId: "w3", quantity: 5000, at: "2026-10-19T14:00:00Z" }],
+      pedidos: [{ id: "PE", op: "OP-77", producto: "Crema", estado: "INGRESO", cancelledWorks: 1 }],
+      confirmations: new Map(),
+      now: NOW,
+    });
+    expect(mixed.products.find((p) => p.product === "Crema")!.commercial).toMatchObject({ id: 0, key: "CANCELADO" });
+    expect(mixed.orders[0]).toMatchObject({ status: { id: 5, label: "Listo para entregar" }, todoListo: true, progress: { total: 1, cancelados: 1 } });
+    const all = buildOverview({ clientId: CLIENT, works: [], deliveries: [], events: [], pedidos: [{ id: "PF", op: "OP-90", producto: "X", estado: "INGRESO", cancelledWorks: 2 }], confirmations: new Map(), now: NOW });
+    expect(all.orders[0]).toMatchObject({ cancelled: true, status: { id: 0 } });
+    expect(all.summary).toMatchObject({ inProcess: 0, pedidos: 0 });
+  });
+
+  it("pedido de dos productos: uno listo (marca explícita) y otro en envasado → el pedido NO es «Listo para entregar»", () => {
+    const a = mk("wa", "PG", "Shampoo", { sector: "ENVASADO_MASIVO", operationalStatus: "revision", completedAt: "2026-10-18T09:00:00Z" });
+    const b = mk("wb", "PH", "Acondicionador", { sector: "ENVASADO_MASIVO", operationalStatus: "en_curso" });
+    const o = build([a, b], { marks: [{ id: "m1", workItemId: "wa", quantity: 5000, at: "2026-10-19T14:00:00Z" }] });
+    const prods = Object.fromEntries(o.products.map((p) => [p.product, p.commercial.id]));
+    expect(prods).toEqual({ Shampoo: 5, Acondicionador: 4 });
+    expect(o.orders).toHaveLength(1);
+    expect(o.orders[0]).toMatchObject({ status: { id: 4 }, todoListo: false, partial: true, progress: { listos: 1, enProceso: 1, total: 2 } });
+    expect(o.orders[0]!.progressText).toBe("Productos listos o entregados: 1 de 2");
+  });
+
+  it("reproceso (Calidad rechazó): un producto listo vuelve a «En envasado» y el cliente no ve el motivo", () => {
+    const a = mk("wa", "PG", "Shampoo", { sector: "ENVASADO_MASIVO", operationalStatus: "revision", completedAt: "2026-10-18T09:00:00Z", qualityStatus: "rechazado" });
+    const o = build([a], { marks: [{ id: "m1", workItemId: "wa", quantity: 5000, at: "2026-10-19T14:00:00Z" }] });
+    expect(o.products[0]).toMatchObject({ commercial: { id: 4 }, stage: "ENVASADO" });
+    const json = JSON.stringify(toClientPayload(o)).toLowerCase();
+    for (const leak of ["rechaz", "calidad", "reproceso", "quality"]) expect(json).not.toContain(leak);
+  });
+
+  it("lista blanca: campos extra en las filas operativas (fórmula, costo, operario, incidencia) NO llegan al cliente", () => {
+    const poisoned = { ...row({ id: "w-p", sector: "ENVASADO_MASIVO" }), formula: "FORMULA-SECRETA", costoUnitario: 99, operario: "JUAN OPERARIO", incidencia: "DERRAME INTERNO", lote: "L-123" } as unknown as RawWorkRow;
+    const o = build([poisoned]);
+    // contaminación también en el objeto de vista ya armado
+    (o.products[0] as unknown as Record<string, unknown>).formula = "FORMULA-SECRETA";
+    (o.products[0]!.quantities as unknown as Record<string, unknown>).costo = 5;
+    (o.orders[0] as unknown as Record<string, unknown>).operario = "JUAN";
+    const json = JSON.stringify(toClientPayload(o));
+    for (const leak of ["FORMULA-SECRETA", "JUAN", "DERRAME", "L-123", "costo"]) expect(json).not.toContain(leak);
   });
 });

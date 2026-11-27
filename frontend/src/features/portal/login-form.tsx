@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { PortalHeader } from "./shell";
 
 type Step = "datos" | "codigo";
+type Mode = "usuario" | "correo";
 
 async function post(path: string, body: unknown) {
   const res = await fetch(`/entregas/api/${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), credentials: "same-origin" });
@@ -12,6 +13,9 @@ async function post(path: string, body: unknown) {
 }
 
 export function LoginForm({ initialCode = "" }: { initialCode?: string }) {
+  const [mode, setMode] = useState<Mode>("usuario");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [step, setStep] = useState<Step>("datos");
   const [code, setCode] = useState(initialCode);
   const [email, setEmail] = useState("");
@@ -29,6 +33,26 @@ export function LoginForm({ initialCode = "" }: { initialCode?: string }) {
         setStep("codigo");
         setMsg({ kind: "ok", text: r.json.message ?? "Te enviamos un código si los datos son correctos." });
       } else setMsg({ kind: "err", text: r.json.error ?? "No pudimos procesar la solicitud." });
+    } catch {
+      setMsg({ kind: "err", text: "No hay conexión. Revisá tu internet y probá de nuevo." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loginWithPassword(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await post("auth/login", { username, password });
+      if (r.ok) {
+        // Con contraseña temporal la página inicial muestra la pantalla obligatoria de cambio.
+        window.location.assign("/entregas");
+        return;
+      }
+      setMsg({ kind: "err", text: r.json.error ?? "Usuario o contraseña incorrectos." });
+      setPassword("");
     } catch {
       setMsg({ kind: "err", text: "No hay conexión. Revisá tu internet y probá de nuevo." });
     } finally {
@@ -60,8 +84,25 @@ export function LoginForm({ initialCode = "" }: { initialCode?: string }) {
       <main className="gp-login">
         <div className="gp-login-card">
           <h1>Ingresá a tu portal</h1>
-          <p className="gp-meta">Seguí el avance de tu producción en tiempo real. Necesitás tu código de cliente y el correo que registramos para vos.</p>
-          {step === "datos" ? (
+          <p className="gp-meta">Seguí el avance de tu producción en tiempo real.</p>
+          <div className="gp-tabs" role="tablist" aria-label="Forma de ingreso">
+            <button type="button" role="tab" className="gp-tab" aria-selected={mode === "usuario"} data-testid="tab-usuario" onClick={() => { setMode("usuario"); setMsg(null); }}>Usuario y contraseña</button>
+            <button type="button" role="tab" className="gp-tab" aria-selected={mode === "correo"} data-testid="tab-correo" onClick={() => { setMode("correo"); setMsg(null); }}>Código por correo</button>
+          </div>
+          {mode === "usuario" ? (
+            <form onSubmit={loginWithPassword} noValidate data-testid="form-usuario">
+              <div className="gp-field">
+                <label htmlFor="gp-user">Usuario</label>
+                <input id="gp-user" name="username" autoComplete="username" autoCapitalize="none" spellCheck={false} value={username} onChange={(e) => setUsername(e.target.value)} required />
+              </div>
+              <div className="gp-field">
+                <label htmlFor="gp-pass">Contraseña</label>
+                <input id="gp-pass" name="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                <small>Si no tenés usuario, pedilo al laboratorio o ingresá con el código que te enviamos por correo.</small>
+              </div>
+              <button className="gp-btn gp-btn-primary" type="submit" disabled={busy || !username.trim() || !password}>{busy ? "Ingresando…" : "Ingresar"}</button>
+            </form>
+          ) : step === "datos" ? (
             <form onSubmit={requestCode} noValidate>
               <div className="gp-field">
                 <label htmlFor="gp-code">Código de cliente</label>

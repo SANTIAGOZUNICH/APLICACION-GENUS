@@ -24,6 +24,7 @@ import {
   type RawDeliveryRow,
   type RawEventRow,
   type RawMarkRow,
+  type RawPedidoRow,
   type RawWorkRow,
 } from "./overview";
 import type { PortalSession } from "./auth-service";
@@ -55,17 +56,40 @@ export async function findClientWorkIds(db: SqlExec, clientId: string): Promise<
   return pairs.filter((p) => keys.has(clientKey(String(p.client ?? "")))).map((p) => String(p.id));
 }
 
-export type ClientFacts = { works: RawWorkRow[]; deliveries: RawDeliveryRow[]; events: RawEventRow[]; marks: RawMarkRow[] };
+export type ClientFacts = { works: RawWorkRow[]; deliveries: RawDeliveryRow[]; events: RawEventRow[]; marks: RawMarkRow[]; pedidos: RawPedidoRow[] };
+
+const CANCELLED_WORK = sql`(w2.operational_cancelled_at is not null or w2.operational_status = 'cancelado' or w2.status::text = 'CANCELADO')`;
+
+/**
+ * Renglones de pedido del cliente SIN trabajos vivos: recién recibidos (estado INGRESO) o cuyos trabajos se cancelaron.
+ * El cliente se resuelve por la MISMA igualdad exacta de alias que los trabajos: nunca por parecido ni por parámetro del request.
+ */
+export async function loadClientPedidos(db: SqlExec, clientId: string): Promise<RawPedidoRow[]> {
+  const aliases = (await db.execute(sql`select name_key from portal_client_aliases where client_id = ${clientId}::uuid and removed_at is null`)).rows as Row[];
+  const keys = new Set(aliases.map((a) => String(a.name_key)));
+  if (!keys.size) return [];
+  const rows = (await db.execute(sql`
+    select p.id::text as id, p.op, p.producto, p.estado, p.cliente,
+           (select count(*)::int from work_items w2 where w2.production_pedido_id = p.id and w2.deleted_at is null and ${CANCELLED_WORK}) as cancelled_works
+      from production_pedidos p
+     where p.deleted_at is null
+       and not exists (select 1 from work_items w where w.production_pedido_id = p.id and ${LIVE})
+       and (p.estado is null or p.estado = '' or p.estado = 'INGRESO'
+            or exists (select 1 from work_items w2 where w2.production_pedido_id = p.id and w2.deleted_at is null and ${CANCELLED_WORK}))`)).rows as Row[];
+  return rows
+    .filter((r) => keys.has(clientKey(String(r.cliente ?? ""))))
+    .map((r): RawPedidoRow => ({ id: String(r.id), op: str(r.op), producto: str(r.producto), estado: str(r.estado), cancelledWorks: Number(r.cancelled_works ?? 0) }));
+}
 
 /** Trae las filas operativas de esos trabajos. Lista blanca de columnas: nada confidencial se selecciona. */
 export async function loadFacts(db: SqlExec, workIds: string[]): Promise<ClientFacts> {
-  if (!workIds.length) return { works: [], deliveries: [], events: [], marks: [] };
+  if (!workIds.length) return { works: [], deliveries: [], events: [], marks: [], pedidos: [] };
   const list = inList(workIds);
   const works = (await db.execute(sql`
     select w.id::text as id, w.client, w.product, w.sector::text as sector, w.operational_status, w.source, w.created_at, w.completed_at,
            w.progress_updated_at, w.sent_to_codificado_at, coalesce(w.via_codificado, false) as via_codificado, w.planned_quantity, w.unit,
            w.finished_qty, w.deliverable_units, w.packaging_total_units, w.production_pedido_id::text as pedido_id,
-           p.op as pedido_op, p.producto as pedido_producto
+           p.op as pedido_op, p.producto as pedido_producto, w.quality_status
       from work_items w
       left join production_pedidos p on p.id = w.production_pedido_id and p.deleted_at is null
      where w.id in (${list}) and ${LIVE}`)).rows as Row[];
@@ -90,6 +114,7 @@ export async function loadFacts(db: SqlExec, workIds: string[]): Promise<ClientF
      where work_item_id in (${list})`)).rows as Row[];
 
   return {
+    pedidos: [],
     marks: marks.map((r): RawMarkRow => ({ id: String(r.id), workItemId: String(r.work_item_id), quantity: Number(r.quantity), at: isoOrNull(r.marked_at)!, deliveredBefore: Number(r.delivered_before ?? 0), retracted: r.retracted_at != null })),
     works: works.map(
       (r): RawWorkRow => ({
@@ -112,6 +137,7 @@ export async function loadFacts(db: SqlExec, workIds: string[]): Promise<ClientF
         productionPedidoId: str(r.pedido_id),
         pedidoOp: str(r.pedido_op),
         pedidoProducto: str(r.pedido_producto),
+        qualityStatus: str(r.quality_status),
       })
     ),
     events: events.map((r): RawEventRow => ({ workItemId: String(r.work_item_id), type: String(r.type), at: isoOrNull(r.created_at)! })),
@@ -134,8 +160,9 @@ export type LoadedOverview = { overview: PortalOverviewData; facts: ClientFacts 
 
 export async function loadPortalOverview(clientId: string, now: Date = new Date(), db: SqlExec = requireDb()): Promise<LoadedOverview> {
   const ids = await findClientWorkIds(db, clientId);
-  const [facts, confirmations, calendar] = await Promise.all([loadFacts(db, ids), loadConfirmations(db, clientId), loadCalendarOptions(db)]);
-  const overview = buildOverview({ clientId, works: facts.works, deliveries: facts.deliveries, events: facts.events, marks: facts.marks, confirmations, now, calendar });
+  const [facts, confirmations, calendar, pedidos] = await Promise.all([loadFacts(db, ids), loadConfirmations(db, clientId), loadCalendarOptions(db), loadClientPedidos(db, clientId)]);
+  facts.pedidos = pedidos;
+  const overview = buildOverview({ clientId, works: facts.works, deliveries: facts.deliveries, events: facts.events, marks: facts.marks, pedidos, confirmations, now, calendar });
   return { overview, facts };
 }
 
@@ -191,11 +218,11 @@ export async function confirmReceipt(session: PortalSession, opaqueId: string, i
   const rows = (await db.execute(sql`
     insert into portal_receipt_confirmations (id, client_id, delivery_key, work_item_id, product, order_ref, quantity, unit, delivered_at, confirmed_by_email, session_id, ip_hash)
     values (${id}::uuid, ${session.clientId}::uuid, ${raw.key}, ${raw.workItemId}, ${view.product}, ${view.orderRef}, ${view.quantity == null ? "—" : String(view.quantity)}, ${view.unit},
-            ${raw.at}::timestamptz, ${session.email}, ${session.id}::uuid, ${ipHash})
+            ${raw.at}::timestamptz, ${session.actor}, ${session.id}::uuid, ${ipHash})
     on conflict (delivery_key) do nothing
     returning confirmed_at`)).rows as Row[];
   if (!rows[0]) return { ok: false, reason: "already_confirmed" };
-  await audit(db, { clientId: session.clientId, type: "RECEPCION_CONFIRMADA", kind: "CLIENTE", actor: session.email, ipHash, detail: { product: view.product, orderRef: view.orderRef, quantity: view.quantity, deliveredAt: raw.at } });
+  await audit(db, { clientId: session.clientId, type: "RECEPCION_CONFIRMADA", kind: "CLIENTE", actor: session.actor, ipHash, detail: { product: view.product, orderRef: view.orderRef, quantity: view.quantity, deliveredAt: raw.at } });
   // Aviso a Producción por el mecanismo de avisos internos de GENUS OS (best-effort: nunca revierte la constancia).
   try {
     await getDb()
@@ -204,7 +231,7 @@ export async function confirmReceipt(session: PortalSession, opaqueId: string, i
         id: uuidFromKey(`portal-recepcion:${raw.key}`),
         kind: "PORTAL_RECEPCION",
         title: `Recepción confirmada — ${session.clientName}`,
-        message: [`El cliente confirmó la recepción desde el Portal de Clientes.`, `Cliente: ${session.clientName}`, `Producto: ${view.product}`, view.orderRef ? `Pedido: ${view.orderRef}` : null, `Cantidad: ${view.quantity ?? "—"}${view.unit ? ` ${view.unit}` : ""}`, `Confirmó: ${session.email}`].filter(Boolean).join("\n"),
+        message: [`El cliente confirmó la recepción desde el Portal de Clientes.`, `Cliente: ${session.clientName}`, `Producto: ${view.product}`, view.orderRef ? `Pedido: ${view.orderRef}` : null, `Cantidad: ${view.quantity ?? "—"}${view.unit ? ` ${view.unit}` : ""}`, `Confirmó: ${session.actor}`].filter(Boolean).join("\n"),
         sectors: ["PRODUCCION", "DIRECCION"],
         href: null,
         readBy: [],

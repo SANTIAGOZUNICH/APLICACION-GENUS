@@ -97,6 +97,7 @@ const lastOtp = async (email) => {
 };
 async function portalLogin(page, code, email) {
   await page.goto("/entregas");
+  await page.getByTestId("tab-correo").click();
   await page.getByLabel("Código de cliente").fill(code);
   await page.getByLabel("Correo autorizado").fill(email);
   await q("update portal_login_challenges set created_at = created_at - interval '2 minutes' where email = $1", [email]);
@@ -122,6 +123,7 @@ const bg = await d.evaluate(() => getComputedStyle(document.querySelector(".gp")
 check("tema claro (sin modo oscuro)", /rgb\(24[0-9], 24[0-9], 25[0-9]\)/.test(bg) || bg.startsWith("rgb(2") || bg.startsWith("rgb(24"), bg);
 
 // credenciales inválidas: mismo mensaje genérico
+await d.getByTestId("tab-correo").click();
 await d.getByLabel("Código de cliente").fill("GEN-ZZZZZZ");
 await d.getByLabel("Correo autorizado").fill(EMAIL_A);
 await d.getByRole("button", { name: "Enviarme un código" }).click();
@@ -162,7 +164,7 @@ await q("insert into operational_events (work_item_id, type, actor_email, actor_
 await q("update work_items set sector = 'ENVASADO_MASIVO', branch_owner = null, line = 'Línea 3', operational_status = 'en_curso' where id = $1", [wElab]);
 await d.reload();
 const moved = d.getByTestId("product-card").filter({ hasText: "SHAMPOO REPARADOR" });
-await moved.getByTestId("stage-pill").filter({ hasText: "Envasado" }).waitFor();
+await moved.getByTestId("stage-pill").filter({ hasText: "En envasado" }).waitFor();
 check("al pasar a Envasado el mensaje cambia y el camión avanza", (await moved.getByTestId("stage-message").innerText()) === "Tu producto finalizó la elaboración y se encuentra en proceso de envasado." && parseFloat(await moved.getByTestId("truck").evaluate((e) => e.style.left)) > posBefore);
 await d.screenshot({ path: `${OUT}/04-envasado-escritorio.png`, fullPage: true });
 

@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { ChangePasswordForm } from "@/features/portal/change-password-form";
 import { Dashboard, type ClientPayload } from "@/features/portal/dashboard";
 import { LoginForm } from "@/features/portal/login-form";
 import { resolvePortalSession } from "@/lib/portal/auth-service";
@@ -24,6 +25,7 @@ export default async function PortalHome() {
   const token = jar.get(PORTAL_COOKIE_NAME)?.value ?? null;
   const session = await resolvePortalSession(token && /^[A-Za-z0-9_-]{20,200}$/.test(token) ? token : null).catch(() => null);
   if (!session) return <LoginForm />;
+  if (session.mustChangePassword) return <ChangePasswordForm username={session.username ?? ""} />;
   const { overview } = await loadPortalOverview(session.clientId);
   const initial: ClientPayload = { ...toClientPayload(overview), client: { name: session.clientName, code: session.publicCode }, notifications: await listNotifications(session.clientId) };
   const c = portalContact();

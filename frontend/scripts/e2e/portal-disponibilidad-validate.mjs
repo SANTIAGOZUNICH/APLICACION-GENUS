@@ -72,6 +72,7 @@ const openDrawer = async (page, finished) => {
 const browser = await chromium.launch({ executablePath: process.env.GENUS_E2E_CHROMIUM_PATH || undefined });
 async function portalLogin(page) {
   await page.goto("/entregas");
+  await page.getByTestId("tab-correo").click();
   await page.getByLabel("Código de cliente").fill(client.publicCode);
   await page.getByLabel("Correo autorizado").fill(EMAIL);
   await q("update portal_login_challenges set created_at = created_at - interval '2 minutes' where email = $1", [EMAIL]);
@@ -92,7 +93,7 @@ const pctx = await browser.newContext({ baseURL: BASE, viewport: { width: 1280, 
 const pp = await pctx.newPage();
 await portalLogin(pp);
 const pcard = () => pp.getByTestId("product-card").filter({ hasText: PRODUCT });
-check("portal antes de confirmar: el producto está en Envasado (no «Listo»)", (await pcard().getByTestId("stage-pill").innerText()) === "Envasado");
+check("portal antes de confirmar: el producto está en Envasado (no «Listo»)", (await pcard().getByTestId("stage-pill").innerText()) === "En envasado");
 
 // ── GENUS OS: usuario de Envasado Masivo ──
 const ectx = await browser.newContext({ baseURL: BASE, viewport: { width: 1440, height: 900 } });
@@ -131,7 +132,7 @@ await ep.screenshot({ path: `${OUT}/03-genus-os-marcado.png` });
 // ── Portal DESPUÉS: parcial ──
 await pp.reload();
 const pnote = await pcard().getByTestId("partial-note").innerText();
-check("portal: disponibilidad parcial (solicitado 5.000 · disponible 2.000 · pendiente 3.000), NO «Listo» todavía", (await pcard().getByTestId("stage-pill").innerText()) === "Envasado" && /disponible 2\.000/.test(pnote) && /pendiente 3\.000/.test(pnote) && /5\.000/.test(pnote), pnote);
+check("portal: disponibilidad parcial (solicitado 5.000 · disponible 2.000 · pendiente 3.000), NO «Listo» todavía", (await pcard().getByTestId("stage-pill").innerText()) === "En envasado" && /disponible 2\.000/.test(pnote) && /pendiente 3\.000/.test(pnote) && /5\.000/.test(pnote), pnote);
 check("portal: fecha y hora de disponibilidad y mensaje de parte lista", (await pcard().getByTestId("available-since").count()) === 1 && (await pcard().getByTestId("stage-message").innerText()).includes("Una parte de tu pedido ya está lista"));
 await pp.screenshot({ path: `${OUT}/04-portal-parcial.png`, fullPage: true });
 const mailsAfterFirst = (await q("select 1 from portal_email_outbox where kind = 'LISTO_PARA_ENTREGAR'")).length;
