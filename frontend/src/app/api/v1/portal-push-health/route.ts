@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Salud del circuito de notificaciones del Portal de Clientes — SOLO Dirección (sesión de GENUS OS; el servicio lo vuelve a validar).
+ * Salud del circuito de notificaciones del Portal de Clientes — Administración, Producción y Dirección (`canManagePortal`; sesión de GENUS OS; el servicio lo vuelve a validar).
  * Permite verificar producción SIN acceso a la base: VAPID, cron (último latido, «sin ejecuciones recientes» si pasó más de 5 minutos),
  * cola, y por cliente dispositivos, envío simulado vs real, «aceptado por el servicio push» vs «recepción comprobada en el dispositivo» y el
  * último error. No devuelve endpoints, claves ni datos de contacto. `ok: false` + `problems[]` dicen qué corregir.

@@ -235,7 +235,7 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: estado y notificaciones, circuito com
     // Dirección habilita al piloto: A con ENVÍO REAL (solo A), B solo piloto (simulado), global sigue APAGADO.
     await s.setClientPilot(direccion, A.id, true);
     await s.setClientPilot(direccion, B.id, true);
-    await expect(s.setClientRealSend({ email: "x@y.z", sector: "PRODUCCION" }, A.id, true, { confirm: true })).rejects.toMatchObject({ status: 403 });
+    await expect(s.setClientRealSend({ email: "x@y.z", sector: "ENVASADO_MASIVO" }, A.id, true, { confirm: true })).rejects.toMatchObject({ status: 403 });
     await expect(s.setClientRealSend(direccion, A.id, true)).rejects.toMatchObject({ code: "CONFIRM_REQUIRED" });
     expect(await s.setClientRealSend(direccion, A.id, true, { confirm: true })).toEqual({ realSend: true });
     expect((await s.getPushSettings()).globalSendEnabled).toBe(false);
@@ -514,12 +514,12 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: estado y notificaciones, circuito com
     const hb = await s.workerHeartbeat((await import("@/lib/db/client")).getDb() as never);
     expect(hb.runsTotal).toBeGreaterThan(t0);
     expect(hb).toMatchObject({ lastTrigger: "cron", lastCronOk: true });
-    // Salud (solo Dirección): sin datos sensibles
+    // Salud (Administración/Producción/Dirección): sin datos sensibles
     const h = await s.pushHealth(direccion);
     expect(h.cron).toMatchObject({ secretConfigured: true, stale: false, lastOk: true });
     expect(h.problems.some((p) => p.includes("SIMULADO") && p.includes("OTRO CLIENTE"))).toBe(true);
     expect(JSON.stringify(h)).not.toMatch(/https:\/\/localhost|p256dh|VAPID_PRIVATE/);
-    await expect(s.pushHealth({ email: "x@y.z", sector: "PRODUCCION" })).rejects.toMatchObject({ status: 403 });
+    await expect(s.pushHealth({ email: "x@y.z", sector: "DEPOSITO" })).rejects.toMatchObject({ status: 403 });
     const route = await import("@/app/api/v1/portal-push-health/route");
     expect(typeof route.GET).toBe("function");
   });

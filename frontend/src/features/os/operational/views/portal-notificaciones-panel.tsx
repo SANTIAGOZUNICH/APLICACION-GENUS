@@ -14,7 +14,7 @@ const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleStr
 const input = "w-20 rounded-lg border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm";
 
 /**
- * Notificaciones push del Portal de Clientes — SOLO Dirección (el servidor lo vuelve a validar).
+ * Notificaciones push del Portal de Clientes — Administración, Producción y Dirección (`canManagePortal`; el servidor lo vuelve a validar).
  * Interruptor global de envío REAL (apagado por defecto: el worker solo registra eventos «simulados»), plazos estimados en días
  * hábiles y habilitación individual del piloto por cliente (al habilitar se registra el estado actual como ya notificado).
  */

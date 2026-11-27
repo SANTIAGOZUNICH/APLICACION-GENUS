@@ -30,10 +30,10 @@ describe("sendTestPush — validaciones previas (sin red ni base real)", () => {
     expect(PUSH_TEST_URL).toBe("/entregas");
   });
 
-  it("solo Dirección: cualquier otro sector recibe 403 sin tocar la base ni el sender", async () => {
+  it("solo Administración, Producción y Dirección: cualquier otro sector recibe 403 sin tocar la base ni el sender", async () => {
     const { db } = fakeDb([]);
     const sender = vi.fn();
-    for (const sector of ["PRODUCCION", "ADMINISTRACION", "ENVASADO_MASIVO", "COMERCIAL"]) {
+    for (const sector of ["ENVASADO_MASIVO", "COMERCIAL", "DEPOSITO", "CODIFICADO", "CALIDAD"]) {
       await expect(sendTestPush({ email: "x@y.z", sector }, CLIENT, { db, sender })).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
     }
     expect(db.execute).not.toHaveBeenCalled();

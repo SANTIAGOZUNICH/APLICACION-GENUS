@@ -103,9 +103,14 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: notificaciones push en Postgres real$
   });
 
   // ───────────────────────── Permisos ─────────────────────────
-  it("solo Dirección administra el piloto, los plazos y el interruptor (Producción, Administración y Envasado → 403)", async () => {
+  it("Administración, Producción y Dirección administran el piloto, los plazos y el interruptor; Envasado y otros sectores → 403", async () => {
     const s = await svc();
-    for (const staff of [produccion, administracion, envasado]) {
+    for (const staff of [produccion, administracion]) {
+      expect((await s.pushAdminOverview(staff)).settings.globalSendEnabled).toBe(false);
+      await expect(s.setClientPilot(staff, A.id, true)).resolves.toBeDefined();
+      await s.setClientPilot(staff, A.id, false);
+    }
+    for (const staff of [envasado, { ...envasado, sector: "DEPOSITO" }, { ...envasado, sector: "CODIFICADO" }]) {
       await expect(s.pushAdminOverview(staff)).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
       await expect(s.updatePushSettings(staff, { globalSendEnabled: true })).rejects.toMatchObject({ status: 403 });
       await expect(s.setClientPilot(staff, A.id, true)).rejects.toMatchObject({ status: 403 });
@@ -384,8 +389,8 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: notificaciones push en Postgres real$
     expect(send).not.toHaveBeenCalled();
     await expect(s.sendTestPush(direccion, C.id, { sender: null })).rejects.toMatchObject({ status: 503, code: "PUSH_UNAVAILABLE" });
 
-    // 403 para todo sector que no sea Dirección.
-    for (const staff of [produccion, administracion, envasado]) await expect(s.sendTestPush(staff, C.id, { sender: send })).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
+    // 403 para todo sector que no sea Administración/Producción/Dirección.
+    for (const staff of [envasado, { ...envasado, sector: "DEPOSITO" }]) await expect(s.sendTestPush(staff, C.id, { sender: send })).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
 
     await s.savePushSubscription(C.sess, SUB("c-phone"), "Mozilla C1");
     await s.savePushSubscription(C.sess, SUB("c-dead"), "Mozilla C2");
@@ -452,9 +457,9 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: notificaciones push en Postgres real$
     await s.updatePushSettings(direccion, { globalSendEnabled: false });
   });
 
-  it("la ruta admin push_test devuelve 403 a quien no es Dirección (el servicio lo valida de nuevo)", async () => {
+  it("la ruta admin push_test devuelve 403 a quien no administra el portal (el servicio lo valida de nuevo)", async () => {
     const s = await svc();
-    await expect(s.sendTestPush(produccion, A.id, { sender: vi.fn() })).rejects.toMatchObject({ status: 403 });
+    await expect(s.sendTestPush(envasado, A.id, { sender: vi.fn() })).rejects.toMatchObject({ status: 403 });
     await expect(s.sendTestPush(direccion, "no-es-uuid", { sender: vi.fn() })).rejects.toMatchObject({ status: 400, code: "VALIDATION" });
   });
 

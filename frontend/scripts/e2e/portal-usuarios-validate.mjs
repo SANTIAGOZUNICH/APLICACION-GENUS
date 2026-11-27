@@ -57,11 +57,13 @@ const clientsList = await (await direccion.get("/api/v1/portal-admin?view=client
 const idA = clientsList.clients.find((c) => c.publicCode === createA.publicCode).id;
 const idB = clientsList.clients.find((c) => c.publicCode === createB.publicCode).id;
 
-// Permisos por sector (backend): solo Dirección y Administración gestionan usuarios.
-const denyProd = await post(produccion, "create_user", { clientId: idA, username: `intruso-${RUN.toLowerCase()}` });
+// Permisos por sector (backend): Administración, Producción y Dirección gestionan usuarios; los demás sectores reciben 403.
+const depCtx = await pwRequest.newContext({ baseURL: BASE });
+await depCtx.post("/api/v1/auth/login", { data: { email: E2E_USERS.deposito.email, password: E2E_PASSWORD } });
+const denyProd = await post(depCtx, "create_user", { clientId: idA, username: `intruso-${RUN.toLowerCase()}` });
 const denyEnv = await post(envCtx, "create_user", { clientId: idA, username: `intruso2-${RUN.toLowerCase()}` });
-check("Producción y Envasado NO pueden crear usuarios del portal (403)", denyProd.status() === 403 && denyEnv.status() === 403);
-check("Producción y Envasado NO ven el listado de usuarios (403)", (await produccion.get("/api/v1/portal-admin?view=users")).status() === 403 && (await envCtx.get("/api/v1/portal-admin?view=users")).status() === 403);
+check("Depósito y Envasado NO pueden crear usuarios del portal (403)", denyProd.status() === 403 && denyEnv.status() === 403);
+check("Depósito y Envasado NO ven el listado de usuarios (403)", (await depCtx.get("/api/v1/portal-admin?view=users")).status() === 403 && (await envCtx.get("/api/v1/portal-admin?view=users")).status() === 403);
 const uA = await post(direccion, "create_user", { clientId: idA, username: USER_A.toUpperCase(), displayName: "Compras A" });
 const uAj = await uA.json();
 const uB = await post(adminCtx, "create_user", { clientId: idB, username: USER_B });

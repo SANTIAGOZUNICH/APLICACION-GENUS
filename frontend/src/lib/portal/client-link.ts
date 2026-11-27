@@ -19,6 +19,7 @@ import { schedulePortalPush } from "./push/push-trigger";
 import { ensureClientIdentity, type IdentitySource } from "./client-identity";
 import { normalizeClientName } from "./client-identity-rules";
 import { buildNameIndex, isClientUuid, resolveName, type NameIndex } from "./client-link-rules";
+import { canManagePortal, PORTAL_FORBIDDEN_MESSAGE } from "./portal-access";
 import { audit, PortalError, type Row, type SqlExec } from "./store";
 
 const LIVE_W = sql`w.deleted_at is null and w.operational_cancelled_at is null and w.operational_status <> 'cancelado' and w.status::text <> 'CANCELADO'`;
@@ -274,8 +275,8 @@ export async function runIdBackfill(opts: { execute: boolean; actor?: string | n
   return report;
 }
 
-/** Ejecución bajo demanda: SOLO Dirección. */
+/** Ejecución bajo demanda: Administración, Producción y Dirección. */
 export async function executeIdBackfill(staff: { email: string; sector: string }, db: SqlExec = getDb() as unknown as SqlExec): Promise<BackfillReport> {
-  if (staff.sector !== "DIRECCION") throw new PortalError("Solo Dirección puede vincular los pedidos históricos por ID.", 403, "FORBIDDEN");
+  if (!canManagePortal(staff.sector)) throw new PortalError(PORTAL_FORBIDDEN_MESSAGE, 403, "FORBIDDEN");
   return runIdBackfill({ execute: true, actor: staff.email }, db);
 }

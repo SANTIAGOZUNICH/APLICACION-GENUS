@@ -13,6 +13,7 @@ import { sql } from "drizzle-orm";
 import { clientKey } from "@/lib/entregas/rules";
 import { loadPortalOverview } from "../data-service";
 import type { PortalSession } from "../auth-service";
+import { canManagePortal, PORTAL_FORBIDDEN_MESSAGE } from "../portal-access";
 import { audit, isoOrNull, rateLimitHit, requireDb, PortalError, type Row, type SqlExec } from "../store";
 import { constantTimeEqual, hmac } from "../security";
 import {
@@ -38,12 +39,12 @@ import {
 import { planPushSend, type DeviceOutcome, type PushPayload, type PushSender, type PushSubscriptionRow } from "./push-send";
 import { createWebPushSender, vapidConfig, vapidFingerprint, vapidPublicKey, type VapidConfig } from "./vapid";
 
-// ───────────────────────── Permisos (solo Dirección) ─────────────────────────
+// ───────────────────────── Permisos (Administración, Producción y Dirección) ─────────────────────────
 
 export type PushStaff = { email: string; sector: string };
-export const canManagePush = (sector: string) => sector === "DIRECCION";
+export const canManagePush = canManagePortal;
 const need = (s: PushStaff) => {
-  if (!canManagePush(s.sector)) throw new PortalError("Solo Dirección administra las notificaciones del portal.", 403, "FORBIDDEN");
+  if (!canManagePush(s.sector)) throw new PortalError(PORTAL_FORBIDDEN_MESSAGE, 403, "FORBIDDEN");
 };
 
 // ───────────────────────── Configuración ─────────────────────────
@@ -186,7 +187,7 @@ export async function clientSendMode(db: SqlExec, clientId: string): Promise<{ p
 }
 
 /**
- * Habilita/deshabilita el ENVÍO REAL a UN cliente piloto (solo Dirección, con confirmación explícita). Funciona aunque el interruptor
+ * Habilita/deshabilita el ENVÍO REAL a UN cliente piloto (Administración, Producción o Dirección, con confirmación explícita). Funciona aunque el interruptor
  * global siga apagado y no cambia nada de los demás clientes. Exige que el cliente ya esté en el piloto (baseline hecho).
  */
 export async function setClientRealSend(staff: PushStaff, clientId: string, enabled: boolean, opts: { confirm?: unknown } = {}, db: SqlExec = requireDb()): Promise<{ realSend: boolean }> {
@@ -731,7 +732,7 @@ export async function portalClientOfWork(db: SqlExec, workItemId: string): Promi
   return r?.id ? String(r.id) : null;
 }
 
-// ───────────────────────── Notificación de prueba (manual, solo Dirección) ─────────────────────────
+// ───────────────────────── Notificación de prueba (manual; Administración, Producción y Dirección) ─────────────────────────
 
 export type PushTestResult = {
   /** Id del evento de prueba (sirve para consultar después si llegó el acuse de recepción). */
@@ -798,7 +799,7 @@ export async function getTestPushStatus(staff: PushStaff, testId: string, db: Sq
 }
 
 
-// ───────────────────────── Salud (solo Dirección): verificar producción sin acceso a la base ─────────────────────────
+// ───────────────────────── Salud (Administración, Producción y Dirección): verificar producción sin acceso a la base ─────────────────────────
 
 export type PushHealth = {
   ok: boolean;

@@ -39,6 +39,7 @@ const login = async (email) => {
 };
 const direccion = await login(E2E_USERS.direccion.email);
 const produccion = await login(E2E_USERS.produccion.email);
+const deposito = await login(E2E_USERS.deposito.email);
 const post = (ctx, action, data) => ctx.post("/api/v1/portal-admin", { data: { action, ...data } });
 
 // ───────── Preparación ─────────
@@ -211,8 +212,8 @@ await a.getByTestId("app-panel").waitFor();
 await a.getByTestId("push-toggle").waitFor({ timeout: 20000 });
 check("sin piloto de envío: el dispositivo igual se puede registrar (el piloto solo decide el ENVÍO); estado «desactivadas», permiso solo tras el clic", (await a.getByTestId("push-toggle").getAttribute("data-state")) === "off" && (await a.evaluate(() => window.__pushStubCalls)) === 0 && /Notificaciones desactivadas/.test(await a.getByTestId("push-state").innerText()));
 // Permisos: Producción NO puede tocar el piloto (backend); Dirección sí y el baseline queda sin envíos.
-const denied = await post(produccion, "push_pilot", { clientId: idA, enabled: true });
-check("Producción NO puede habilitar el piloto ni ver el panel push (403)", denied.status() === 403 && (await produccion.get("/api/v1/portal-admin?view=push")).status() === 403 && (await post(produccion, "push_settings", { globalSendEnabled: true })).status() === 403);
+const denied = await post(deposito, "push_pilot", { clientId: idA, enabled: true });
+check("Un sector ajeno (Depósito) NO puede habilitar el piloto ni ver el panel push (403)", denied.status() === 403 && (await deposito.get("/api/v1/portal-admin?view=push")).status() === 403 && (await post(deposito, "push_settings", { globalSendEnabled: true })).status() === 403);
 const on = await post(direccion, "push_pilot", { clientId: idA, enabled: true });
 const onJ = await on.json();
 check("Dirección habilita el piloto del cliente A: baseline sin enviar nada", on.status() === 200 && onJ.enabled === true && (await q("select count(*)::int as n from portal_push_outbox where client_id = $1::uuid", [idA]))[0].n === 0 && (await q("select count(*)::int as n from portal_push_order_state where client_id = $1::uuid", [idA]))[0].n >= 1, JSON.stringify(onJ));
@@ -291,6 +292,7 @@ check("el cliente NO ve en su historial los eventos simulados", (await a.getByTe
   await p.locator('button[type="submit"]').click();
   await p.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 30000 });
   await p.getByText("Portal de Clientes").first().click();
+  await p.getByTestId("portal-tab-push").click();
   await p.getByTestId("portal-push-admin").waitFor({ timeout: 30000 });
   check("GENUS OS: Dirección ve el panel con envío real APAGADO por defecto, plazos 8/3 e indicadores", /APAGADO/.test(await p.getByTestId("push-global-state").innerText()) && (await p.getByTestId("push-days-elab").inputValue()) === "8" && (await p.getByTestId("push-days-env").inputValue()) === "3" && (await p.getByTestId("q-sim").innerText()) !== "");
   const rowA = p.getByTestId("push-client-row").filter({ hasText: `Cliente A ${RUN}` });
@@ -326,7 +328,7 @@ check("el cliente NO ve en su historial los eventos simulados", (await a.getByTe
     && (await q("select count(*)::int as n from work_items"))[0].n === workBefore
     && (await q("select count(*)::int as n from portal_push_order_state"))[0].n === orderStateBefore
     && (await q("select count(*)::int as n from portal_push_outbox where event_type <> 'prueba'"))[0].n === outboxBefore);
-  check("Producción NO puede enviar la prueba (403)", (await post(produccion, "push_test", { clientId: idA })).status() === 403);
+  check("Depósito NO puede enviar la prueba (403)", (await post(deposito, "push_test", { clientId: idA })).status() === 403);
   await p.screenshot({ path: `${OUT}/05-panel-direccion.png`, fullPage: true });
   await octx.close();
 }
