@@ -29,3 +29,35 @@ Recibido, Elaboración, Envasado, Listo, Entregado: ver `src/lib/portal/push/pus
 
 ## Qué NO se puede comprobar desde acá
 Recepción física en un celular (FCM/APNs), ejecución real del cron en Vercel, y las claves VAPID/CRON_SECRET de producción.
+
+## Acceso de Administración y Producción al Portal de Clientes (auditoría de roles)
+
+Los usuarios operativos usan los sectores **ADMINISTRACION** («Administración / Facturación») y **PRODUCCION**; no tienen cuenta de **DIRECCION**. Los ids reales de sector están en `OPERATIONAL_SECTOR_IDS` (`src/types/operational/sector.ts`).
+
+### Qué dependía SOLO de Dirección (antes)
+
+| Punto | Archivo | Antes |
+|---|---|---|
+| Panel «Notificaciones push» (resumen, plazos, interruptor global) | `push-service.ts` `canManagePush` + `GET portal-admin?view=push`, `POST push_settings` | solo DIRECCION |
+| Piloto por cliente, envío REAL por cliente, notificación de prueba, estado de la prueba | `push-service.ts` (`setClientPilot`, `setClientRealSend`, `sendTestPush`, `getTestPushStatus`) vía `POST portal-admin` `push_pilot`/`push_real_send`/`push_test` | solo DIRECCION |
+| Historial/diagnóstico y salud | `push-service.ts` `pushHealth`, `GET /api/v1/portal-push-health` | solo DIRECCION |
+| Usuarios/credenciales/reset | `user-admin-service.ts` `canManagePortalUsers` | DIRECCION + ADMINISTRACION (Producción excluida) |
+| Clientes habilitados, accesos, alias/correos, feriados, vista previa, actividad | `admin-service.ts` `canManagePortal` | PRODUCCION + DIRECCION (Administración excluida) |
+| Portal de prueba (`demo_launch`) | `demo-service.ts` | PRODUCCION + DIRECCION |
+| Vínculo por ID de históricos (`backfill_links`, `executeIdBackfill`) | `client-link.ts` | solo DIRECCION |
+| Textos/etiquetas de UI («solo Dirección») | `portal-clientes-view.tsx`, paneles | — |
+
+Hoy no existían otras rutas del portal administrativo: `portal-admin` y `portal-push-health` son los únicos endpoints internos; las rutas `/entregas/api/*` son del cliente final (sesión de portal, no de GENUS OS). El menú lateral ya incluía `portal_clientes` para PRODUCCION, DIRECCION y ADMINISTRACION (`sector-registry.ts`); lo que faltaba era que sus paneles/endpoints aceptaran a esos roles.
+
+### Qué se cambió
+
+- Un único permiso compartido: `canManagePortal(sector)` en `src/lib/portal/portal-access.ts` (sin código de servidor, lo usan backend y frontend). Permite ADMINISTRACION, PRODUCCION y DIRECCION; cualquier otro sector (Depósito, Envasado, Codificado, Elaboración, Calidad, Materia Prima, Comercial…) recibe 403.
+- Backend: `admin-service`, `user-admin-service` (`canManagePortalUsers`), `push-service` (`canManagePush`), `demo-service` y `client-link` usan ese helper (los alias exportados se mantienen por compatibilidad). `portal-admin` y `portal-push-health` siguen revalidando en cada servicio.
+- Frontend: `PortalClientesView` (pestaña lateral «Portal de Clientes», ya existente) ahora tiene las secciones «Usuarios y accesos», «Seguimiento de pedidos» (portal de prueba + problemas de vinculación), «Notificaciones push» y «Configuración» (feriados), reutilizando los mismos bloques; un sector sin permiso ve un aviso. Dirección conserva todo.
+- Sin migraciones, sin cambios en cuentas ni roles. El envío general a clientes reales sigue APAGADO por defecto (`global_send_enabled`); solo cambia quién puede administrarlo.
+
+### Otros puntos con DIRECCION exclusiva (reportados, NO modificados: no son del portal)
+`ubicaciones` (config: DEPOSITO+DIRECCION), `me-status`, `coa`, `inventory/rbac` (supervisión ME/MP), `mp-control`, `codificado-handoff-service`, `empty-draft`, `formulas/resolve`, `weekly-plans-rbac`, `INSUMO_ADMIN_SECTORS` y `cajas-genus` (ADMINISTRACION+DIRECCION, sin Producción). Además, el aviso interno «Recepción confirmada» (`data-service.ts`) sigue dirigido a PRODUCCION y DIRECCION (no a ADMINISTRACION), y «rectificar disponibilidad» (`availability-rules.ts`) sigue siendo de Producción/Dirección/sector que marcó.
+
+### Verificación
+Unitaria `portal-access.test.ts`; integración Postgres `portal-push`, `portal-notificaciones`, `portal-usuarios`, `portal-vinculo`; E2E Chromium `portal-notificaciones-validate.mjs` (sección 10: sesión real como Administración y como Producción, pestaña, usuarios, piloto, dispositivos, notificación de prueba contra el push service local, 403 para Depósito/Envasado/Codificado y sin pestaña para Depósito).

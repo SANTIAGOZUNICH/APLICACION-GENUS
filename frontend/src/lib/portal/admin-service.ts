@@ -1,5 +1,5 @@
 /**
- * Administración del Portal de Clientes (Producción y Dirección). Todo cambio queda auditado.
+ * Administración del Portal de Clientes (Administración, Producción y Dirección). Todo cambio queda auditado.
  * Nunca borra: los clientes se suspenden, los alias y correos se dan de baja con fecha y responsable.
  */
 import "server-only";
@@ -10,20 +10,19 @@ import { clientKey } from "@/lib/entregas/rules";
 import { generateHistoricalClients, previewHistoricalClients } from "./client-identity";
 import { executeIdBackfill, runIdBackfill, type BackfillReport } from "./client-link";
 import { revokeSessions } from "./auth-service";
+import { canManagePortal, PORTAL_FORBIDDEN_MESSAGE } from "./portal-access";
 import { loadPortalOverview } from "./data-service";
 import { sendInvitation } from "./notify-service";
 import { toClientPayload } from "./overview";
 import { generatePublicCode, normalizeEmail } from "./security";
 import { audit, isoOrNull, requireDb, PortalError, type Row, type SqlExec } from "./store";
 
-export function canManagePortal(sector: string): boolean {
-  return sector === "PRODUCCION" || sector === "DIRECCION";
-}
+export { canManagePortal };
 
 export type Staff = { email: string; sector: string };
 const who = (s: Staff) => s.email;
 const need = (s: Staff) => {
-  if (!canManagePortal(s.sector)) throw new PortalError("Solo Producción y Dirección administran el Portal de Clientes.", 403, "FORBIDDEN");
+  if (!canManagePortal(s.sector)) throw new PortalError(PORTAL_FORBIDDEN_MESSAGE, 403, "FORBIDDEN");
 };
 
 export type AdminClient = {
@@ -202,7 +201,7 @@ export async function linkingProblems(staff: Staff, db: SqlExec = requireDb()) {
   };
 }
 
-/** Vincula por ID los históricos INEQUÍVOCOS (solo Dirección, bajo demanda, idempotente). Ambiguos y sin coincidencia solo se reportan. */
+/** Vincula por ID los históricos INEQUÍVOCOS (Administración, Producción y Dirección; bajo demanda, idempotente). Ambiguos y sin coincidencia solo se reportan. */
 export async function backfillIdLinks(staff: Staff, db: SqlExec = requireDb()): Promise<BackfillReport> {
   need(staff);
   return executeIdBackfill(staff, db);

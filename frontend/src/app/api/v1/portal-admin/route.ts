@@ -26,15 +26,14 @@ function fail(err: unknown) {
 
 const id = (v: unknown) => (typeof v === "string" && /^[0-9a-f-]{36}$/i.test(v) ? v : "");
 
-/** Consultas del panel «Portal de Clientes» (solo Producción/Dirección). */
+/** Consultas del panel «Portal de Clientes» (Administración, Producción y Dirección: `canManagePortal`). */
 export async function GET(request: Request) {
   try {
     const staff = await staffOf(request);
     const url = new URL(request.url);
     const view = url.searchParams.get("view") ?? "clients";
     const clientId = id(url.searchParams.get("clientId"));
-    // Usuarios con contraseña: Dirección y Administración (cada función valida el rol de nuevo).
-    // Notificaciones push: SOLO Dirección (el servicio lo vuelve a validar).
+    // Todas las vistas (usuarios, clientes, push, diagnóstico) exigen `canManagePortal` (Administración, Producción, Dirección); cada servicio lo vuelve a validar.
     if (view === "push") return NextResponse.json(await pushAdminOverview(staff));
     if (view === "push_test_status") return NextResponse.json(await getTestPushStatus(staff, String(url.searchParams.get("testId") ?? "")));
     if (view === "suggest_username") return NextResponse.json(await suggestPortalUsername(staff, clientId));
@@ -73,7 +72,7 @@ export async function POST(request: Request) {
       case "enable_access": return NextResponse.json(await setClientAccess(staff, clientId, true));
       case "disable_access": return NextResponse.json(await setClientAccess(staff, clientId, false));
       case "rename_client": await renameClient(staff, clientId, b.name); return NextResponse.json({ ok: true });
-      // Vínculo por ID de los pedidos/trabajos históricos: SOLO Dirección (el servicio lo vuelve a validar). Ambiguos/sin coincidencia solo se reportan.
+      // Vínculo por ID de los pedidos/trabajos históricos: Administración, Producción y Dirección (el servicio lo vuelve a validar). Ambiguos/sin coincidencia solo se reportan.
       case "backfill_links": return NextResponse.json(await backfillIdLinks(staff));
       case "history_generate": return NextResponse.json(await historyGenerate(staff, b as { previewToken: unknown; expectedCount: unknown }));
       case "suspend": return NextResponse.json(await setClientStatus(staff, clientId, "SUSPENDIDO", b.reason));

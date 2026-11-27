@@ -88,9 +88,9 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: usuario y contraseña en Postgres rea
   });
 
   // ───────────────────────── Permisos ─────────────────────────
-  it("Dirección y Administración crean usuarios; Producción, Envasado y demás sectores NO", async () => {
+  it("Dirección, Administración y Producción crean usuarios; Envasado y demás sectores NO", async () => {
     const { createPortalUser, listPortalUsers } = await uadmin();
-    for (const staff of [produccion, envasado]) {
+    for (const staff of [envasado, { ...envasado, sector: "DEPOSITO" }]) {
       await expect(createPortalUser(staff, { clientId: A.id, username: `intruso-${RUN.toLowerCase()}` })).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
       await expect(listPortalUsers(staff)).rejects.toMatchObject({ code: "FORBIDDEN" });
     }
@@ -273,7 +273,7 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: usuario y contraseña en Postgres rea
     const live = await login(`compras.b-${RUN}`, PASS_B, "198.51.100.16");
     if (!live.ok) throw new Error("login");
     expect(await resolvePortalSession(live.token)).not.toBeNull();
-    await expect(resetPortalUserPassword(produccion, ids.userB)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(resetPortalUserPassword(envasado, ids.userB)).rejects.toMatchObject({ code: "FORBIDDEN" });
     const reset = await resetPortalUserPassword(administracion, ids.userB);
     expect(reset.revoked).toBeGreaterThanOrEqual(1);
     expect(reset.temporaryPassword).toMatch(/^[A-Za-z0-9]{12}$/);
@@ -400,7 +400,7 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: usuario y contraseña en Postgres rea
     const C = await adm.createClient(produccion, { displayName: name, aliases: [], emails: [] });
     const D = await adm.createClient(produccion, { displayName: `${name}`.replace("Co.", "Co"), aliases: [], emails: [] }); // mismo slug, otro cliente
 
-    await expect(suggestPortalUsername(produccion, C.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(suggestPortalUsername(envasado, C.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect((await suggestPortalUsername(administracion, C.id)).username).toBe(base);
 
     const pass1 = generateAccessPassword(12, base);
@@ -440,7 +440,7 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: usuario y contraseña en Postgres rea
     expect(String(row2!.password_hash)).toMatch(/^\$2[aby]\$/);
     expect(JSON.stringify(await q("select * from portal_audit_events where client_id = $1", [C.id]))).not.toContain(reset.temporaryPassword);
     // otros sectores no crean ni restablecen
-    await expect(createPortalUser(produccion, { clientId: C.id, username: base, autoSuffix: true })).rejects.toMatchObject({ status: 403 });
+    await expect(createPortalUser({ ...envasado, sector: "CODIFICADO" }, { clientId: C.id, username: base, autoSuffix: true })).rejects.toMatchObject({ status: 403 });
     await expect(resetPortalUserPassword(envasado, u1.id)).rejects.toMatchObject({ status: 403 });
   });
 });

@@ -126,7 +126,7 @@ try {
   await must(await admin("push_pilot", { clientId: idA, enabled: true }), "piloto A");
   await must(await admin("push_pilot", { clientId: idB, enabled: true }), "piloto B");
   check("envío real por cliente: sin confirmación explícita se rechaza (400)", (await admin("push_real_send", { clientId: idA, enabled: true })).status() === 400);
-  check("Producción no puede habilitar el envío real (403)", (await produccion.post("/api/v1/portal-admin", { data: { action: "push_real_send", clientId: idA, enabled: true, confirm: true } })).status() === 403);
+  check("un sector ajeno (Envasado) no puede habilitar el envío real (403)", (await envApi.post("/api/v1/portal-admin", { data: { action: "push_real_send", clientId: idA, enabled: true, confirm: true } })).status() === 403);
   await must(await admin("push_real_send", { clientId: idA, enabled: true, confirm: true }), "envío real A");
   check("«Envío REAL a este cliente (prueba)» habilitado SOLO para el cliente de prueba; el interruptor global sigue APAGADO", (await q("select global_send_enabled from portal_push_settings where id = 1"))[0]?.global_send_enabled !== true && (await q("select client_id::text as id, real_send_enabled as r from portal_push_client_pilot where client_id = any($1::uuid[]) order by r desc", [[idA, idB]])).map((r) => `${r.id === idA}:${r.r}`).join() === "true:true,false:false");
 
@@ -289,6 +289,7 @@ try {
   await p.locator('button[type="submit"]').click();
   await p.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 30_000 });
   await p.getByText("Portal de Clientes").first().click();
+  await p.getByTestId("portal-tab-push").click();
   await p.getByTestId("portal-push-admin").waitFor({ timeout: 30_000 });
   const rowA = p.getByTestId("push-client-row").filter({ hasText: NAME });
   const rowB = p.getByTestId("push-client-row").filter({ hasText: NAME_B });
@@ -300,13 +301,104 @@ try {
   const health = await dir.get("/api/v1/portal-push-health");
   const hj = await health.json();
   check("endpoint de salud (solo Dirección): VAPID, cron y cliente de prueba con envío real", health.status() === 200 && hj.vapid.configured === true && hj.cron.stale === false && hj.clients.find((c) => c.id === idA)?.realSendEnabled === true && !JSON.stringify(hj).includes(PUSH_URL), JSON.stringify(hj.problems));
-  check("endpoint de salud: Producción recibe 403", (await produccion.get("/api/v1/portal-push-health")).status() === 403);
+  check("endpoint de salud: Envasado recibe 403", (await envApi.get("/api/v1/portal-push-health")).status() === 403);
   // notificación de prueba desde la UI: aceptada + recepción comprobada
   p.on("dialog", (d) => void d.accept());
   await rowA.getByTestId("push-test-send").click();
   await p.waitForFunction(() => /recepción COMPROBADA en el dispositivo/.test(document.body.innerText), null, { timeout: 60_000 });
   check("botón «Enviar notificación de prueba»: muestra «aceptada por el servicio push» y «recepción COMPROBADA» (SW real + acuse)", (await notifications()).some((n) => n.title === "¡Bienvenido a Laboratorio Genus! 🎉"));
   await octx.close();
+
+  // ───────── 10. ADMINISTRACIÓN y PRODUCCIÓN (NO Dirección): ven la pestaña, administran usuarios y push; otros sectores reciben 403 ─────────
+  const loginUi = async (user, width = 1600) => {
+    const c = await browser.newContext({ baseURL: BASE, viewport: { width, height: 1000 } });
+    const pg = await c.newPage();
+    pg.on("dialog", (d) => void d.accept());
+    await pg.goto("/login");
+    await pg.locator('input[type="email"]').fill(user.email);
+    await pg.locator('input[type="password"]').fill(E2E_PASSWORD);
+    await pg.locator('button[type="submit"]').click();
+    await pg.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 30_000 });
+    return { c, pg };
+  };
+  for (const role of [E2E_USERS.administracion, E2E_USERS.produccion]) {
+    const tag = role.sector;
+    const api = await apiCtx(role);
+    const post = (action, data) => api.post("/api/v1/portal-admin", { data: { action, ...data } });
+    const NAME_R = `GENUS TEST ${tag.slice(0, 4)} ${RUN}`;
+    const USER_R = `gr-${tag.slice(0, 4).toLowerCase()}-${RUN.toLowerCase()}`;
+    const created = await must(await post("create_client", { displayName: NAME_R, aliases: [NAME_R], emails: [] }), `${tag}: crear cliente`);
+    const idR = (await q("select id::text as id from portal_clients where public_code = $1", [created.publicCode]))[0].id;
+    check(`${tag}: endpoints del portal responden 200 (usuarios, clientes, push, salud)`, (await api.get("/api/v1/portal-admin?view=users")).status() === 200 && (await api.get("/api/v1/portal-admin?view=clients")).status() === 200 && (await api.get("/api/v1/portal-admin?view=push")).status() === 200 && (await api.get("/api/v1/portal-push-health")).status() === 200);
+
+    const { c, pg } = await loginUi(role);
+    await pg.getByText("Portal de Clientes").first().click();
+    await pg.getByTestId("portal-tabs").waitFor({ timeout: 30_000 });
+    const labels = await pg.getByTestId("portal-tabs").innerText();
+    check(`${tag}: pestaña «Portal de Clientes» visible con Usuarios y accesos / Seguimiento de pedidos / Notificaciones push / Configuración`, ["Usuarios y accesos", "Seguimiento de pedidos", "Notificaciones push", "Configuración"].every((l) => labels.includes(l)), labels);
+
+    // Usuarios y accesos: crear usuario y restablecer contraseña desde la interfaz
+    await pg.getByTestId("portal-users").waitFor({ timeout: 30_000 });
+    await pg.getByTestId("user-form").getByLabel("Cliente").selectOption(idR);
+    const uInput = pg.getByTestId("user-form").getByLabel("Usuario", { exact: true });
+    await pg.waitForFunction(() => { const el = document.querySelector('[data-testid="user-form"] input[aria-label="Usuario"]'); return Boolean(el && el.value); }, null, { timeout: 15_000 }); // el servidor sugiere un usuario: esperarlo antes de pisarlo
+    await uInput.fill(USER_R);
+    await pg.getByTestId("create-user").click();
+    await pg.getByTestId("user-secret").waitFor({ timeout: 30_000 });
+    const firstPass = await pg.getByTestId("user-secret-value").innerText();
+    check(`${tag}: crea el usuario del portal desde la interfaz (credencial mostrada una vez, hash en la base)`, (await q("select count(*)::int as n from portal_users where client_id = $1::uuid and username = $2 and removed_at is null", [idR, USER_R]))[0].n === 1 && firstPass.length >= 8);
+    const urow = pg.getByTestId("user-row").filter({ hasText: USER_R });
+    await urow.getByTestId("reset-user").click();
+    await pg.waitForFunction((old) => { const el = document.querySelector('[data-testid="user-secret-value"]'); return el && el.textContent && el.textContent !== old; }, firstPass, { timeout: 30_000 });
+    check(`${tag}: restablece la contraseña (nueva temporal distinta, sesiones revocadas, auditado)`, (await q("select count(*)::int as n from portal_audit_events where client_id = $1::uuid and actor = $2", [idR, role.email]))[0].n >= 1);
+
+    // Notificaciones push: habilitar piloto del cliente GENUS TEST, consultar dispositivos
+    await pg.getByTestId("portal-tab-push").click();
+    await pg.getByTestId("portal-push-admin").waitFor({ timeout: 30_000 });
+    const rowR = pg.getByTestId("push-client-row").filter({ hasText: NAME_R });
+    await rowR.getByTestId("push-pilot-toggle").click();
+    await pg.waitForFunction(() => /Piloto habilitado/.test(document.body.innerText), null, { timeout: 30_000 });
+    check(`${tag}: habilita el piloto de «${NAME_R}» desde Notificaciones push (global sigue APAGADO)`, (await q("select enabled from portal_push_client_pilot where client_id = $1::uuid", [idR]))[0]?.enabled === true && (await q("select global_send_enabled from portal_push_settings where id = 1"))[0]?.global_send_enabled !== true);
+    check(`${tag}: consulta dispositivos y diagnóstico del cliente`, /^0/.test(await rowR.getByTestId("push-diag-devices").innerText()) && /aceptadas por el servicio push/.test(await rowR.getByTestId("push-diag-deliveries").innerText()));
+
+    // Notificación de prueba al cliente con dispositivo (servicio push local → SW real). Espera la ventana anti doble clic (30 s).
+    await sleep(32_000);
+    const before = received.filter((r) => r.message).length;
+    const rowAr = pg.getByTestId("push-client-row").filter({ hasText: NAME }).first();
+    await rowAr.getByTestId("push-test-send").click();
+    await pg.waitForFunction(() => /aceptada por el servicio push/.test(document.body.innerText), null, { timeout: 60_000 });
+    for (let i = 0; i < 50 && received.filter((r) => r.message).length <= before; i++) await sleep(200);
+    check(`${tag}: envía la notificación de prueba (llega al servicio push local con VAPID válido)`, received.filter((r) => r.message).length === before + 1 && received.at(-1).vapidOk && received.at(-1).message.title === "¡Bienvenido a Laboratorio Genus! 🎉");
+    check(`${tag}: la prueba queda auditada con su usuario`, (await q("select count(*)::int as n from portal_audit_events where client_id = $1::uuid and event_type = 'PUSH_PRUEBA_ENVIADA' and actor = $2", [idA, role.email]))[0].n >= 1);
+    await pg.getByTestId("portal-tab-config").click();
+    check(`${tag}: ve la sección Configuración (feriados)`, await pg.getByText("Feriados por decreto").isVisible());
+    await pg.screenshot({ path: `${OUT}/03-panel-${tag.toLowerCase()}.png`, fullPage: true });
+    await c.close();
+    await api.dispose();
+  }
+
+  // Otros sectores: 403 en TODOS los endpoints del portal y sin pestaña en la barra lateral.
+  for (const other of [E2E_USERS.deposito, E2E_USERS.envasado, E2E_USERS.codificado]) {
+    const api = await apiCtx(other);
+    const post = (action, data) => api.post("/api/v1/portal-admin", { data: { action, ...data } });
+    const codes = [
+      (await api.get("/api/v1/portal-admin?view=users")).status(), (await api.get("/api/v1/portal-admin?view=clients")).status(), (await api.get("/api/v1/portal-admin?view=push")).status(),
+      (await api.get("/api/v1/portal-push-health")).status(),
+      (await post("push_pilot", { clientId: idA, enabled: true })).status(), (await post("push_real_send", { clientId: idA, enabled: true, confirm: true })).status(),
+      (await post("push_test", { clientId: idA })).status(), (await post("push_settings", { globalSendEnabled: true })).status(),
+      (await post("create_user", { clientId: idA, username: `intruso-${RUN.toLowerCase()}` })).status(), (await post("reset_user_password", { userId: "00000000-0000-0000-0000-000000000000" })).status(),
+      (await post("create_client", { displayName: "NO DEBE EXISTIR" })).status(), (await post("demo_launch", {})).status(),
+    ];
+    check(`${other.sector}: 403 en usuarios, clientes, push, salud, piloto, envío real, prueba, ajustes, alta/reset de usuarios, alta de cliente y portal de prueba`, codes.every((x) => x === 403), codes.join(","));
+    await api.dispose();
+  }
+  check("el interruptor global de envío a clientes reales sigue APAGADO tras las pruebas de permisos", (await q("select global_send_enabled from portal_push_settings where id = 1"))[0]?.global_send_enabled !== true);
+  {
+    const { c, pg } = await loginUi(E2E_USERS.deposito);
+    await pg.waitForTimeout(1500);
+    check("Depósito NO ve la pestaña «Portal de Clientes» en la barra lateral", (await pg.getByText("Portal de Clientes").count()) === 0);
+    await c.close();
+  }
 } catch (err) {
   console.error(err);
   results.push({ name: "excepción", ok: false });

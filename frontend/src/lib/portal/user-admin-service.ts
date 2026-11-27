@@ -1,5 +1,5 @@
 /**
- * Administración de usuarios del Portal de Clientes (usuario + contraseña). SOLO Dirección y Administración.
+ * Administración de usuarios del Portal de Clientes (usuario + contraseña). Administración, Producción y Dirección (`canManagePortal`).
  * Nunca guarda ni devuelve una contraseña salvo la temporal recién generada (se muestra UNA vez y solo existe su hash).
  * Desactivar, restablecer o dar de baja un usuario revoca sus sesiones en el acto. Todo cambio queda auditado.
  */
@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { hashPassword } from "@/lib/auth/password";
 import { revokeSessions } from "./auth-service";
+import { canManagePortal, PORTAL_FORBIDDEN_MESSAGE } from "./portal-access";
 import { pickAvailableUsername, slugifyUsername } from "./access-credentials";
 import { normalizeEmail } from "./security";
 import { audit, isoOrNull, requireDb, PortalError, type Row, type SqlExec } from "./store";
@@ -16,11 +17,10 @@ import { PASSWORD_PROBLEM_MESSAGES, generateTemporaryPassword, isLocked, normali
 
 export type UserStaff = { email: string; sector: string };
 
-export function canManagePortalUsers(sector: string): boolean {
-  return sector === "DIRECCION" || sector === "ADMINISTRACION";
-}
+/** Alias histórico: el permiso es el mismo que el del resto del portal (Administración, Producción y Dirección). */
+export const canManagePortalUsers = canManagePortal;
 const need = (s: UserStaff) => {
-  if (!canManagePortalUsers(s.sector)) throw new PortalError("Solo Dirección y Administración gestionan los usuarios del portal.", 403, "FORBIDDEN");
+  if (!canManagePortalUsers(s.sector)) throw new PortalError(PORTAL_FORBIDDEN_MESSAGE, 403, "FORBIDDEN");
 };
 
 export type AdminPortalUser = {

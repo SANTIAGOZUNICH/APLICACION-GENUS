@@ -18,7 +18,7 @@ async function api(body?: Json, query = "?view=users"): Promise<{ ok: boolean; d
 }
 
 /**
- * Usuarios del Portal de Clientes (usuario + contraseña). Solo Dirección y Administración: el servidor lo vuelve a validar.
+ * Usuarios del Portal de Clientes (usuario + contraseña). Administración, Producción y Dirección (`canManagePortal`): el servidor lo vuelve a validar.
  * La contraseña temporal se muestra UNA sola vez; después solo existe su hash.
  */
 export function PortalUsuariosPanel({ onForbidden, refreshKey }: { onForbidden?: () => void; /** Cambia cuando se crea/modifica un cliente: recarga el selector de clientes sin recargar la página. */ refreshKey?: string }) {

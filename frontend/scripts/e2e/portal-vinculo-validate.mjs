@@ -241,6 +241,7 @@ try {
   // ───────── 8. Panel de problemas de vínculo (Dirección) ─────────
   await dir.page.reload();
   await dir.page.getByText("Portal de Clientes").first().click();
+  await dir.page.getByTestId("portal-tab-seguimiento").click();
   await dir.page.getByTestId("portal-id-linking").waitFor({ timeout: 30_000 });
   check("Dirección ve el reporte de vínculo por ID en «Problemas de vinculación»", /Vínculo por ID de pedidos históricos/.test(await dir.page.getByTestId("portal-id-linking").innerText()));
   await dir.page.screenshot({ path: `${OUT}/05-problemas-vinculo.png`, fullPage: true });

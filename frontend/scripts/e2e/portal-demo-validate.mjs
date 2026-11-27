@@ -59,6 +59,7 @@ await sp.locator('input[type="password"]').fill(E2E_PASSWORD);
 await sp.locator('button[type="submit"]').click();
 await sp.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 20000 });
 await sp.getByText("Portal de Clientes").first().click();
+await sp.getByTestId("portal-tab-seguimiento").click();
 await sp.getByTestId("portal-demo").waitFor({ timeout: 20000 });
 const btn = sp.getByTestId("open-demo");
 check("GENUS OS: botón «Abrir portal de prueba» visible", (await btn.innerText()).trim() === "Abrir portal de prueba");

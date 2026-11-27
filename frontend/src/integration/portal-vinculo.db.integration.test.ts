@@ -214,9 +214,9 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: vínculo por ID en Postgres real${PRO
     expect(dry.ambiguous.find((a) => a.name.toLowerCase() === `amb ${RUN.toLowerCase()}`)!.clients.map((c) => c.id).sort()).toEqual([x.id, y.id].sort());
     expect(names(dry.unmatched)).toContain(`cliente que no existe ${RUN.toLowerCase()}`);
 
-    // Solo Dirección ejecuta.
-    await expect(executeIdBackfill(produccion)).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
-    await expect(adm.backfillIdLinks(produccion)).rejects.toMatchObject({ status: 403 });
+    // Solo Administración/Producción/Dirección ejecutan; otros sectores → 403.
+    await expect(executeIdBackfill(envasado)).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
+    await expect(adm.backfillIdLinks(envasado)).rejects.toMatchObject({ status: 403 });
     const preservedId = await portalIdOf(`OP-ID-${RUN}`); // ya vinculado por ID: no se toca
     const run = await executeIdBackfill(direccion);
     expect(run.applied.pedidos).toBeGreaterThanOrEqual(1);

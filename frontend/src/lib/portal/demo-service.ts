@@ -13,7 +13,8 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { canManagePortal, type Staff } from "./admin-service";
+import type { Staff } from "./admin-service";
+import { canManagePortal, PORTAL_FORBIDDEN_MESSAGE } from "./portal-access";
 import { portalPublicBaseUrl } from "./config";
 import { buildDemoPayload, findDemoDelivery, type DemoState } from "./demo-data";
 import { loadCalendarOptions, type ConfirmResult } from "./data-service";
@@ -36,7 +37,7 @@ export type DemoSession = { id: string; createdBy: string; expiresAt: string; st
 /** Emite un token de un solo uso para el usuario interno autorizado y devuelve la URL de apertura (token en el fragmento). */
 export async function createDemoToken(staff: Staff, db: SqlExec = requireDb()): Promise<{ url: string; expiresInSeconds: number }> {
   needDemo();
-  if (!canManagePortal(staff.sector)) throw new PortalError("Solo Producción y Dirección pueden abrir el portal de prueba.", 403, "FORBIDDEN");
+  if (!canManagePortal(staff.sector)) throw new PortalError(PORTAL_FORBIDDEN_MESSAGE, 403, "FORBIDDEN");
   const lim = await rateLimitHit(db, `demo-launch:${hmac("email", staff.email).slice(0, 24)}`, 3600, 30);
   if (!lim.allowed) throw new PortalError("Demasiadas aperturas del portal de prueba. Probá de nuevo en un rato.", 429, "RATE_LIMITED");
   const token = createToken();

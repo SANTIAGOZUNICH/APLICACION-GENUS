@@ -2,12 +2,22 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { usePreviewSession } from "@/features/os/session/preview-context";
 import { TwinShell } from "@/features/os/shell/twin-shell";
+import { canManagePortal } from "@/lib/portal/portal-access";
 import type { AdminClient } from "@/lib/portal/admin-service";
 import { PortalUsuariosPanel } from "./portal-usuarios-panel";
 import { PortalNotificacionesPanel } from "./portal-notificaciones-panel";
 
 type Json = Record<string, unknown>;
+/** Secciones del Portal de Clientes (Administración, Producción y Dirección). Reutilizan los bloques existentes. */
+const PORTAL_TABS = [
+  { id: "usuarios", label: "Usuarios y accesos" },
+  { id: "seguimiento", label: "Seguimiento de pedidos" },
+  { id: "push", label: "Notificaciones push" },
+  { id: "config", label: "Configuración" },
+] as const;
+type PortalTab = (typeof PORTAL_TABS)[number]["id"];
 type Problems = {
   unmappedClients: Array<{ label: string; works: number; withoutPedido: number }>;
   mappedWithoutPedido: Array<{ client: string; alias: string; worksWithoutPedido: number }>;
@@ -44,6 +54,8 @@ async function api(path: string, body?: Json): Promise<{ ok: boolean; data: Json
 }
 
 export function PortalClientesView() {
+  const { sectorId } = usePreviewSession();
+  const [tab, setTab] = useState<PortalTab>("usuarios");
   const [clients, setClients] = useState<AdminClient[]>([]);
   const [holidays, setHolidays] = useState<Array<{ date: string; name: string; action: string }>>([]);
   const [problems, setProblems] = useState<Problems | null>(null);
@@ -58,7 +70,7 @@ export function PortalClientesView() {
   const [histExclude, setHistExclude] = useState<Set<string>>(new Set());
   const [histBusy, setHistBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
-  // Administración solo gestiona usuarios del portal: el resto del panel (clientes, vínculos, feriados) es de Producción y Dirección.
+  // Defensa en profundidad: si el servidor rechaza (403) la lista de clientes se ocultan sus bloques (el permiso es `canManagePortal`).
   const [clientsForbidden, setClientsForbidden] = useState(false);
 
   async function copyCode(code: string) {
@@ -152,7 +164,7 @@ export function PortalClientesView() {
     return r;
   }
 
-  /** Vincula por ID los históricos inequívocos (solo Dirección; el servidor lo valida). Ambiguos y sin coincidencia NO se tocan. */
+  /** Vincula por ID los históricos inequívocos (Administración, Producción y Dirección; el servidor lo valida). Ambiguos y sin coincidencia NO se tocan. */
   async function backfillLinks() {
     const il = problems?.idLinking;
     if (!il) return;
@@ -174,6 +186,14 @@ export function PortalClientesView() {
     }
   }
 
+  if (!canManagePortal(sectorId)) {
+    return (
+      <TwinShell title="Portal de Clientes">
+        <p className="text-sm text-[var(--os-text-muted)]" data-testid="portal-no-access">Tu sector no administra el Portal de Clientes.</p>
+      </TwinShell>
+    );
+  }
+
   return (
     <TwinShell title="Portal de Clientes">
       <div className="space-y-6" data-testid="portal-admin">
@@ -183,23 +203,18 @@ export function PortalClientesView() {
             Habilitá clientes para que sigan sus pedidos en <strong>laboratoriogenus.com.ar/entregas</strong>. Cada cliente entra con un usuario y contraseña, o con su código + un correo autorizado + un código temporal. Los datos salen de GENUS OS; nada se carga dos veces.
           </p>
         </header>
-        {clientsForbidden ? null : (
-        <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--os-border)] bg-[var(--os-surface)] p-4" data-testid="portal-demo">
-          <div className="max-w-2xl space-y-1">
-            <h3 className="font-semibold">Portal de prueba</h3>
-            <p className="text-sm text-[var(--os-text-muted)]">
-              Abre el portal real (laboratoriogenus.com.ar/entregas) con datos <strong>ficticios</strong>, sin crear clientes ni mandar correos. Entrás con tu sesión de GENUS OS; nada de lo que hagas ahí modifica pedidos, entregas ni stock reales.
-            </p>
-            {demoLink ? <p className="break-all text-sm"><a className="underline" href={demoLink} target="_blank" rel="noopener noreferrer" data-testid="demo-link">Abrir portal de prueba (enlace de un solo uso)</a></p> : null}
-          </div>
-          <Button onClick={() => void openDemo()} disabled={demoBusy} data-testid="open-demo">{demoBusy ? "Abriendo…" : "Abrir portal de prueba"}</Button>
-        </section>
-        )}
+        <nav className="flex flex-wrap gap-2" role="tablist" aria-label="Secciones del Portal de Clientes" data-testid="portal-tabs">
+          {PORTAL_TABS.map((t) => (
+            <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} data-testid={`portal-tab-${t.id}`} onClick={() => setTab(t.id)}
+              className={`rounded-full border px-4 py-1.5 text-sm font-medium ${tab === t.id ? "border-[var(--os-text)] bg-[var(--os-text)] text-[var(--os-surface)]" : "border-[var(--os-border)] text-[var(--os-text-muted)] hover:text-[var(--os-text)]"}`}>
+              {t.label}
+            </button>
+          ))}
+        </nav>
         {msg ? <div role="status" className={`rounded-lg px-3 py-2 text-sm ${msg.kind === "ok" ? "bg-emerald-500/10 text-emerald-700" : "bg-red-500/10 text-red-700"}`}>{msg.text}</div> : null}
 
+        {tab === "usuarios" ? (<>
         <PortalUsuariosPanel refreshKey={clients.map((c) => c.id).join(",")} />
-
-        <PortalNotificacionesPanel />
 
         {clientsForbidden ? null : (<>
         <section className="space-y-3 rounded-xl border border-[var(--os-border)] p-4">
@@ -301,6 +316,22 @@ export function PortalClientesView() {
           ))}
         </section>
 
+        </>)}
+        </>) : null}
+
+        {tab === "seguimiento" && !clientsForbidden ? (<>
+        {clientsForbidden ? null : (
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--os-border)] bg-[var(--os-surface)] p-4" data-testid="portal-demo">
+          <div className="max-w-2xl space-y-1">
+            <h3 className="font-semibold">Portal de prueba</h3>
+            <p className="text-sm text-[var(--os-text-muted)]">
+              Abre el portal real (laboratoriogenus.com.ar/entregas) con datos <strong>ficticios</strong>, sin crear clientes ni mandar correos. Entrás con tu sesión de GENUS OS; nada de lo que hagas ahí modifica pedidos, entregas ni stock reales.
+            </p>
+            {demoLink ? <p className="break-all text-sm"><a className="underline" href={demoLink} target="_blank" rel="noopener noreferrer" data-testid="demo-link">Abrir portal de prueba (enlace de un solo uso)</a></p> : null}
+          </div>
+          <Button onClick={() => void openDemo()} disabled={demoBusy} data-testid="open-demo">{demoBusy ? "Abriendo…" : "Abrir portal de prueba"}</Button>
+        </section>
+        )}
         <section className="space-y-2 rounded-xl border border-[var(--os-border)] p-4" data-testid="portal-problems">
           <h3 className="font-semibold">Problemas de vinculación</h3>
           {!problems ? <p className="text-sm text-[var(--os-text-muted)]">Cargando…</p> : (
@@ -331,13 +362,18 @@ export function PortalClientesView() {
                     <ul className="max-h-48 overflow-auto">{problems.idLinking.unmatched.map((a) => <li key={a.name}>«{a.name}» · {a.pedidos} pedidos · {a.works} trabajos{a.ops.length ? ` · OP ${a.ops.join(", ")}` : ""}</li>)}</ul></div>
                 ) : null}
                 <div className="mt-2">
-                  <Button onClick={() => void backfillLinks()} disabled={problems.idLinking.pedidos.linkable + problems.idLinking.works.viaPedido + problems.idLinking.works.viaName === 0} data-testid="backfill-links-btn">Vincular por ID los inequívocos (solo Dirección)</Button>
+                  <Button onClick={() => void backfillLinks()} disabled={problems.idLinking.pedidos.linkable + problems.idLinking.works.viaPedido + problems.idLinking.works.viaName === 0} data-testid="backfill-links-btn">Vincular por ID los inequívocos</Button>
                 </div>
               </div>
             </div>
           )}
         </section>
 
+        </>) : null}
+
+        {tab === "push" ? <PortalNotificacionesPanel /> : null}
+
+        {tab === "config" && !clientsForbidden ? (<>
         <section className="space-y-2 rounded-xl border border-[var(--os-border)] p-4">
           <h3 className="font-semibold">Feriados por decreto (cuenta de días hábiles)</h3>
           <p className="text-sm text-[var(--os-text-muted)]">Los feriados nacionales ya están calculados. Cargá acá una excepción solo si un decreto agrega o mueve un día.</p>
@@ -349,7 +385,7 @@ export function PortalClientesView() {
             <Button onClick={() => void act({ action: "holiday", date: hol.date, name: hol.name, holidayAction: hol.action }, "Excepción guardada.")} disabled={!hol.date || hol.name.trim().length < 2}>Guardar</Button>
           </div>
         </section>
-        </>)}
+        </>) : null}
       </div>
 
       {preview ? (
