@@ -13,6 +13,7 @@ import { PushPrompt } from "./pwa/push-prompt";
 import { usePushState } from "./pwa/use-push-state";
 import { cleanupOnLogout, type PushHistoryItem } from "./pwa/push-client";
 import { usePushInbox } from "./pwa/use-push-inbox";
+import { ICONS } from "./truck";
 
 export type ClientPayload = Omit<PortalOverviewData, "ready"> & { client: { name: string; code: string }; notifications: PortalNotificationView[]; demo?: boolean };
 export type Contact = { email: string; whatsappUrl: string; whatsappLabel: string };
@@ -97,6 +98,20 @@ export function usePortalData(initial: ClientPayload) {
   return { data, refresh, lastSyncAt: sync.lastSyncAt, syncError: sync.error };
 }
 
+/** Tipo de aviso → ícono (los mismos de las etapas del camión; «prueba» y los desconocidos usan una campana/destello). */
+const NOTIF_STAGE: Record<string, number> = { RECIBIDO: 0, PROGRAMADO: 1, ELABORACION: 2, ENVASADO: 3, LISTO: 4, LISTO_PARA_ENTREGAR: 4, ENTREGADO: 5, RECEPCION: 5 };
+const NOTIF_TONE: Record<number, string> = { 0: "t-recv", 1: "t-recv", 2: "t-elab", 3: "t-env", 4: "t-ready", 5: "t-done" };
+const SPARK_ICON = "M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z";
+function NotifIcon({ type }: { type: string }) {
+  const idx = NOTIF_STAGE[type.toUpperCase()];
+  const path = idx != null ? ICONS[idx]! : SPARK_ICON;
+  return (
+    <span className={`gp-notif-ico ${idx != null ? NOTIF_TONE[idx] : "t-test"}`} aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={path} /></svg>
+    </span>
+  );
+}
+
 function Bell({ notifications, onRead, push, onPushRead }: { notifications: PortalNotificationView[]; onRead: () => void; push: PushHistoryItem[]; onPushRead: (ids: string[] | "all") => void }) {
   const [open, setOpen] = useState(false);
   const pushUnread = push.filter((n) => !n.read).length;
@@ -105,8 +120,13 @@ function Bell({ notifications, onRead, push, onPushRead }: { notifications: Port
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => box.current && !box.current.contains(e.target as Node) && setOpen(false);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", esc);
+    };
   }, [open]);
   async function toggle() {
     const next = !open;
@@ -124,21 +144,44 @@ function Bell({ notifications, onRead, push, onPushRead }: { notifications: Port
       </button>
       {open ? (
         <div className="gp-pop" role="region" aria-label="Notificaciones">
-          {pushUnread > 0 ? <button type="button" className="gp-link-btn gp-pop-all" onClick={() => onPushRead("all")} data-testid="push-read-all">Marcar todas como leídas</button> : null}
-          {notifications.length === 0 && push.length === 0 ? <div className="gp-empty">Todavía no tenés notificaciones.</div> : (
-            <ul className="gp-list">
-              {push.map((n) => (
-                <li key={`push-${n.id}`} className={`gp-row${n.read ? " read" : " unread"}`} data-testid="push-item" data-read={n.read ? "1" : "0"}>
-                  <a href={n.url} onClick={() => { if (!n.read) onPushRead([n.id]); setOpen(false); }} style={{ color: "inherit", textDecoration: "none" }}>
-                    <b>{n.title}</b><div className="gp-meta" style={{ whiteSpace: "pre-line" }}>{n.body}</div><div className="gp-note">{fmtDateTime(n.createdAt)}</div>
-                  </a>
-                </li>
-              ))}
-              {notifications.map((n) => (
-                <li key={n.id} className={`gp-row${n.read ? "" : " unread"}`}><div><b>{n.title}</b><div className="gp-meta">{n.body}</div><div className="gp-note">{fmtDateTime(n.createdAt)}</div></div></li>
-              ))}
-            </ul>
-          )}
+          <div className="gp-pop-head">
+            <b>Notificaciones</b>
+            <button type="button" className="gp-pop-close" onClick={() => setOpen(false)} aria-label="Cerrar notificaciones" data-testid="bell-close">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+            </button>
+          </div>
+          <div className="gp-pop-body">
+            {pushUnread > 0 ? <button type="button" className="gp-link-btn gp-pop-all" onClick={() => onPushRead("all")} data-testid="push-read-all">Marcar todas como leídas</button> : null}
+            {notifications.length === 0 && push.length === 0 ? <div className="gp-empty">Todavía no tenés notificaciones.</div> : (
+              <ul className="gp-list gp-notif-list">
+                {push.map((n) => (
+                  <li key={`push-${n.id}`} className={`gp-row gp-notif${n.read ? " read" : " unread"}`} data-testid="push-item" data-read={n.read ? "1" : "0"}>
+                    <a href={n.url} onClick={() => { if (!n.read) onPushRead([n.id]); setOpen(false); }}>
+                      <NotifIcon type={n.type} />
+                      <span className="gp-notif-txt">
+                        <b>{n.title}</b>
+                        <span className="gp-notif-body" style={{ whiteSpace: "pre-line" }}>{n.body}</span>
+                        <span className="gp-notif-time">{fmtDateTime(n.createdAt)}</span>
+                      </span>
+                      {n.read ? null : <i className="gp-unread-dot" aria-label="Sin leer" />}
+                    </a>
+                  </li>
+                ))}
+                {notifications.map((n) => (
+                  <li key={n.id} className={`gp-row gp-notif${n.read ? " read" : " unread"}`}>
+                    <div className="gp-notif-in">
+                      <NotifIcon type={n.kind} />
+                      <span className="gp-notif-txt">
+                        <b>{n.title}</b>
+                        <span className="gp-notif-body">{n.body}</span>
+                        <span className="gp-notif-time">{fmtDateTime(n.createdAt)}</span>
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       ) : null}
     </div>

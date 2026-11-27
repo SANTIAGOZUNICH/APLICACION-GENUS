@@ -159,13 +159,13 @@ await d.getByTestId("welcome").waitFor();
 
 // movimiento del camión al cambiar de etapa: Elaboración → Envasado (el camión avanza, animación corta)
 await d.evaluate(() => sessionStorage.clear());
-const posBefore = await elabCard.getByTestId("truck").evaluate((e) => parseFloat(e.style.left));
+const posBefore = await elabCard.getByTestId("truck").evaluate((e) => parseFloat(e.dataset.pos));
 await q("insert into operational_events (work_item_id, type, actor_email, actor_sector, created_at) values ($1,'RECEIVED_FROM_ELABORACION','e2e','ELABORACION',$2)", [wElab, daysAgo(1)]);
 await q("update work_items set sector = 'ENVASADO_MASIVO', branch_owner = null, line = 'Línea 3', operational_status = 'en_curso' where id = $1", [wElab]);
 await d.reload();
 const moved = d.getByTestId("product-card").filter({ hasText: "SHAMPOO REPARADOR" });
 await moved.getByTestId("stage-pill").filter({ hasText: "En envasado" }).waitFor();
-check("al pasar a Envasado el mensaje cambia y el camión avanza", (await moved.getByTestId("stage-message").innerText()) === "Tu producto finalizó la elaboración y se encuentra en proceso de envasado." && parseFloat(await moved.getByTestId("truck").evaluate((e) => e.style.left)) > posBefore);
+check("al pasar a Envasado el mensaje cambia y el camión avanza", (await moved.getByTestId("stage-message").innerText()) === "Tu producto finalizó la elaboración y se encuentra en proceso de envasado." && parseFloat(await moved.getByTestId("truck").evaluate((e) => e.dataset.pos)) > posBefore);
 await d.screenshot({ path: `${OUT}/04-envasado-escritorio.png`, fullPage: true });
 
 // recepción
