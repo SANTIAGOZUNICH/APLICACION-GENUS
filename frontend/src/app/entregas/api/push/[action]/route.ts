@@ -34,7 +34,7 @@ export async function POST(request: Request, ctx: Ctx) {
     const { session } = await requireSession(request);
     const body = await readJsonLarge(request);
     if (action === "subscribe") {
-      const saved = await savePushSubscription(session, body.subscription, request.headers.get("user-agent"));
+      const saved = await savePushSubscription(session, body.subscription, request.headers.get("user-agent"), undefined, typeof body.applicationServerKey === "string" ? body.applicationServerKey : null);
       return jsonResponse({ ok: true, ...saved });
     }
     if (action === "unsubscribe") return jsonResponse({ ok: true, removed: await removePushSubscription(session, body.endpoint) });

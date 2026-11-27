@@ -1,3 +1,4 @@
+import { withPortalPush } from "@/lib/portal/push/push-trigger";
 import { NextResponse } from "next/server";
 import { canUseDriveAdapter } from "@/lib/api/bff-helpers";
 import { getServerDataMode } from "@/lib/config/data-mode";
@@ -192,7 +193,7 @@ function assertBodySectorMatches(
 }
 
 /** Mutaciones operativas — identidad por headers; body.actorSectorId no autoriza solo. */
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   if (getServerDataMode() !== "real" || !canUseDriveAdapter()) {
     return NextResponse.json(
       { error: "Operaciones en vivo requieren modo real.", code: "LIVE_SYNC_UNAVAILABLE" },
@@ -704,3 +705,6 @@ export async function POST(request: Request) {
     throw err;
   }
 }
+
+/** Tras confirmar la operación se dispara (en segundo plano, sin afectarla) la detección de avisos del Portal de Clientes. */
+export const POST = withPortalPush(handlePost);

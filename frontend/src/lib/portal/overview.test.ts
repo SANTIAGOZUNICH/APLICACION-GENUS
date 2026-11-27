@@ -246,3 +246,18 @@ describe("estado comercial y pedidos (vista del cliente)", () => {
     for (const leak of ["FORMULA-SECRETA", "JUAN", "DERRAME", "L-123", "costo"]) expect(json).not.toContain(leak);
   });
 });
+
+describe("estado del pedido como vía de «Listo» y «Entregado» (una sola resolución)", () => {
+  const base = { clientId: "11111111-1111-4111-8111-111111111111", works: [], deliveries: [], events: [], confirmations: new Map(), now: new Date("2039-01-10T12:00:00Z") };
+  it("pedido sin trabajos con estado manual LISTO/ENTREGADO se muestra (con fecha) y no desaparece", () => {
+    const ov = buildOverview({
+      ...base,
+      pedidos: [
+        { id: "p1", op: "OP-1", producto: "A", estado: "LISTO_PARA_ENTREGAR", cancelledWorks: 0, manualStage: "LISTO", estadoAt: "2039-01-09T10:00:00Z" },
+        { id: "p2", op: "OP-2", producto: "B", estado: "ENTREGADO", cancelledWorks: 0, manualStage: "ENTREGADO", estadoAt: "2039-01-08T10:00:00Z" },
+      ],
+    });
+    expect(ov.orders.find((o) => o.orderRef === "OP-1")).toMatchObject({ status: { key: "LISTO" }, todoListo: true, deliveredAt: null });
+    expect(ov.orders.find((o) => o.orderRef === "OP-2")).toMatchObject({ status: { key: "ENTREGADO" }, deliveredAt: "2039-01-08T10:00:00Z" });
+  });
+});

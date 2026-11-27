@@ -7,7 +7,8 @@
  *    red se muestra la página offline genérica, sin datos de ningún cliente), ni respuestas con `no-store`/`private`.
  *  - Al cerrar sesión / cambiar de usuario la página pide CLEAR_CACHES: se borran todas las caches del portal.
  * ACTUALIZACIÓN: la versión nueva queda «en espera» y avisa a la página; se activa solo cuando el usuario acepta (SKIP_WAITING).
- * PUSH: muestra siempre una notificación (requisito de iOS/Safari). Al tocarla abre /entregas#pedido-… (solo rutas del portal).
+ * PUSH: muestra siempre una notificación (requisito de iOS/Safari), dentro de waitUntil, con payload parseado con fallback y assets existentes;
+ *       después manda el ACUSE de recepción a /entregas/api/push/ack. Al tocarla abre /entregas#pedido-… (solo rutas del portal).
  */
 export const PORTAL_SW_VERSION = "1";
 
@@ -90,20 +91,71 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
+// Lectura ROBUSTA del payload: JSON → texto plano → vacío. Nunca lanza.
+function readPush(event) {
+  var data = {};
+  try {
+    if (event.data) {
+      try { data = event.data.json(); }
+      catch (e) { data = typeof event.data.text === "function" ? { body: String(event.data.text() || "") } : {}; }
+    }
+  } catch (e) { data = {}; }
+  return data && typeof data === "object" ? data : {};
+}
+
+// Acuse de recepción (mejor esfuerzo): avisa al servidor que ESTE dispositivo mostró la notificación. Nunca rompe la notificación.
+function ackPush(data) {
+  try {
+    var ack = data && data.ack;
+    if (!ack || typeof ack.sid !== "string" || typeof ack.token !== "string" || typeof data.eventId !== "string") return Promise.resolve();
+    var getSub = self.registration && self.registration.pushManager && self.registration.pushManager.getSubscription ? self.registration.pushManager.getSubscription() : Promise.resolve(null);
+    return Promise.resolve(getSub).catch(function () { return null; }).then(function (sub) {
+      return fetch(SCOPE_PATH + "/api/push/ack", {
+        method: "POST",
+        credentials: "omit",
+        keepalive: true,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ eventId: data.eventId, sid: ack.sid, token: ack.token, endpoint: sub && sub.endpoint ? sub.endpoint : undefined })
+      });
+    }).catch(function () { return undefined; });
+  } catch (e) { return Promise.resolve(); }
+}
+
 self.addEventListener("push", (event) => {
-  let data = {};
-  try { data = event.data ? event.data.json() : {}; } catch (e) { data = {}; }
+  const data = readPush(event);
   const title = typeof data.title === "string" && data.title ? data.title : "GENUS — Portal de Clientes";
-  const body = typeof data.body === "string" ? data.body : "Tenés novedades en tu pedido.";
+  const body = typeof data.body === "string" && data.body ? data.body : "Tenés novedades en tu pedido.";
+  const options = {
+    body,
+    icon: "/entregas/pwa/icon-192.png",
+    badge: "/entregas/pwa/badge-96.png",
+    lang: "es-AR",
+    tag: typeof data.tag === "string" && data.tag ? data.tag : undefined,
+    timestamp: Date.now(),
+    vibrate: [120, 60, 120],
+    data: { url: safePortalUrl(data.url), eventId: typeof data.eventId === "string" ? data.eventId : null }
+  };
+  // SIEMPRE se muestra una notificación (iOS/Safari y Chrome exigen userVisibleOnly): si falla con opciones, se reintenta con lo mínimo.
+  // El acuse se manda DESPUÉS de mostrarla y dentro de waitUntil (el navegador no termina el SW antes).
   event.waitUntil(
-    self.registration.showNotification(title, {
-      body,
-      icon: "/entregas/pwa/icon-192.png",
-      badge: "/entregas/pwa/badge-96.png",
-      tag: typeof data.tag === "string" ? data.tag : undefined,
-      data: { url: safePortalUrl(data.url) },
-    })
+    self.registration.showNotification(title, options)
+      .catch(function () { return self.registration.showNotification(title, { body: body }); })
+      .then(function () { return ackPush(data); })
   );
+});
+
+// Si el navegador rota la suscripción (clave nueva, caducidad), se vuelve a registrar sola con la clave vigente.
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil((async function () {
+    try {
+      var old = event.oldSubscription;
+      var sub = event.newSubscription || (old && old.options && old.options.applicationServerKey
+        ? await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: old.options.applicationServerKey })
+        : null);
+      if (!sub) return;
+      await fetch(SCOPE_PATH + "/api/push/subscribe", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ subscription: sub.toJSON() }) });
+    } catch (e) { /* sin sesión o sin red: la página reintenta al abrirse */ }
+  })());
 });
 
 self.addEventListener("notificationclick", (event) => {

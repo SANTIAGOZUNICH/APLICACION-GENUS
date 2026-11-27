@@ -673,6 +673,13 @@
       "when": 1793900028000,
       "tag": "0099_portal_push_heartbeat",
       "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1793900029000,
+      "tag": "0100_portal_push_envio_real",
+      "breakpoints": true
     }
   ]
 }

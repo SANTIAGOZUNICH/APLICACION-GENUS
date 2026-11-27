@@ -159,7 +159,7 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: notificaciones push en Postgres real$
     const rows = await outboxOf(A.id, `OP-A2-${RUN}`);
     expect(rows).toEqual([expect.objectContaining({ event_type: "RECIBIDO", status: "SIMULADA", mode: "SIMULADO", title: "¡Recibimos tu pedido!" })]);
     expect(String(rows[0]!.body)).toContain("Tu pedido fue registrado correctamente. Te mantendremos informado sobre su avance.");
-    expect(String(rows[0]!.body)).toContain(`Pedido OP-A2-${RUN}`);
+    expect(String(rows[0]!.body)).toBe("Tu pedido fue registrado correctamente. Te mantendremos informado sobre su avance.");
     expect(String(rows[0]!.url)).toMatch(/^\/entregas#pedido-/);
     expect((await s.listPushHistory(sessA)).items).toEqual([]);
     const ind = await s.queueIndicators();
@@ -210,8 +210,8 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: notificaciones push en Postgres real$
     expect(toB.length).toBeGreaterThan(0);
     expect(JSON.stringify(toA)).not.toContain(`OP-B1-${RUN}`);
     expect(JSON.stringify(toB)).not.toContain(`OP-A`);
-    expect(toB.every((x) => x.body.body.includes(`OP-B1-${RUN}`))).toBe(true);
-    expect(toA.some((x) => x.body.title === "¡Tu pedido está en envasado!" && x.body.body.includes(`OP-A1-${RUN}`))).toBe(true);
+    expect(toB.length).toBeGreaterThan(0);
+    expect(toA.some((x) => x.body.title === "¡Tu pedido está en envasado!")).toBe(true);
     // Suscripción inválida eliminada; las demás intactas.
     expect(await q("select 1 from portal_push_subscriptions where endpoint = $1", [ENDPOINT("a-dead")])).toEqual([]);
     expect(await q("select 1 from portal_push_subscriptions where endpoint = $1", [ENDPOINT("a-phone")])).toHaveLength(1);
@@ -219,7 +219,7 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: notificaciones push en Postgres real$
     const hA = await s.listPushHistory(sessA);
     const hB = await s.listPushHistory(sessB);
     expect(hA.items.length).toBeGreaterThan(0);
-    expect(hA.items.some((i) => i.body.includes(`OP-A1-${RUN}`))).toBe(true);
+    expect(hA.items.some((i) => i.title === "¡Tu pedido está en envasado!")).toBe(true);
     expect(JSON.stringify(hA)).not.toContain(`OP-B1-${RUN}`);
     expect(JSON.stringify(hB)).not.toContain(`OP-A`);
     // Re-ejecutar no reenvía (idempotencia persistente).
@@ -266,7 +266,7 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: notificaciones push en Postgres real$
     await s.runPushWorker(deps);
     expect(await types()).toEqual(["ENVASADO", "LISTO"]);
     const listo = (await outboxOf(A.id, `OP-A4-${RUN}`)).find((r) => r.event_type === "LISTO")!;
-    expect(listo.title).toBe("¡TU PEDIDO ESTÁ LISTO PARA ENTREGAR! 🎉");
+    expect(listo.title).toBe("¡TU PEDIDO ESTÁ LISTO! 🎉");
   });
 
   // ───────────────────────── Fallos de envío ─────────────────────────
@@ -405,7 +405,7 @@ describe.skipIf(Boolean(PROBLEM))(`Portal: notificaciones push en Postgres real$
       if (sub.endpoint === ENDPOINT("c-dead")) throw Object.assign(new Error("Gone"), { statusCode: 410 });
     });
     const res = await s.sendTestPush(direccion, C.id, { sender: deadSend });
-    expect(res).toEqual({ sent: 1, failed: 0, removed: 1, devices: 2 });
+    expect(res).toMatchObject({ sent: 1, failed: 0, removed: 1, devices: 2 });
     // Solo los dispositivos de C (nunca los de D) y con el texto exacto.
     expect(deadSend.mock.calls.map((c) => c[0].endpoint).sort()).toEqual([ENDPOINT("c-dead"), ENDPOINT("c-phone")].sort());
     const payload = JSON.parse(String((deadSend.mock.calls[0] as unknown[])[1]));

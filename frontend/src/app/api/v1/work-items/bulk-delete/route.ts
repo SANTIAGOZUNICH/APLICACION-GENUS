@@ -1,3 +1,4 @@
+import { withPortalPush } from "@/lib/portal/push/push-trigger";
 import { NextResponse } from "next/server";
 import { resolvePlanningActor } from "@/lib/planning/actor";
 import { validateWorkMutationActor } from "@/features/os/operational/lib/work-mutation-rbac";
@@ -13,7 +14,7 @@ export const dynamic = "force-dynamic";
  * validado acá en el servidor con el sector de la sesión (no con lo que declare el cliente).
  * `dryRun: true` devuelve los veredictos por trabajo sin escribir nada (alimenta el modal de confirmación).
  */
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   const blocked = ensureNativePlanningReady();
   if (blocked) return blocked;
   try {
@@ -51,3 +52,6 @@ export async function POST(request: Request) {
     return planningErrorResponse(err);
   }
 }
+
+/** Tras confirmar la operación se dispara (en segundo plano, sin afectarla) la detección de avisos del Portal de Clientes. */
+export const POST = withPortalPush(handlePost);

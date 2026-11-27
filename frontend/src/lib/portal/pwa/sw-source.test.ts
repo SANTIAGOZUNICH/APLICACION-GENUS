@@ -100,4 +100,38 @@ describe("service worker del portal", () => {
     await click("/mi-trabajo");
     expect(sw.opened).toEqual(["/entregas#pedido-abc", "/entregas", "/entregas"]);
   });
+  it("push robusto: payload no JSON → texto; sin payload → mensaje por defecto; si showNotification con opciones falla reintenta lo mínimo; siempre dentro de waitUntil", async () => {
+    const sw = boot();
+    const waits: Promise<unknown>[] = [];
+    const push = sw.listeners.push as never as (e: unknown) => void;
+    push({ data: { json: () => { throw new Error("x"); }, text: () => "Texto plano" }, waitUntil: (p: Promise<unknown>) => waits.push(p) });
+    push({ data: null, waitUntil: (p: Promise<unknown>) => waits.push(p) });
+    expect(waits).toHaveLength(2);
+    await Promise.all(waits);
+    expect(sw.shown[0]).toMatchObject({ opts: { body: "Texto plano", icon: "/entregas/pwa/icon-192.png", badge: "/entregas/pwa/badge-96.png" } });
+    expect(sw.shown[1]!.opts.body).toContain("novedades");
+    let calls = 0;
+    sw.self.registration.showNotification = async (title: string, opts: Record<string, unknown>) => { calls++; if (calls === 1) throw new Error("opts"); sw.shown.push({ title, opts }); };
+    const w3: Promise<unknown>[] = [];
+    push({ data: { json: () => ({ title: "T" }) }, waitUntil: (p: Promise<unknown>) => w3.push(p) });
+    await Promise.all(w3);
+    expect(calls).toBe(2);
+  });
+  it("manda el ACUSE de recepción DESPUÉS de mostrar la notificación, sin romperla si falla", async () => {
+    const sw = boot();
+    const acks: Array<{ url: string; body: string }> = [];
+    const f = vi.fn(async (url: string, init?: { body?: string }) => { acks.push({ url, body: String(init?.body) }); return { ok: true } as never; });
+    const src = (await import("./sw-source")).portalServiceWorkerSource("t");
+    const listeners: Record<string, (e: Record<string, unknown>) => void> = {};
+    const order: string[] = [];
+    const self = { location: { origin: "https://x.test" }, addEventListener: (t: string, l: never) => void (listeners[t] = l), registration: { showNotification: async () => void order.push("show"), pushManager: { getSubscription: async () => ({ endpoint: "https://push.test/e" }) } } };
+    new Function("self", "caches", "fetch", "URL", "Response", "Headers", src)(self, {}, (u: string, i: { body?: string }) => { order.push("ack"); return f(u, i); }, URL, {}, Headers);
+    const w: Promise<unknown>[] = [];
+    listeners.push!({ data: { json: () => ({ title: "T", eventId: "e1", ack: { sid: "s1", token: "t1" } }) }, waitUntil: (p: Promise<unknown>) => w.push(p) });
+    await Promise.all(w);
+    expect(order).toEqual(["show", "ack"]);
+    expect(acks[0]!.url).toBe("/entregas/api/push/ack");
+    expect(JSON.parse(acks[0]!.body)).toEqual({ eventId: "e1", sid: "s1", token: "t1", endpoint: "https://push.test/e" });
+    void sw;
+  });
 });

@@ -1,3 +1,4 @@
+import { withPortalPush } from "@/lib/portal/push/push-trigger";
 import { NextResponse } from "next/server";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
@@ -9,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export async function PATCH(request: Request, ctx: Ctx) {
+async function handlePatch(request: Request, ctx: Ctx) {
   try {
     const actor = await resolveOrdersActor(request);
     const { id } = await ctx.params;
@@ -25,7 +26,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
   }
 }
 
-export async function DELETE(request: Request, ctx: Ctx) {
+async function handleDelete(request: Request, ctx: Ctx) {
   try {
     const actor = await resolveOrdersActor(request);
     const { id } = await ctx.params;
@@ -40,3 +41,9 @@ export async function DELETE(request: Request, ctx: Ctx) {
     return ordersErrorResponse(err);
   }
 }
+
+/** Tras confirmar la operación se dispara (en segundo plano, sin afectarla) la detección de avisos del Portal de Clientes. */
+export const PATCH = withPortalPush(handlePatch, { idParam: "pedido" });
+
+/** Tras confirmar la operación se dispara (en segundo plano, sin afectarla) la detección de avisos del Portal de Clientes. */
+export const DELETE = withPortalPush(handleDelete, { idParam: "pedido" });

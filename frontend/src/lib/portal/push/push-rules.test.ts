@@ -11,21 +11,19 @@ describe("textos exactos", () => {
   it("recibido", () => {
     expect(buildPushMessage("RECIBIDO", null, days)).toEqual({ title: "¡Recibimos tu pedido!", body: "Tu pedido fue registrado correctamente. Te mantendremos informado sobre su avance." });
   });
-  it("elaboración con N configurable", () => {
-    expect(buildPushMessage("ELABORACION", null, days)).toEqual({ title: "¡Tu pedido se está elaborando!", body: "Comenzamos la elaboración de tus productos. Estimamos que estarán listos para entregar en aproximadamente 8 días hábiles." });
-    expect(buildPushMessage("ELABORACION", null, { ...days, elaboracionDays: 10 }).body).toContain("10 días hábiles");
+  it("elaboración con N configurable (textos exactos)", () => {
+    expect(buildPushMessage("ELABORACION", null, days)).toEqual({ title: "¡Tu pedido se está elaborando!", body: "Estimamos que estará listo para entregar en aproximadamente 8 días hábiles." });
+    expect(buildPushMessage("ELABORACION", null, { ...days, elaboracionDays: 10 }).body).toBe("Estimamos que estará listo para entregar en aproximadamente 10 días hábiles.");
   });
-  it("envasado con N configurable", () => {
-    expect(buildPushMessage("ENVASADO", null, days)).toEqual({ title: "¡Tu pedido está en envasado!", body: "Estamos en la etapa final de producción. Estimamos que tu pedido estará listo para entregar en aproximadamente 3 días hábiles." });
+  it("envasado con N configurable (textos exactos)", () => {
+    expect(buildPushMessage("ENVASADO", null, days)).toEqual({ title: "¡Tu pedido está en envasado!", body: "Estimamos que estará listo para entregar en aproximadamente 3 días hábiles." });
   });
-  it("listo y entregado", () => {
-    expect(buildPushMessage("LISTO", null, days)).toEqual({ title: "¡TU PEDIDO ESTÁ LISTO PARA ENTREGAR! 🎉", body: "Finalizamos la producción de tu pedido. Ya está disponible para coordinar su entrega. ¡Gracias por confiar en nosotros!" });
-    expect(buildPushMessage("ENTREGADO", null, days)).toEqual({ title: "¡Pedido entregado!", body: "Tu pedido fue entregado. Gracias por elegir Laboratorio Genus." });
+  it("listo y entregado (textos exactos)", () => {
+    expect(buildPushMessage("LISTO", null, days)).toEqual({ title: "¡TU PEDIDO ESTÁ LISTO! 🎉", body: "Finalizamos la producción de tu pedido. Ya podemos coordinar su entrega." });
+    expect(buildPushMessage("ENTREGADO", null, days)).toEqual({ title: "¡Tu pedido fue entregado!", body: "Gracias por confiar en Laboratorio Genus." });
   });
-  it("identifica el pedido en una línea aparte sin alterar el texto", () => {
-    const m = buildPushMessage("LISTO", "OP-123", days);
-    expect(m.body.startsWith(buildPushMessage("LISTO", null, days).body)).toBe(true);
-    expect(m.body.endsWith("\nPedido OP-123")).toBe(true);
+  it("el texto es EXACTO: la referencia del pedido no se agrega al cuerpo", () => {
+    for (const t of ["RECIBIDO", "ELABORACION", "ENVASADO", "LISTO", "ENTREGADO"] as const) expect(buildPushMessage(t, "OP-123", days)).toEqual(buildPushMessage(t, null, days));
   });
   it("días hábiles en singular y plural", () => {
     expect(businessDaysLabel(1)).toBe("1 día hábil");

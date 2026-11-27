@@ -76,12 +76,14 @@ describe("selector del formulario", () => {
 });
 
 describe("estado manual de un pedido sin trabajos", () => {
-  it("mapea Elaboración/Envasado y nunca inventa Listo ni Entregado", () => {
+  it("mapea Elaboración/Envasado y también Listo/Entregado (vías reales del estado del pedido)", () => {
     expect(manualStageOf("EN_ELABORACION")).toBe("ELABORACION");
     expect(manualStageOf("EN_ENVASADO")).toBe("ENVASADO");
     expect(manualStageOf("EN_CODIFICADO")).toBe("ENVASADO");
-    expect(manualStageOf("LISTO_PARA_ENTREGAR")).toBe("ENVASADO");
-    expect(manualStageOf("ENTREGADO")).toBeNull();
+    expect(manualStageOf("LISTO_PARA_ENTREGAR")).toBe("LISTO");
+    expect(manualStageOf("LISTO PARA ENTREGAR")).toBe("LISTO");
+    expect(manualStageOf("TERMINADO")).toBe("LISTO");
+    expect(manualStageOf("ENTREGADO")).toBe("ENTREGADO");
     expect(manualStageOf("INGRESO")).toBeNull();
     expect(manualStageOf(null)).toBeNull();
   });

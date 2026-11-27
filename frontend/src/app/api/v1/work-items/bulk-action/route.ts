@@ -1,3 +1,4 @@
+import { withPortalPush } from "@/lib/portal/push/push-trigger";
 import { NextResponse } from "next/server";
 import { resolvePlanningActor } from "@/lib/planning/actor";
 import { runBulkPendingAction, type BulkItemInput } from "@/lib/planning/bulk-pending-actions-service";
@@ -16,7 +17,7 @@ function str(v: unknown): string | null {
  * individual; el sector sale de la SESIÓN (Producción o Dirección, igual que ver los pendientes y operarlos).
  * `dryRun: true` ejecuta el flujo real y lo revierte: devuelve qué pasaría con cada trabajo sin escribir nada.
  */
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   const blocked = ensureNativePlanningReady();
   if (blocked) return blocked;
   try {
@@ -61,3 +62,6 @@ export async function POST(request: Request) {
     return planningErrorResponse(err);
   }
 }
+
+/** Tras confirmar la operación se dispara (en segundo plano, sin afectarla) la detección de avisos del Portal de Clientes. */
+export const POST = withPortalPush(handlePost);

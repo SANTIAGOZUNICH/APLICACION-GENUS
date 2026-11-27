@@ -1,3 +1,4 @@
+import { withPortalPush } from "@/lib/portal/push/push-trigger";
 import { NextResponse } from "next/server";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
@@ -9,7 +10,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** PATCH parcial y atómico por celda de Pedidos (solo Producción / superadmin). */
-export async function PATCH(request: Request) {
+async function handlePatch(request: Request) {
   try {
     const actor = await resolveOrdersActor(request);
     const body = (await request.json().catch(() => null)) as { changes?: PedidoCellChange[] } | null;
@@ -23,3 +24,6 @@ export async function PATCH(request: Request) {
     return ordersErrorResponse(err);
   }
 }
+
+/** Tras confirmar la operación se dispara (en segundo plano, sin afectarla) la detección de avisos del Portal de Clientes. */
+export const PATCH = withPortalPush(handlePatch);

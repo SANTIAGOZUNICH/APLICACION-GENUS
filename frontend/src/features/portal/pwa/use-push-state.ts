@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { disablePush, enablePush, fetchPushConfig, type PushConfig } from "./push-client";
+import { disablePush, enablePush, fetchPushConfig, repairSubscription, type PushConfig } from "./push-client";
 import { derivePushState, type PushUiState } from "./push-state";
 import { currentPlatform, pushSupported, type PlatformInfo } from "./pwa-env";
 
@@ -16,7 +16,10 @@ export function usePushState() {
 
   const reload = useCallback(async () => {
     setPermission(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
-    setCfg(await fetchPushConfig());
+    let c = await fetchPushConfig();
+    // Dispositivo con permiso y suscripción en el navegador pero sin registro válido en el servidor: se repara solo (sin molestar al cliente).
+    if (c && (await repairSubscription(c))) c = await fetchPushConfig();
+    setCfg(c);
   }, []);
   useEffect(() => {
     // Datos del navegador y del servidor: se resuelven después del montaje.
